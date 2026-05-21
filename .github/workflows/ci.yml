@@ -179,7 +179,9 @@ jobs:
         run: pnpm install --frozen-lockfile=true
 
       - name: Run vitest
-        run: pnpm --filter @arena/web test --run
+        # The @arena/web "test" script is `vitest run` already; the
+        # trailing --run flag is rejected by pnpm 9 ("Unknown option").
+        run: pnpm --filter @arena/web test
 
   # ---------------------------------------------------------------------
   # validate-missions — schema + structural checks on every mission YAML.
