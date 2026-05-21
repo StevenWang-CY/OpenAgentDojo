@@ -428,6 +428,168 @@ async def test_best_score_and_total_missions(client, db_engine) -> None:
 
 
 @pytest.mark.asyncio
+async def test_malformed_score_report_excluded_and_counted(
+    client, db_engine
+) -> None:
+    """Malformed reports MUST be skipped by the radar and counted in the metric.
+
+    P1-5: rather than silently ignore bad ``score_report`` payloads we
+    debug-log + increment ``profile_malformed_reports_total{reason=…}`` so
+    ops can spot scoring-engine drift in production.
+    """
+    AsyncSessionLocal = await _bind_engine(db_engine)
+
+    user_id = uuid.uuid4()
+    good_sess = uuid.uuid4()
+    bad_sess_dims_missing = uuid.uuid4()
+    bad_sess_score_not_numeric = uuid.uuid4()
+    bad_sess_payload_not_dict = uuid.uuid4()
+
+    async with AsyncSessionLocal() as db:
+        db.add(
+            User(
+                id=user_id,
+                email="eve@arena.local",
+                handle="eve",
+                display_name="Eve",
+                created_at=datetime(2026, 5, 1, tzinfo=UTC),
+            )
+        )
+        db.add(
+            Mission(
+                id="auth-cookie-expiration",
+                title="Auth Cookie Expiration",
+                difficulty="intermediate",
+                category="auth",
+                repo_pack="x",
+                initial_commit="HEAD",
+                estimated_minutes=10,
+                failure_mode="x",
+                skills_tested=["auth"],
+                manifest_sha256="sha",
+                version=1,
+                published=True,
+            )
+        )
+        now = datetime(2026, 5, 5, tzinfo=UTC)
+        for sid in (
+            good_sess,
+            bad_sess_dims_missing,
+            bad_sess_score_not_numeric,
+            bad_sess_payload_not_dict,
+        ):
+            db.add(
+                SessionRow(
+                    id=sid,
+                    user_id=user_id,
+                    mission_id="auth-cookie-expiration",
+                    status="graded",
+                    score=70,
+                    completed_at=now,
+                )
+            )
+        await db.flush()
+
+        # Good report.
+        db.add(
+            Submission(
+                id=uuid.uuid4(),
+                session_id=good_sess,
+                final_diff="",
+                visible_test_results={},
+                hidden_test_results={},
+                validator_results={},
+                score_report=_score_report(
+                    final=20,
+                    verification=10,
+                    agent_review=10,
+                    prompt_quality=5,
+                    context_selection=5,
+                    safety=10,
+                    diff_minimality=2,
+                ),
+                total_score=62,
+            )
+        )
+        # Bad: ``dimensions`` is a string, not a dict.
+        db.add(
+            Submission(
+                id=uuid.uuid4(),
+                session_id=bad_sess_dims_missing,
+                final_diff="",
+                visible_test_results={},
+                hidden_test_results={},
+                validator_results={},
+                score_report={"total": 50, "dimensions": "oops"},
+                total_score=50,
+            )
+        )
+        # Bad: dimension payload's ``score`` is a string.
+        db.add(
+            Submission(
+                id=uuid.uuid4(),
+                session_id=bad_sess_score_not_numeric,
+                final_diff="",
+                visible_test_results={},
+                hidden_test_results={},
+                validator_results={},
+                score_report={
+                    "total": 50,
+                    "dimensions": {
+                        "safety": {"score": "NaN", "max_score": 10, "signals": []},
+                    },
+                },
+                total_score=50,
+            )
+        )
+        # Bad: dimension payload is a list, not a dict.
+        db.add(
+            Submission(
+                id=uuid.uuid4(),
+                session_id=bad_sess_payload_not_dict,
+                final_diff="",
+                visible_test_results={},
+                hidden_test_results={},
+                validator_results={},
+                score_report={
+                    "total": 50,
+                    "dimensions": {"safety": [1, 2, 3]},
+                },
+                total_score=50,
+            )
+        )
+        await db.commit()
+
+    # Snapshot the metric counters BEFORE the request so we can assert deltas.
+    from app.observability import profile_malformed_reports_total
+
+    def _value(reason: str) -> float:
+        return (
+            profile_malformed_reports_total.labels(reason=reason)._value.get()  # type: ignore[attr-defined]
+        )
+
+    before_dims_missing = _value("dimensions_missing")
+    before_score_not_numeric = _value("score_not_numeric")
+    before_payload_not_dict = _value("dimension_payload_not_dict")
+
+    resp = await client.get("/api/v1/profiles/eve")
+    assert resp.status_code == 200, resp.text
+    radar = resp.json()["radar_averages"]
+    # Only the good report contributed — values should match its inputs.
+    assert radar["safety"] == pytest.approx(10.0, rel=1e-3)
+    assert radar["final_correctness"] == pytest.approx(20.0, rel=1e-3)
+
+    # And the malformed-report counter incremented for each bad row.
+    assert _value("dimensions_missing") == pytest.approx(before_dims_missing + 1)
+    assert _value("score_not_numeric") == pytest.approx(
+        before_score_not_numeric + 1
+    )
+    assert _value("dimension_payload_not_dict") == pytest.approx(
+        before_payload_not_dict + 1
+    )
+
+
+@pytest.mark.asyncio
 async def test_handle_lookup_is_case_insensitive(client, db_engine) -> None:
     """The handle column is CITEXT in prod; queries must succeed regardless of case."""
     AsyncSessionLocal = await _bind_engine(db_engine)

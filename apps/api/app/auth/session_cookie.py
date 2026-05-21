@@ -14,6 +14,7 @@ Cookie attributes:
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -31,6 +32,12 @@ _COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days in seconds
 # first as a fast path.
 _REVOKED_JTIS: set[str] = set()
 _REVOCATION_KEY_PREFIX = "auth:revoked_jti:"
+
+# Strong refs to in-flight revocation persistence tasks so the asyncio event
+# loop cannot garbage-collect them mid-flight (and so their exceptions are
+# observed rather than swallowed by the loop's default handler). Tasks are
+# discarded from the set when they finish.
+_BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 
 
 def issue_session_cookie(response: Response, user_id: str, settings: Settings) -> None:
@@ -102,14 +109,29 @@ def _mark_revoked(jti: str) -> None:
     """Record ``jti`` in the revocation set (in-proc, and Redis if reachable)."""
     _REVOKED_JTIS.add(jti)
     try:
-        import asyncio
-
         loop = asyncio.get_running_loop()
-        loop.create_task(_persist_revocation(jti))
+        # Track the task so the loop holds a strong reference (asyncio docs
+        # explicitly warn that fire-and-forget ``create_task`` can be GC'd
+        # before completion) and so its exception is observable via
+        # ``add_done_callback`` instead of being printed by the default
+        # exception handler.
+        task = loop.create_task(_persist_revocation(jti), name=f"persist-revocation-{jti[:8]}")
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_on_persist_done)
     except RuntimeError:
         # No running loop — caller is in a sync context (probably tests). The
         # in-proc set still works for the lifetime of the worker.
         pass
+
+
+def _on_persist_done(task: asyncio.Task[None]) -> None:
+    """Discard the task ref and log any exception it raised."""
+    _BACKGROUND_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug("revocation persistence task failed: {}", exc)
 
 
 async def _persist_revocation(jti: str) -> None:

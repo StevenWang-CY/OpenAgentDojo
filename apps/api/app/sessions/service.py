@@ -30,6 +30,20 @@ class MissionNotFoundError(LookupError):
     pass
 
 
+class SessionNotFoundError(LookupError):
+    """Raised when a service helper is invoked for a session id that no longer exists.
+
+    Background workers used to swallow this silently, which masked race
+    conditions (provisioner writing back to a session that was already reaped
+    by the orphan sweeper). Surfacing it as a typed exception lets each
+    caller decide whether to log + ignore or escalate.
+    """
+
+    def __init__(self, session_id: uuid.UUID) -> None:
+        super().__init__(str(session_id))
+        self.session_id = session_id
+
+
 class ActiveSessionExistsError(Exception):
     """Raised when a user tries to start a second concurrent session.
 
@@ -108,10 +122,16 @@ async def set_status(db: AsyncSession, session_id: uuid.UUID, status: SessionSta
 
 
 async def set_sandbox(db: AsyncSession, session_id: uuid.UUID, sandbox_id: str) -> None:
-    """Update ``sandbox_id`` and commit. See ``set_status`` for semantics."""
+    """Update ``sandbox_id`` and commit. See ``set_status`` for semantics.
+
+    Raises :class:`SessionNotFoundError` when ``session_id`` does not resolve to
+    an existing row — previously this silently no-op'd, which masked the
+    provision-after-reap race condition that left WS terminals pointing at a
+    zombie handle.
+    """
     row = await get_session(db, session_id)
     if row is None:
-        return
+        raise SessionNotFoundError(session_id)
     row.sandbox_id = sandbox_id
     await db.flush()
     await db.commit()

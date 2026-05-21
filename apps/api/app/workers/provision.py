@@ -110,7 +110,6 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
     from app.sessions.events import EventEmitter, get_redis
     from app.sessions.service import (
         get_session,
-        set_sandbox,
         set_status,
     )
 
@@ -165,7 +164,8 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
                 )
                 return
 
-            await set_sandbox(db, session_id, handle.id)
+            if not await _attach_sandbox(db, session_id, handle.id):
+                return
 
             await emitter.emit(
                 session_id=session_id,
@@ -214,6 +214,28 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
             await _emit_errored_and_mark(
                 db, emitter, session_id, stage="provisioning", detail=str(exc)
             )
+
+
+async def _attach_sandbox(db: Any, session_id: uuid.UUID, handle_id: str) -> bool:
+    """Persist ``handle_id`` on the session row; return False if the row vanished.
+
+    Extracted from :func:`_async_run_provision` so the function's statement
+    count stays under the linter's PLR0915 ceiling. The boolean return is the
+    "keep going" signal — False means the orphan sweeper (or a test) deleted
+    the session between provision dispatch and handle availability, so the
+    pool's idle reaper will clean up the now-unowned handle on its own.
+    """
+    from app.sessions.service import SessionNotFoundError, set_sandbox
+
+    try:
+        await set_sandbox(db, session_id, handle_id)
+    except SessionNotFoundError:
+        logger.warning(
+            "provision job: session {} disappeared before sandbox could be attached",
+            session_id,
+        )
+        return False
+    return True
 
 
 async def _emit_errored_and_mark(

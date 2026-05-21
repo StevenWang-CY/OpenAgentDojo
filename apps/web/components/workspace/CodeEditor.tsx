@@ -245,12 +245,27 @@ function SaveBadge({
   saved: boolean;
   loading: boolean;
 }) {
-  if (loading) return null;
+  // Always render a stable layout slot so the header doesn't reflow between
+  // load → saving → saved transitions (avoids CLS in the toolbar row).
+  const baseClass =
+    "inline-flex min-w-[58px] items-center justify-end gap-1 tabular-nums";
+  if (loading) {
+    return (
+      <span
+        className={cn(baseClass, "text-[var(--color-muted-foreground)]")}
+        role="status"
+        aria-live="polite"
+      >
+        <Loader2 className="size-3 animate-spin" aria-hidden /> loading…
+      </span>
+    );
+  }
   if (saving) {
     return (
       <span
-        className="inline-flex items-center gap-1 text-[var(--color-muted-foreground)]"
+        className={cn(baseClass, "text-[var(--color-muted-foreground)]")}
         role="status"
+        aria-live="polite"
       >
         <Loader2 className="size-3 animate-spin" aria-hidden /> saving…
       </span>
@@ -259,7 +274,7 @@ function SaveBadge({
   if (saved) {
     return (
       <span
-        className="text-[var(--color-success)]"
+        className={cn(baseClass, "text-[var(--color-success)]")}
         role="status"
         aria-live="polite"
       >
@@ -267,5 +282,5 @@ function SaveBadge({
       </span>
     );
   }
-  return null;
+  return <span className={baseClass} aria-hidden />;
 }

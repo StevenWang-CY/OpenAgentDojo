@@ -90,6 +90,9 @@ export function DiffViewer({
       /* fall through */
     }
     try {
+      // gitdiff-parser's published `.d.ts` lags react-diff-view's expectations —
+      // the returned hunks are structurally identical (same `changes`/`content`
+      // shape), so the double-cast is safe for our downstream readers.
       return gitDiffParser.parse(unifiedDiff) as unknown as ParsedDiffFile[];
     } catch {
       return [];

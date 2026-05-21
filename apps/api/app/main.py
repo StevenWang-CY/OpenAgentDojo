@@ -105,6 +105,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except (asyncio.CancelledError, Exception):
                 pass
         await pool.shutdown()
+        # Tear down the grading FS thread pool last — by this point no
+        # validator should still be running, so cancel_futures wins us back
+        # idle worker threads without blocking shutdown (P1-2).
+        from app.grading.runner import shutdown_fs_executor
+
+        shutdown_fs_executor()
         logger.info("agentarena api shutdown complete")
 
 

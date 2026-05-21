@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.intents import IntentClassifier
@@ -273,7 +273,23 @@ class AgentService:
 
         # -- 3. Atomic persist + emit -----------------------------------------
         async with _safe_begin(db):
-            turn_index = session.agent_turns  # 0-based before increment
+            # Atomic claim of the next turn_index via UPDATE ... RETURNING so
+            # two concurrent prompts on the same session cannot collide on the
+            # ``UNIQUE(session_id, turn_index)`` constraint. ``RETURNING`` is
+            # supported on both Postgres and SQLite (>= 3.35), which is the
+            # minimum version pinned by the runtime image and CI.
+            result = await db.execute(
+                update(SessionRow)
+                .where(SessionRow.id == session.id)
+                .values(agent_turns=SessionRow.agent_turns + 1)
+                .returning(SessionRow.agent_turns)
+            )
+            new_turns = result.scalar_one()
+            turn_index = new_turns - 1  # 0-based index for the row we insert
+            # Reflect the new value on the in-memory ORM object so downstream
+            # code (and the test assertions) see a consistent snapshot.
+            session.agent_turns = new_turns
+
             turn = AgentTurn(
                 session_id=session.id,
                 turn_index=turn_index,
@@ -287,8 +303,6 @@ class AgentService:
                 agent_response=agent_response,
             )
             db.add(turn)
-            session.agent_turns = turn_index + 1
-            db.add(session)
             await db.flush()
 
             patch_file = _manifest_patch_file(inner_manifest)

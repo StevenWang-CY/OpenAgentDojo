@@ -82,7 +82,12 @@ async def _claim_for_submit(db: AsyncSession, session: SessionRow) -> bool:
         .where(SessionRow.id == session.id, SessionRow.status == "active")
         .values(status="submitting")
     )
-    assert isinstance(result, CursorResult), "UPDATE should return a CursorResult"
+    # Runtime guard (not ``assert`` — that vanishes under ``python -O``). UPDATE
+    # statements always yield a ``CursorResult``, but we still verify so a type
+    # mismatch fails loudly with structured logging rather than a stray
+    # AttributeError on ``.rowcount``.
+    if not isinstance(result, CursorResult):
+        raise RuntimeError(f"expected CursorResult from UPDATE, got {type(result).__name__}")
     if result.rowcount == 0:
         return False
     # Reflect the new value on the ORM instance for downstream code.

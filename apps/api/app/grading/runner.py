@@ -46,8 +46,22 @@ DEFAULT_BUDGET_SECONDS = 300
 PER_VALIDATOR_TIMEOUT_S = 30
 
 # Persistent thread pool for sync `driver.read_file` shims so we don't spin a
-# fresh event loop + thread per call (P1-B19).
+# fresh event loop + thread per call (P1-B19). The pool is shut down by the
+# FastAPI lifespan handler so it doesn't leak threads when the API process
+# tears down (see ``shutdown_fs_executor`` below).
 _FS_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="grading-fs")
+
+
+def shutdown_fs_executor() -> None:
+    """Stop the grading FS thread pool — invoked by the FastAPI lifespan.
+
+    Uses ``cancel_futures=True`` so any work queued but not yet started is
+    dropped immediately; in-flight worker calls still finish their current
+    iteration but ``wait=False`` keeps shutdown non-blocking. Idempotent — a
+    second call after shutdown is a no-op (``ThreadPoolExecutor`` flags itself
+    as shutdown).
+    """
+    _FS_EXECUTOR.shutdown(wait=False, cancel_futures=True)
 
 
 @dataclass

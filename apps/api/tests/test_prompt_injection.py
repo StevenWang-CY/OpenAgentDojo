@@ -286,3 +286,54 @@ async def test_post_prompt_benign_does_not_emit_flag(client, db_engine) -> None:
         assert "prompt.submitted" in types
         assert "agent.responded" in types
         assert "validator.flag" not in types
+
+
+@pytest.mark.asyncio
+async def test_post_prompt_detector_error_emits_validator_flag(
+    client, db_engine, monkeypatch
+) -> None:
+    """If the detector raises, we MUST still emit a ``validator.flag`` event.
+
+    The previous behaviour swallowed the exception and silently downgraded
+    to "no matches", erasing the security signal from the supervision
+    timeline. P1-4 changes that so a detector crash surfaces as
+    ``kind='prompt_injection_detector_error'``.
+    """
+    await _bind_app_engine_to(db_engine)
+    user_id, session_id = await _seed_mission_user_session(db_engine)
+    _override_auth(client._transport.app, user_id)  # type: ignore[attr-defined]
+
+    # Force the detector to raise on this request. The router imports the
+    # symbol into its own module namespace, so patching the original module
+    # location is NOT enough — we patch the router-level binding.
+    def _boom(_text: str) -> list[str]:
+        raise RuntimeError("detector exploded")
+
+    from app.agent import router as agent_router
+
+    monkeypatch.setattr(agent_router, "detect_prompt_injection", _boom)
+
+    resp = await client.post(
+        f"/api/v1/sessions/{session_id}/prompts",
+        json={"text": "Please fix the expired-cookie bug."},
+        **_csrf_kwargs(),
+    )
+    # The route still returns 200 — telemetry must never fail the request.
+    assert resp.status_code == 200, resp.text
+
+    from app.db import session as session_module
+
+    async with session_module.AsyncSessionLocal() as db:
+        flags = (
+            await db.execute(
+                select(SupervisionEvent)
+                .where(SupervisionEvent.session_id == session_id)
+                .where(SupervisionEvent.event_type == "validator.flag")
+            )
+        ).scalars().all()
+        assert len(flags) == 1, [f.event_type for f in flags]
+        payload = flags[0].payload
+        assert payload["kind"] == "prompt_injection_detector_error"
+        assert "detector exploded" in payload["message"]
+        # Truncated to 200 chars max (router slice).
+        assert len(payload["message"]) <= 200

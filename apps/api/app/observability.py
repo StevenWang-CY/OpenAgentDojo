@@ -93,6 +93,14 @@ event_publish_failures_total = Counter(
     ["reason"],  # reason = no_redis | publish_error
     registry=REGISTRY,
 )
+profile_malformed_reports_total = Counter(
+    "profile_malformed_reports_total",
+    "Submissions whose score_report was skipped by the profile radar aggregator.",
+    # reason = not_dict | dimensions_missing | dimension_payload_not_dict |
+    #          score_not_numeric | unknown_dimension
+    ["reason"],
+    registry=REGISTRY,
+)
 
 
 def metrics_asgi_app():

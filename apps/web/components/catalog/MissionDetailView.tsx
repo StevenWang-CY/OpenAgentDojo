@@ -76,6 +76,9 @@ export function MissionDetailView({ missionId }: MissionDetailViewProps) {
     );
   }
 
+  // `data` is guaranteed defined here (loading + error branches both return
+  // above), but useQuery's generic still types it as `T | undefined` — the
+  // guard is what narrows it for the JSX below.
   if (!data) return null;
 
   return (

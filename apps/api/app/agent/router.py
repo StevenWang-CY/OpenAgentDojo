@@ -139,11 +139,32 @@ async def post_prompt(
     # M8 §21: detect prompt-injection patterns and flag (do NOT block) so the
     # post-hoc safety scorer can pick up the signal. Best-effort — a failure
     # here must never break the prompt path.
+    detector_error: str | None = None
     try:
         matched = detect_prompt_injection(body.text)
-    except Exception as exc:  # pragma: no cover — detector is pure regex
+    except Exception as exc:
+        # Detector is pure regex so a raise is unusual; still preserve the
+        # security signal in the timeline by emitting a validator.flag with
+        # ``kind=prompt_injection_detector_error`` rather than silently
+        # downgrading to "no matches" (P1-4).
         logger.debug("prompt-injection detector raised: {}", exc)
         matched = []
+        detector_error = str(exc)[:200]
+    if detector_error is not None:
+        try:
+            await emitter.emit(
+                session_id=session.id,
+                event_type="validator.flag",
+                payload={
+                    "kind": "prompt_injection_detector_error",
+                    "message": detector_error,
+                },
+            )
+        except Exception as exc:  # pragma: no cover — telemetry must never block
+            logger.warning(
+                "prompt-injection detector-error validator.flag emit failed: {}",
+                exc,
+            )
     if matched:
         try:
             await emitter.emit(

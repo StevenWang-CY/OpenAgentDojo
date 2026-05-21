@@ -150,15 +150,13 @@ async def _seed_mission_history(
     """
     # Drop any prior demo sessions for this user so we don't accumulate.
     prior = (
-        await db.execute(
-            select(SessionRow.id).where(SessionRow.user_id == user.id)
-        )
-    ).scalars().all()
+        (await db.execute(select(SessionRow.id).where(SessionRow.user_id == user.id)))
+        .scalars()
+        .all()
+    )
     for sid in prior:
         sub = (
-            await db.execute(
-                select(Submission).where(Submission.session_id == sid)
-            )
+            await db.execute(select(Submission).where(Submission.session_id == sid))
         ).scalar_one_or_none()
         if sub is not None:
             await db.delete(sub)
@@ -198,9 +196,7 @@ async def _seed_mission_history(
             "total": score,
             "dimensions": dims,
             "strengths": ["Selected relevant context", "Wrote a regression test"],
-            "weaknesses": ["Could have run more verification"]
-            if score < 90
-            else [],
+            "weaknesses": ["Could have run more verification"] if score < 90 else [],
             "missed_failure_mode": score < 80,
             "badges_earned": list(badge_ids),
         }
@@ -223,9 +219,7 @@ async def _seed_mission_history(
         for badge_id in badge_ids:
             badge = await db.get(Badge, badge_id)
             if badge is None:
-                logger.warning(
-                    "[seed-demo] badge '{}' not in catalog; skipping award", badge_id
-                )
+                logger.warning("[seed-demo] badge '{}' not in catalog; skipping award", badge_id)
                 continue
             existing = await db.get(UserBadge, (user.id, badge_id))
             if existing is None:
@@ -251,9 +245,7 @@ async def seed_demo_users() -> int:
     """
     settings = get_settings()
     if settings.arena_env == "production":
-        raise RuntimeError(
-            "refusing to seed demo users in ARENA_ENV=production"
-        )
+        raise RuntimeError("refusing to seed demo users in ARENA_ENV=production")
 
     total_sessions = 0
     # Resolve the session factory at call time so test rebinds via

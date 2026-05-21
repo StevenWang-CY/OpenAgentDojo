@@ -102,6 +102,9 @@ export function ProfileView({ handle }: ProfileViewProps) {
   }
 
   const profile = profileQuery.data;
+  // `profile` is guaranteed defined here (loading + error branches both return
+  // above), but useQuery's generic still types it as `T | undefined` — the
+  // guard is what narrows it for the JSX below.
   if (!profile) return null;
 
   const earnedIds = new Set(profile.badges.map((b) => b.id));

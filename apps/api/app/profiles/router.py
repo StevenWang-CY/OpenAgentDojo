@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +34,7 @@ from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.user import User
 from app.models.user_badge import UserBadge
+from app.observability import profile_malformed_reports_total
 from app.schemas.profile import (
     EarnedBadgeRead,
     MissionHistoryItemRead,
@@ -148,42 +150,78 @@ async def _fetch_stats(
     )
     total_missions, best_score = (await db.execute(totals_stmt)).one()
 
-    # Pull only the score_report JSON from each of the user's submissions —
+    # Pull score_report + session_id from each of the user's submissions —
     # the avg has to be computed Python-side because the per-dimension shape
     # is nested JSON ({final_correctness: {score: N, max: M, signals: []}, …})
     # and we want the same arithmetic on Postgres JSONB and SQLite JSON.
+    # ``session_id`` is included so the malformed-report observability path
+    # can correlate skipped reports back to a session.
     reports_stmt = (
-        select(Submission.score_report)
+        select(Submission.score_report, Submission.session_id)
         .join(SessionRow, SessionRow.id == Submission.session_id)
         .where(SessionRow.user_id == user_id)
     )
-    reports = (await db.execute(reports_stmt)).scalars().all()
+    rows = (await db.execute(reports_stmt)).all()
+    reports: list[tuple[Any, uuid.UUID | None]] = [
+        (row.score_report, row.session_id) for row in rows
+    ]
     radar = _aggregate_radar(reports)
     return int(total_missions or 0), best_score, radar
+
+
+def _record_malformed(reason: str, session_id: uuid.UUID | None) -> None:
+    """Log + meter a score_report that was skipped by ``_aggregate_radar``.
+
+    Logged at ``debug`` so we don't spam production logs when a single bad
+    submission slips through; the counter is the durable signal for dashboards.
+    """
+    logger.debug(
+        "profile radar: skipping malformed score_report (reason={}, session_id={})",
+        reason,
+        session_id,
+    )
+    profile_malformed_reports_total.labels(reason=reason).inc()
 
 
 def _aggregate_radar(reports: Sequence[Any]) -> dict[str, float]:
     """Average the per-dimension scores across every submission's score report.
 
+    Each entry in ``reports`` is either a raw ``score_report`` dict (legacy
+    callers / tests) or a ``(score_report, session_id)`` tuple. The two shapes
+    are accepted so test helpers don't need to fabricate session ids.
+
     Only the dimensions that actually appeared in at least one submission are
     surfaced — the frontend prefers an empty key to a zero stub. Each value is
     rounded to one decimal place so the radar chart is stable across reloads.
+    Malformed reports (non-dict, missing ``dimensions``, non-numeric score) are
+    skipped, debug-logged, and counted in
+    :data:`app.observability.profile_malformed_reports_total` so dashboards can
+    spot scoring-engine drift.
     """
     sums: dict[str, float] = {}
     counts: dict[str, int] = {}
-    for report in reports:
+    for entry in reports:
+        if isinstance(entry, tuple) and len(entry) == 2:
+            report, session_id = entry
+        else:
+            report, session_id = entry, None
         if not isinstance(report, dict):
+            _record_malformed("not_dict", session_id)
             continue
         dims = report.get("dimensions")
         if not isinstance(dims, dict):
+            _record_malformed("dimensions_missing", session_id)
             continue
         for dim_name, dim_payload in dims.items():
             if dim_name not in _RUBRIC_DIMENSIONS:
+                _record_malformed("unknown_dimension", session_id)
                 continue
             if not isinstance(dim_payload, dict):
+                _record_malformed("dimension_payload_not_dict", session_id)
                 continue
             raw = dim_payload.get("score")
             if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+                _record_malformed("score_not_numeric", session_id)
                 continue
             sums[dim_name] = sums.get(dim_name, 0.0) + float(raw)
             counts[dim_name] = counts.get(dim_name, 0) + 1
