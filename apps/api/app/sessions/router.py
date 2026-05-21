@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import require_auth
 from app.config import get_settings
 from app.db.session import get_db
-from app.missions.router import _cached_manifests, _detail_extras_for
+from app.missions.cache import cached_manifests, detail_extras_for
 from app.missions.service import get_mission as get_mission_row
 from app.models.command_run import CommandRun
 from app.models.file_change import FileChange
@@ -32,6 +32,7 @@ from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
 from app.models.user import User
+from app.schemas.auth import WsTokenRead
 from app.schemas.mission import MissionDetail
 from app.schemas.session import ContextSelection, SessionCreate, SessionDetail, SessionRead
 from app.schemas.submission import SubmissionRead
@@ -67,22 +68,28 @@ def _serialize_session(row: SessionRow, settings: Any) -> dict[str, Any]:
 
 def _load_mission_manifest_extras(mission_id: str) -> dict[str, Any]:
     """Use the shared (cached) manifest cache to enrich a mission detail."""
-    loaded = _cached_manifests().get(mission_id)
+    loaded = cached_manifests().get(mission_id)
     if loaded is None:
         return {}
-    return _detail_extras_for(loaded)
+    return detail_extras_for(loaded)
 
 
 def _get_sandbox_handle(request: Request, session_id: uuid.UUID) -> Any:
     """Retrieve the active sandbox handle or raise 503."""
     pool = request.app.state.sandbox_pool
-    for h in pool.handles_snapshot():
-        if h.session_id == session_id:
-            return h
-    raise HTTPException(
-        status_code=503,
-        detail="sandbox not provisioned for this session yet",
-    )
+    handle = pool.handle_for(session_id) if hasattr(pool, "handle_for") else None
+    if handle is None:
+        # Legacy fallback for any pool stub that lacks ``handle_for``.
+        for h in pool.handles_snapshot():
+            if h.session_id == session_id:
+                handle = h
+                break
+    if handle is None:
+        raise HTTPException(
+            status_code=503,
+            detail="sandbox not provisioned for this session yet",
+        )
+    return handle
 
 
 def _count_lines(text: str) -> int:
@@ -161,14 +168,18 @@ async def get_session_endpoint(
     return SessionDetail.model_validate(base)
 
 
-@router.get("/{session_id}/ws-token", summary="Mint a short-lived WS auth token")
+@router.get(
+    "/{session_id}/ws-token",
+    response_model=WsTokenRead,
+    summary="Mint a short-lived WS auth token",
+)
 async def get_ws_token(
     session_id: uuid.UUID,
     user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, str | int]:
+) -> WsTokenRead:
     await _require_owned_session(db, session_id, user)
-    return {"token": issue_ws_token(str(session_id)), "ttl_seconds": 60}
+    return WsTokenRead(token=issue_ws_token(str(session_id)), ttl_seconds=60)
 
 
 # ---------------------------------------------------------------------------
@@ -512,16 +523,7 @@ async def get_timeline(
         .order_by(SupervisionEvent.occurred_at)
     )
     events = list((await db.execute(stmt)).scalars().all())
-    return [
-        SupervisionEventRead(
-            id=ev.id,
-            session_id=str(ev.session_id),
-            event_type=ev.event_type,
-            payload=ev.payload,
-            occurred_at=ev.occurred_at.isoformat(),
-        )
-        for ev in events
-    ]
+    return [SupervisionEventRead.model_validate(ev) for ev in events]
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,7 @@ from app.profiles.router import router as profiles_router
 from app.reports.router import router as reports_router
 from app.sandbox.pool import SandboxPool
 from app.sessions.router import router as sessions_router
+from app.status.router import api_v1_router as status_v1_router
 from app.status.router import router as status_router
 
 
@@ -164,6 +165,7 @@ def create_app() -> FastAPI:
     # ---- routers ----
     app.include_router(health_router)  # /healthz at root
     app.include_router(status_router)  # /status at root (public; no /api/v1 prefix)
+    app.include_router(status_v1_router, prefix="/api/v1")  # /api/v1/status alias
     app.include_router(missions_router, prefix="/api/v1")
     app.include_router(sessions_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")

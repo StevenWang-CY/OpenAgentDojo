@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import { getCsrfToken, getReport, markDiffOpened } from "@/lib/api";
 
 /**
@@ -9,6 +9,9 @@ import { getCsrfToken, getReport, markDiffOpened } from "@/lib/api";
  *   - serialises `getReport(share)` as `?share=…`,
  *   - posts `{path}` on `markDiffOpened`.
  */
+
+type FetchArgs = [input: string | URL | Request, init?: RequestInit];
+type FetchMock = MockInstance<(...args: FetchArgs) => Promise<Response>>;
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -49,9 +52,9 @@ describe("getCsrfToken", () => {
 describe("CSRF header injection", () => {
   it("adds X-Csrf-Token on POST when the cookie is set", async () => {
     setCookie("arena_csrf=tok-xyz");
-    const fetchMock = vi.fn<typeof fetch>(
-      async () =>
-        new Response("", {
+    const fetchMock: FetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(null, {
           status: 204,
           headers: { "content-type": "application/json" },
         })
@@ -71,8 +74,8 @@ describe("CSRF header injection", () => {
 
   it("omits the header on GET requests", async () => {
     setCookie("arena_csrf=tok-xyz");
-    const fetchMock = vi.fn<typeof fetch>(
-      async () =>
+    const fetchMock: FetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
         new Response(JSON.stringify({}), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -88,9 +91,9 @@ describe("CSRF header injection", () => {
 
   it("still sends a POST when no cookie is set (server returns 403 cleanly)", async () => {
     setCookie("");
-    const fetchMock = vi.fn<typeof fetch>(
-      async () =>
-        new Response("", {
+    const fetchMock: FetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(null, {
           status: 204,
           headers: { "content-type": "application/json" },
         })
@@ -106,8 +109,8 @@ describe("CSRF header injection", () => {
 
 describe("getReport share-token plumbing", () => {
   it("appends ?share=… when a share token is provided", async () => {
-    const fetchMock = vi.fn<typeof fetch>(
-      async () =>
+    const fetchMock: FetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
         new Response(JSON.stringify({}), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -123,8 +126,8 @@ describe("getReport share-token plumbing", () => {
   });
 
   it("does not append share=… when share is null", async () => {
-    const fetchMock = vi.fn<typeof fetch>(
-      async () =>
+    const fetchMock: FetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
         new Response(JSON.stringify({}), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -141,9 +144,9 @@ describe("getReport share-token plumbing", () => {
 
 describe("markDiffOpened path body", () => {
   it("posts {path} as the request body", async () => {
-    const fetchMock = vi.fn<typeof fetch>(
-      async () =>
-        new Response("", {
+    const fetchMock: FetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(null, {
           status: 204,
           headers: { "content-type": "application/json" },
         })

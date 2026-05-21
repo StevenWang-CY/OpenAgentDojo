@@ -22,9 +22,7 @@ from loguru import logger
 from app.config import Settings
 
 
-async def send_magic_link_email(
-    to_email: str, magic_url: str, settings: Settings
-) -> bool:
+async def send_magic_link_email(to_email: str, magic_url: str, settings: Settings) -> bool:
     """Dispatch the magic-link email. Returns True when *some* backend succeeded."""
     if settings.resend_api_key:
         sent = await _send_via_resend(to_email, magic_url, settings)

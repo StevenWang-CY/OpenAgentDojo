@@ -107,13 +107,17 @@ async def _s3_ok_bounded() -> bool:
 
 @router.get("/healthz", summary="Liveness probe")
 async def healthz() -> dict[str, Any]:
+    """Cheap liveness probe — no DB / Redis touches.
+
+    Kubernetes / load balancers should hit this every second; the heavier
+    DB+Redis check lives at ``/healthz/ready``.
+    """
     settings = get_settings()
     return {
         "status": "ok",
-        "db": await _db_ok_bounded(),
-        "redis": await _redis_ok_bounded(),
         "sandbox_driver": settings.sandbox_driver,
         "env": settings.arena_env,
+        "version": __version__,
     }
 
 

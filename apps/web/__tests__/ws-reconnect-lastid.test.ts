@@ -73,23 +73,32 @@ describe("buildWsUrl extras", () => {
 
 describe("createReconnectingSocket — last_id on reconnect", () => {
   it("re-resolves query params on every connect attempt", async () => {
+    // The resolver reads a closure variable that the test mutates between
+    // connect attempts to simulate "events arrived since last connect".
     let lastId = 0;
+    let connectCount = 0;
     const handle = createReconnectingSocket({
       url: "ws://example/ws/events",
-      resolveQueryParams: () => (lastId > 0 ? { last_id: lastId } : {}),
+      resolveQueryParams: () => {
+        connectCount += 1;
+        // After the first connect resolves params, bump `lastId` so the
+        // *next* connect picks up a fresh value rather than a stale ref.
+        if (connectCount === 1) {
+          // Schedule the mutation after this synchronous resolver call.
+          queueMicrotask(() => {
+            lastId = 17;
+          });
+        }
+        return lastId > 0 ? { last_id: lastId } : {};
+      },
       initialBackoffMs: 1,
       maxBackoffMs: 1,
       maxAttempts: 3,
     });
 
-    // Let the first connect + close fire.
-    await vi.advanceTimersByTimeAsync(5);
+    // Let the first connect + close + reconnect (with new last_id) fire.
+    await vi.advanceTimersByTimeAsync(20);
 
-    // Pretend a few events flowed in between connects.
-    lastId = 17;
-    await vi.advanceTimersByTimeAsync(5);
-
-    // The second URL must carry the freshest last_id, not the stale one.
     expect(ctorCalls.length).toBeGreaterThanOrEqual(2);
     const firstUrl = ctorCalls[0]!.url;
     const secondUrl = ctorCalls[1]!.url;

@@ -1056,6 +1056,31 @@
         "title": "SessionRead",
         "type": "object"
       },
+      "ShareTokenRead": {
+        "description": "Response payload for ``POST /reports/{id}/share``.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "share_token": {
+            "title": "Share Token",
+            "type": "string"
+          },
+          "share_url": {
+            "title": "Share Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "share_token",
+          "share_url",
+          "expires_at"
+        ],
+        "title": "ShareTokenRead",
+        "type": "object"
+      },
       "SubmissionRead": {
         "properties": {
           "created_at": {
@@ -1170,6 +1195,88 @@
         "title": "UnifiedDiff",
         "type": "object"
       },
+      "UserRead": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "csrf_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Csrf Token"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "github_login": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Github Login"
+          },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_login_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login At"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "created_at"
+        ],
+        "title": "UserRead",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1208,6 +1315,25 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "WsTokenRead": {
+        "description": "Response payload for ``GET /sessions/{id}/ws-token``.",
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "title": "Ttl Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "token",
+          "ttl_seconds"
+        ],
+        "title": "WsTokenRead",
         "type": "object"
       }
     }
@@ -1260,8 +1386,29 @@
         ]
       }
     },
+    "/api/v1/auth/csrf-refresh": {
+      "post": {
+        "description": "Explicit endpoint to rotate the CSRF cookie.\n\nUseful for tooling / Selenium that wants a fresh token without going\nthrough ``/auth/callback``.",
+        "operationId": "post_csrf_refresh_api_v1_auth_csrf_refresh_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Force-rotate the CSRF token (clears the existing cookie)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/logout": {
       "post": {
+        "description": "Clear the session cookie and revoke its JTI so the token cannot replay.",
         "operationId": "post_logout_api_v1_auth_logout_post",
         "responses": {
           "204": {
@@ -1276,6 +1423,7 @@
     },
     "/api/v1/auth/magic-link": {
       "post": {
+        "description": "Issue a magic-link email.\n\nAlways returns 204 — we deliberately do NOT distinguish between \"user\nexists / email sent\" and \"delivery failed\" so we can't be used as an\naccount-existence oracle. Internal observability still records the\nfailure via :func:`loguru.warning`.",
         "operationId": "post_magic_link_api_v1_auth_magic_link_post",
         "requestBody": {
           "content": {
@@ -1315,7 +1463,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
               }
             },
             "description": "Successful Response"
@@ -1334,7 +1484,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
               }
             },
             "description": "Successful Response"
@@ -1520,7 +1672,7 @@
     },
     "/api/v1/reports/{submission_id}/share": {
       "post": {
-        "description": "Owner-only: returns ``{share_url, share_token, expires_at}`` (TTL 30d).",
+        "description": "Owner-only: returns the share URL and token (TTL 30d).",
         "operationId": "post_share_api_v1_reports__submission_id__share_post",
         "parameters": [
           {
@@ -1539,9 +1691,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Post Share Api V1 Reports  Submission Id  Share Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ShareTokenRead"
                 }
               }
             },
@@ -2315,18 +2465,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "integer"
-                      }
-                    ]
-                  },
-                  "title": "Response Get Ws Token Api V1 Sessions  Session Id  Ws Token Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WsTokenRead"
                 }
               }
             },
@@ -2349,8 +2488,32 @@
         ]
       }
     },
+    "/api/v1/status": {
+      "get": {
+        "operationId": "status_v1_api_v1_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Status V1 Api V1 Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "API status (v1 alias for public /status)",
+        "tags": [
+          "status"
+        ]
+      }
+    },
     "/healthz": {
       "get": {
+        "description": "Cheap liveness probe — no DB / Redis touches.\n\nKubernetes / load balancers should hit this every second; the heavier\nDB+Redis check lives at ``/healthz/ready``.",
         "operationId": "healthz_healthz_get",
         "responses": {
           "200": {

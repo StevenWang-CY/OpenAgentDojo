@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CommandCategory = Literal["test", "typecheck", "lint", "manual", "other"]
 
@@ -64,11 +64,27 @@ class CommandRunResponse(BaseModel):
 class SupervisionEventRead(BaseModel):
     """A single supervision event from the timeline."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     session_id: str
     event_type: str
     payload: dict = Field(default_factory=dict)
     occurred_at: str
+
+    @field_validator("session_id", mode="before")
+    @classmethod
+    def _stringify_session_id(cls, value: Any) -> Any:
+        return str(value) if value is not None else value
+
+    @field_validator("occurred_at", mode="before")
+    @classmethod
+    def _stringify_occurred_at(cls, value: Any) -> Any:
+        from datetime import datetime as _dt
+
+        if isinstance(value, _dt):
+            return value.isoformat()
+        return value
 
 
 class FileTreeNodeSchema(BaseModel):

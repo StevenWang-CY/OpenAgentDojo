@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 from loguru import logger
 from sqlalchemy import update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -81,6 +82,7 @@ async def _claim_for_submit(db: AsyncSession, session: SessionRow) -> bool:
         .where(SessionRow.id == session.id, SessionRow.status == "active")
         .values(status="submitting")
     )
+    assert isinstance(result, CursorResult), "UPDATE should return a CursorResult"
     if result.rowcount == 0:
         return False
     # Reflect the new value on the ORM instance for downstream code.

@@ -246,7 +246,9 @@ class MissionManifest(BaseModel):
     reward_signals: RewardSignals = Field(default_factory=RewardSignals)
 
     expected_diff_lines_p50: int = 20
-    published: bool = True
+    # Default False so a half-written mission can't accidentally ship to the
+    # public catalog. Each curated mission must opt in explicitly (P2-B2).
+    published: bool = False
 
     @field_validator("expected_files")
     @classmethod

@@ -21,6 +21,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/auth/csrf-refresh': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Force-rotate the CSRF token (clears the existing cookie)
+     * @description Explicit endpoint to rotate the CSRF cookie.
+     *
+     *     Useful for tooling / Selenium that wants a fresh token without going
+     *     through ``/auth/callback``.
+     */
+    post: operations['post_csrf_refresh_api_v1_auth_csrf_refresh_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/auth/logout': {
     parameters: {
       query?: never;
@@ -30,7 +53,10 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Clear the session cookie */
+    /**
+     * Clear the session cookie
+     * @description Clear the session cookie and revoke its JTI so the token cannot replay.
+     */
     post: operations['post_logout_api_v1_auth_logout_post'];
     delete?: never;
     options?: never;
@@ -47,7 +73,15 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Request a magic login link */
+    /**
+     * Request a magic login link
+     * @description Issue a magic-link email.
+     *
+     *     Always returns 204 — we deliberately do NOT distinguish between "user
+     *     exists / email sent" and "delivery failed" so we can't be used as an
+     *     account-existence oracle. Internal observability still records the
+     *     failure via :func:`loguru.warning`.
+     */
     post: operations['post_magic_link_api_v1_auth_magic_link_post'];
     delete?: never;
     options?: never;
@@ -184,7 +218,7 @@ export interface paths {
     put?: never;
     /**
      * Mint a 30-day share token for a report
-     * @description Owner-only: returns ``{share_url, share_token, expires_at}`` (TTL 30d).
+     * @description Owner-only: returns the share URL and token (TTL 30d).
      */
     post: operations['post_share_api_v1_reports__submission_id__share_post'];
     delete?: never;
@@ -488,6 +522,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** API status (v1 alias for public /status) */
+    get: operations['status_v1_api_v1_status_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/healthz': {
     parameters: {
       query?: never;
@@ -495,7 +546,13 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Liveness probe */
+    /**
+     * Liveness probe
+     * @description Cheap liveness probe — no DB / Redis touches.
+     *
+     *     Kubernetes / load balancers should hit this every second; the heavier
+     *     DB+Redis check lives at ``/healthz/ready``.
+     */
     get: operations['healthz_healthz_get'];
     put?: never;
     post?: never;
@@ -1080,6 +1137,21 @@ export interface components {
        */
       user_id: string;
     };
+    /**
+     * ShareTokenRead
+     * @description Response payload for ``POST /reports/{id}/share``.
+     */
+    ShareTokenRead: {
+      /**
+       * Expires At
+       * Format: date-time
+       */
+      expires_at: string;
+      /** Share Token */
+      share_token: string;
+      /** Share Url */
+      share_url: string;
+    };
     /** SubmissionRead */
     SubmissionRead: {
       /**
@@ -1146,6 +1218,34 @@ export interface components {
       /** Unified Diff */
       unified_diff: string;
     };
+    /** UserRead */
+    UserRead: {
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Csrf Token */
+      csrf_token?: string | null;
+      /** Display Name */
+      display_name?: string | null;
+      /**
+       * Email
+       * Format: email
+       */
+      email: string;
+      /** Github Login */
+      github_login?: string | null;
+      /** Handle */
+      handle?: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Last Login At */
+      last_login_at?: string | null;
+    };
     /** ValidationError */
     ValidationError: {
       /** Context */
@@ -1158,6 +1258,16 @@ export interface components {
       msg: string;
       /** Error Type */
       type: string;
+    };
+    /**
+     * WsTokenRead
+     * @description Response payload for ``GET /sessions/{id}/ws-token``.
+     */
+    WsTokenRead: {
+      /** Token */
+      token: string;
+      /** Ttl Seconds */
+      ttl_seconds: number;
     };
   };
   responses: never;
@@ -1196,6 +1306,26 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_csrf_refresh_api_v1_auth_csrf_refresh_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
         };
       };
     };
@@ -1264,7 +1394,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': unknown;
+          'application/json': components['schemas']['UserRead'];
         };
       };
     };
@@ -1284,7 +1414,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': unknown;
+          'application/json': components['schemas']['UserRead'];
         };
       };
     };
@@ -1422,9 +1552,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': components['schemas']['ShareTokenRead'];
         };
       };
       /** @description Validation Error */
@@ -1946,9 +2074,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: string | number;
-          };
+          'application/json': components['schemas']['WsTokenRead'];
         };
       };
       /** @description Validation Error */
@@ -1958,6 +2084,28 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  status_v1_api_v1_status_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            [key: string]: unknown;
+          };
         };
       };
     };

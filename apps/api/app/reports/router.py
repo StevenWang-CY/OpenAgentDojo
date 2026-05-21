@@ -14,10 +14,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +27,7 @@ from app.db.session import get_db
 from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.user import User
+from app.schemas.auth import ShareTokenRead
 from app.schemas.submission import SubmissionRead
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -36,9 +36,32 @@ _SHARE_ALG = "HS256"
 _SHARE_TTL_DAYS = 30
 
 
+class ShareTokenError(Exception):
+    """Raised when a share token cannot be decoded.
+
+    ``reason`` distinguishes ``"expired"`` from ``"invalid"`` so the route
+    can surface a useful 400 body rather than the historical opaque "not
+    found".
+    """
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 # ---------------------------------------------------------------------------
 # Share-token helpers
 # ---------------------------------------------------------------------------
+
+
+def _share_secret(settings: Settings) -> str:
+    """Return the share-token signing secret.
+
+    Prefers a dedicated ``share_token_secret`` so rotating session cookies
+    doesn't also invalidate every outstanding share URL. Falls back to the
+    session secret for back-compat with older deployments.
+    """
+    return settings.share_token_secret or settings.session_secret
 
 
 def issue_share_token(submission_id: uuid.UUID, settings: Settings) -> tuple[str, datetime]:
@@ -51,21 +74,34 @@ def issue_share_token(submission_id: uuid.UUID, settings: Settings) -> tuple[str
         "iat": int(now.timestamp()),
         "exp": int(exp.timestamp()),
     }
-    token = jwt.encode(payload, settings.session_secret, algorithm=_SHARE_ALG)
+    token = jwt.encode(payload, _share_secret(settings), algorithm=_SHARE_ALG)
     return token, exp
 
 
-def decode_share_token(token: str, settings: Settings) -> uuid.UUID | None:
-    """Decode a share token; return the submission_id or None on any failure."""
+def decode_share_token_strict(token: str, settings: Settings) -> uuid.UUID:
+    """Decode a share token or raise :class:`ShareTokenError`."""
     try:
-        payload = jwt.decode(token, settings.session_secret, algorithms=[_SHARE_ALG])
-        if payload.get("kind") != "report-share":
-            return None
-        sub = payload.get("sub")
-        if not isinstance(sub, str):
-            return None
+        payload = jwt.decode(token, _share_secret(settings), algorithms=[_SHARE_ALG])
+    except ExpiredSignatureError as exc:
+        raise ShareTokenError("expired", "share link has expired") from exc
+    except JWTError as exc:
+        raise ShareTokenError("invalid", "share link signature invalid") from exc
+    if payload.get("kind") != "report-share":
+        raise ShareTokenError("invalid", "share link is for a different resource")
+    sub = payload.get("sub")
+    if not isinstance(sub, str):
+        raise ShareTokenError("invalid", "share link payload malformed")
+    try:
         return uuid.UUID(sub)
-    except (JWTError, ValueError):
+    except ValueError as exc:
+        raise ShareTokenError("invalid", "share link payload malformed") from exc
+
+
+def decode_share_token(token: str, settings: Settings) -> uuid.UUID | None:
+    """Lenient wrapper that returns None on any decode failure (back-compat)."""
+    try:
+        return decode_share_token_strict(token, settings)
+    except ShareTokenError:
         return None
 
 
@@ -159,8 +195,22 @@ async def get_report(
 
     share_ok = False
     if share:
-        share_sub = decode_share_token(share, settings)
-        share_ok = share_sub == submission_id
+        try:
+            share_sub = decode_share_token_strict(share, settings)
+            share_ok = share_sub == submission_id
+            if not share_ok:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "reason": "invalid",
+                        "message": "share link is for a different submission",
+                    },
+                )
+        except ShareTokenError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"reason": exc.reason, "message": str(exc)},
+            ) from exc
 
     if not share_ok:
         if user is None:
@@ -174,14 +224,15 @@ async def get_report(
 
 @router.post(
     "/{submission_id}/share",
+    response_model=ShareTokenRead,
     summary="Mint a 30-day share token for a report",
 )
 async def post_share(
     submission_id: uuid.UUID,
     user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, Any]:
-    """Owner-only: returns ``{share_url, share_token, expires_at}`` (TTL 30d)."""
+) -> ShareTokenRead:
+    """Owner-only: returns the share URL and token (TTL 30d)."""
     settings = get_settings()
     _submission, session = await _fetch_submission(db, submission_id)
 
@@ -192,11 +243,11 @@ async def post_share(
     base = (settings.web_origin or "http://localhost:3000").rstrip("/")
     share_url = f"{base}/report/{submission_id}?share={token}"
 
-    return {
-        "share_token": token,
-        "share_url": share_url,
-        "expires_at": expires_at.isoformat(),
-    }
+    return ShareTokenRead(
+        share_token=token,
+        share_url=share_url,
+        expires_at=expires_at,
+    )
 
 
 __all__ = ["decode_share_token", "issue_share_token", "router"]

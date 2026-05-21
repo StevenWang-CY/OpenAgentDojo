@@ -39,7 +39,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if any(path.endswith(suffix) or path == suffix for suffix in _EXEMPT_PATHS):
+        # Exact match only — endswith was a footgun (e.g. ``/api/v1/auth/magic-link``
+        # would also exempt any future ``…/auth/magic-link`` sub-route).
+        if path in _EXEMPT_PATHS:
             return await call_next(request)
 
         # WebSocket upgrade requests are GET, but keep an explicit guard.

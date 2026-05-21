@@ -133,6 +133,9 @@ class SandboxPool:
         self._driver = _ActivityTrackedDriver(raw_driver)
         self._semaphore = asyncio.Semaphore(self.settings.sandbox_max_concurrent)
         self._handles: dict[str, SandboxHandle] = {}
+        # Reverse index for ``handle_for`` — keeps the linear scan off the hot
+        # path of every workspace request (P1-B13).
+        self._handles_by_session: dict[uuid.UUID, SandboxHandle] = {}
         self._lock = asyncio.Lock()
         self._closed = False
 
@@ -157,6 +160,7 @@ class SandboxPool:
 
         async with self._lock:
             self._handles[handle.id] = handle
+            self._handles_by_session[handle.session_id] = handle
         sessions_active.inc()
         logger.debug("sandbox pool: acquired {} ({} active)", handle.id, len(self._handles))
         return handle
@@ -164,6 +168,7 @@ class SandboxPool:
     async def release(self, handle: SandboxHandle) -> None:
         async with self._lock:
             existed = self._handles.pop(handle.id, None) is not None
+            self._handles_by_session.pop(handle.session_id, None)
 
         if existed:
             sessions_active.dec()
@@ -177,6 +182,10 @@ class SandboxPool:
 
     def get(self, handle_id: str) -> SandboxHandle | None:
         return self._handles.get(handle_id)
+
+    def handle_for(self, session_id: uuid.UUID) -> SandboxHandle | None:
+        """O(1) lookup of an active handle by ``session_id``."""
+        return self._handles_by_session.get(session_id)
 
     def handles_snapshot(self) -> list[SandboxHandle]:
         """Return a copy of the active handles — safe to iterate concurrently."""

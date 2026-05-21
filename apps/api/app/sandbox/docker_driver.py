@@ -198,13 +198,21 @@ class DockerSandboxDriver(SandboxDriver):
             stream, _stat = container.get_archive(path)
             buf = io.BytesIO(b"".join(stream))
             buf.seek(0)
+            saw_member = False
             with tarfile.open(fileobj=buf, mode="r|") as tar:
                 for member in tar:
+                    saw_member = True
+                    if member.isdir():
+                        # Explicitly signal directory so the caller can 404
+                        # rather than silently returning empty bytes (P1-B22).
+                        raise IsADirectoryError(path)
                     if member.isfile():
                         extracted = tar.extractfile(member)
                         if extracted is None:
                             return b""
                         return extracted.read()
+            if not saw_member:
+                raise FileNotFoundError(path)
             return b""
 
         return await asyncio.to_thread(_read)
@@ -226,29 +234,33 @@ class DockerSandboxDriver(SandboxDriver):
 
     async def list_tree(self, handle: SandboxHandle, root: str = "/workspace") -> FileTreeNode:
         # We shell out to `find`: cheaper than fetching the whole archive.
+        # Null-separated output so paths containing whitespace (incl. tabs)
+        # parse correctly (P1-B22).
         result = await self.run(
             handle,
             [
                 "/bin/sh",
                 "-c",
                 f"cd {shlex.quote(root)} && find . -maxdepth 8 -mindepth 1 "
-                "-not -path '*/\\.git*' -printf '%y\\t%s\\t%p\\n'",
+                "-not -path '*/\\.git*' -printf '%y\\0%s\\0%p\\0'",
             ],
             timeout_s=15,
         )
         out = FileTreeNode(path=root, kind="dir")
-        for line in result.stdout.splitlines():
-            parts = line.split("\t")
-            if len(parts) != 3:
+        tokens = result.stdout.split("\0")
+        # Records come in triples (kind, size, path); ignore the trailing empty.
+        for i in range(0, len(tokens) - 1, 3):
+            triple = tokens[i : i + 3]
+            if len(triple) < 3:
                 continue
-            kind_char, size_str, rel = parts
+            kind_char, size_str, rel = triple
             try:
                 size = int(size_str)
             except ValueError:
                 size = 0
             out.children.append(
                 FileTreeNode(
-                    path=rel.lstrip("./") or ".",
+                    path=rel.removeprefix("./") or ".",
                     kind="dir" if kind_char == "d" else "file",
                     size=size,
                 )
@@ -267,12 +279,38 @@ class DockerSandboxDriver(SandboxDriver):
         timeout_s: int = 60,
         cwd: str | None = None,
     ) -> RunResult:
+        exec_id_holder: dict[str, str] = {}
+
         def _exec_run():
             container = self._container(handle)
-            kwargs: dict[str, Any] = {"demux": True, "tty": False}
+            client = self._ensure_client()
+            kwargs: dict[str, Any] = {"tty": False}
             if cwd:
                 kwargs["workdir"] = cwd
-            return container.exec_run(cmd, **kwargs)
+            # Two-step create+start so we can capture the exec id and signal
+            # it on timeout (P1-B21). ``exec_run`` hides the id.
+            exec_id = client.api.exec_create(container.id, cmd=cmd, **kwargs)["Id"]
+            exec_id_holder["id"] = exec_id
+            stream = client.api.exec_start(exec_id, demux=True, tty=False)
+            stdout_b, stderr_b = stream if isinstance(stream, tuple) else (stream, b"")
+            info = client.api.exec_inspect(exec_id)
+            exit_code = info.get("ExitCode")
+            return exit_code, (stdout_b or b"", stderr_b or b"")
+
+        def _kill_exec() -> None:
+            """Best-effort kill of the exec process started for this run."""
+            exec_id = exec_id_holder.get("id")
+            if not exec_id:
+                return
+            try:
+                client = self._ensure_client()
+                info = client.api.exec_inspect(exec_id)
+                pid = info.get("Pid")
+                if pid:
+                    container = self._container(handle)
+                    container.kill(signal="SIGKILL")  # nuke the whole exec
+            except Exception as exc:  # pragma: no cover — best-effort
+                logger.debug("docker exec kill failed for {}: {}", exec_id, exc)
 
         started = time.monotonic()
         timed_out = False
@@ -282,6 +320,7 @@ class DockerSandboxDriver(SandboxDriver):
             )
         except TimeoutError:
             timed_out = True
+            await asyncio.to_thread(_kill_exec)
             exit_code, stdout_b, stderr_b = -1, b"", b"timeout"
 
         return RunResult(

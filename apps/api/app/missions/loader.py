@@ -83,7 +83,13 @@ class MissionLoader:
         """Like ``scan`` but raises a single aggregated error if any fail."""
         return self.scan()
 
-    def _load_one(self, manifest_path: Path) -> LoadedMission:
+    def load_manifest(self, manifest_path: Path) -> LoadedMission:
+        """Load a single ``mission.yaml`` into a :class:`LoadedMission`.
+
+        Public surface promoted from the legacy ``_load_one`` so external
+        callers don't reach into a private name (P2-B3). ``_load_one`` is
+        retained as an alias for back-compat with tests.
+        """
         raw_bytes = manifest_path.read_bytes()
         sha = hashlib.sha256(raw_bytes).hexdigest()
         data = yaml.safe_load(raw_bytes.decode("utf-8"))
@@ -91,6 +97,9 @@ class MissionLoader:
             raise ValueError(f"{manifest_path} did not parse to a mapping")
         manifest = MissionManifest.model_validate(data)
         return LoadedMission(manifest=manifest, folder=manifest_path.parent, manifest_sha256=sha)
+
+    # Back-compat alias for the historical private name.
+    _load_one = load_manifest
 
     # --------------------------------------------------------------- upsert
     async def upsert_catalog(self, db: Any) -> int:

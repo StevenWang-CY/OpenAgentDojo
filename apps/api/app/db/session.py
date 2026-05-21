@@ -49,7 +49,23 @@ def _build_sessionmaker() -> async_sessionmaker[AsyncSession]:
     )
 
 
+# Module-level sessionmaker — kept as a mutable attribute (not lru_cached) so
+# tests can rebind via ``app.db.session.AsyncSessionLocal = ...`` after a fresh
+# engine override. ``get_db`` always reads through this attribute so the
+# override is picked up immediately.
 AsyncSessionLocal: async_sessionmaker[AsyncSession] = _build_sessionmaker()
+
+
+def reset_sessionmaker() -> None:
+    """Drop the cached engine + rebuild the sessionmaker.
+
+    Test helper for fixtures that change the configured DATABASE_URL between
+    tests — call this after mutating settings to ensure a fresh engine is
+    constructed on the next request.
+    """
+    global AsyncSessionLocal  # noqa: PLW0603 — intentional module-level rebind for tests
+    get_engine.cache_clear()
+    AsyncSessionLocal = _build_sessionmaker()
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
@@ -64,7 +80,9 @@ async def get_db() -> AsyncIterator[AsyncSession]:
     # only needs the engine.
     from app.sessions.events import clear_pending_publishes, drain_pending_publishes
 
-    async with AsyncSessionLocal() as session:
+    # Read through the module attribute so test rebinds take effect.
+    session_local = AsyncSessionLocal
+    async with session_local() as session:
         try:
             yield session
         except Exception:

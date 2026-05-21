@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from alembic import context
+from app import models  # noqa: F401  — side-effect: registers models
+
 # Register all models on Base.metadata.
 from app.config import get_settings
 from app.db.base import Base
-from app import models  # noqa: F401  — side-effect: registers models
 
 config = context.config
 

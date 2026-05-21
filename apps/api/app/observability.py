@@ -159,13 +159,16 @@ def _redact_filter(record: Any) -> bool:
     return True
 
 
-def _json_sink(message: Any) -> None:
-    """Loguru sink that writes one structured JSON object per record.
+def _json_format(record: Any) -> str:
+    """Loguru ``format=`` callback that emits a single redacted JSON line.
 
-    We bypass loguru's built-in ``serialize=True`` so we control the redaction
-    pass and the exact set of fields emitted (smaller, stable shape downstream).
+    We pre-redact ``record['extra']`` so the resulting JSON never carries a
+    sensitive field. The trailing ``{exception}`` placeholder lets loguru
+    attach its own multi-line traceback if one is associated with the record.
     """
-    record = message.record
+    extra = record.get("extra") or {}
+    if extra:
+        record["extra"] = _redact(extra)
     payload = {
         "timestamp": record["time"].isoformat(),
         "level": record["level"].name,
@@ -174,16 +177,20 @@ def _json_sink(message: Any) -> None:
         "line": record["line"],
         "message": record["message"],
     }
-    extra = record.get("extra") or {}
-    if extra:
-        payload["extra"] = _redact(extra)
+    if record.get("extra"):
+        payload["extra"] = record["extra"]
     exc = record.get("exception")
     if exc is not None:
         payload["exception"] = {
             "type": getattr(exc.type, "__name__", str(exc.type)) if exc.type else None,
             "value": str(exc.value) if exc.value is not None else None,
         }
-    sys.stderr.write(json.dumps(payload, default=str) + "\n")
+    return json.dumps(payload, default=str) + "\n"
+
+
+def _json_sink(message: Any) -> None:
+    """Legacy sink kept for back-compat with anything importing it directly."""
+    sys.stderr.write(_json_format(message.record))
 
 
 def configure_logging(level: str = "INFO") -> None:

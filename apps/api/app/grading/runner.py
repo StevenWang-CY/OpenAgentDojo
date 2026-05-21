@@ -241,9 +241,7 @@ class GradingRunner:
                     violations=[f"validator timed out after {PER_VALIDATOR_TIMEOUT_S}s"],
                 )
             except Exception as exc:
-                logger.error(
-                    "[grader] validator {} raised: {}", kind, exc, exc_info=True
-                )
+                logger.error("[grader] validator {} raised: {}", kind, exc, exc_info=True)
                 vr = ValidatorResult(
                     kind=str(kind),
                     passed=False,
@@ -504,15 +502,11 @@ def _read_workspace_file_sync(driver: Any, handle: Any, path: str) -> str | None
             ):
                 try:
                     raw = loop.run_until_complete(driver.read_file(handle, candidate))
-                except Exception:
+                except Exception:  # noqa: S112 — best-effort fallback across candidate paths; missing file is expected
                     continue
                 if raw is None:
                     continue
-                return (
-                    raw.decode("utf-8", errors="replace")
-                    if isinstance(raw, bytes)
-                    else str(raw)
-                )
+                return raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
         finally:
             loop.close()
         return None

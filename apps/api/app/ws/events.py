@@ -49,17 +49,41 @@ def _serialise(ev: SupervisionEvent) -> dict[str, Any]:
     }
 
 
+_BACKFILL_LIMIT = 500
+
+
 async def _backfill(session_id: uuid.UUID, last_id: int) -> list[dict[str, Any]]:
-    """Pull persisted events strictly newer than ``last_id`` from the DB."""
+    """Pull persisted events strictly newer than ``last_id`` from the DB.
+
+    Capped at ``_BACKFILL_LIMIT`` rows so a long-lived session doesn't blow
+    out the WS frame buffer on reconnect — the client can resume from the
+    highest-seen id by setting ``?last_id=``.
+    """
     async with AsyncSessionLocal() as db:
         stmt = (
             select(SupervisionEvent)
             .where(SupervisionEvent.session_id == session_id)
             .where(SupervisionEvent.id > last_id)
             .order_by(SupervisionEvent.id)
+            .limit(_BACKFILL_LIMIT)
         )
         result = await db.execute(stmt)
         return [_serialise(ev) for ev in result.scalars().all()]
+
+
+async def _session_exists(session_id: uuid.UUID) -> bool:
+    """Belt-and-braces existence check for the events WS upgrade."""
+    try:
+        from app.models.session import SessionRow
+
+        async with AsyncSessionLocal() as db:
+            row = (
+                await db.execute(select(SessionRow.id).where(SessionRow.id == session_id))
+            ).first()
+            return row is not None
+    except Exception as exc:  # pragma: no cover — defensive, no lockout
+        logger.debug("events WS existence check failed for {}: {}", session_id, exc)
+        return True
 
 
 def _is_graded(message: dict[str, Any]) -> bool:
@@ -186,6 +210,10 @@ async def events_ws(
     sid_str = str(session_id)
     if not verify_ws_token(token, sid_str):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="bad token")
+        return
+
+    if not await _session_exists(session_id):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="session not found")
         return
 
     await websocket.accept()

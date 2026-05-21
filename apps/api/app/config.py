@@ -147,12 +147,30 @@ class Settings(BaseSettings):
     def _coerce_sandbox_workdir(cls, v: object) -> Path:
         return Path(str(v)).expanduser()
 
+    # --- CORS ---
+    # Optional comma-separated additional origins beyond ``web_origin``.
+    # Useful when staging and prod share an API but live on different web
+    # hosts. Wildcard ``*`` is allowed in development only — production /
+    # staging must list each origin explicitly.
+    cors_extra_origins: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         """Origins permitted to call the API."""
-        # We deliberately keep this tight in MVP — just the configured frontend URL.
-        origin = self.web_origin or "http://localhost:3000"
-        return [origin]
+        origins: list[str] = []
+        primary = self.web_origin or "http://localhost:3000"
+        origins.append(primary)
+        extras = (self.cors_extra_origins or "").strip()
+        if extras:
+            origins.extend(o.strip() for o in extras.split(",") if o.strip())
+        # Deduplicate while preserving order.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for origin in origins:
+            if origin not in seen:
+                seen.add(origin)
+                deduped.append(origin)
+        return deduped
 
     @property
     def llm_provider(self) -> Literal["bedrock", "direct", "disabled"]:

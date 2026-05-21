@@ -5,6 +5,12 @@ Limits are keyed by either the authenticated user id (when available) or the
 client IP address. When Redis is unavailable we fail OPEN — rate-limiting is a
 defence-in-depth measure, not the only authn surface.
 
+IP-keyed caveat: behind a reverse proxy that doesn't forward the real client
+IP (``X-Forwarded-For`` etc.), every request looks like it's coming from the
+proxy — turning the per-IP limit into a global cap. Deploy with a proxy that
+forwards client IPs (and configure Starlette's ``ProxyHeadersMiddleware`` /
+your trusted proxy list) or switch the rule's ``key_by`` to ``"user"``.
+
 Limits (from §16 of the implementation plan):
 
   auth_magic_link     5  / min / IP
@@ -193,14 +199,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if redis is None:
             return self._memory.hit(bucket_key, window_s)
 
-        # Redis-backed fixed window: INCR + EXPIRE on first hit.
+        # Redis-backed fixed window: INCR + EXPIRE on first hit. Wrapped in
+        # ``wait_for`` so a wedged Redis can't stall the request indefinitely
+        # — the in-memory bucket is per-worker, not globally consistent, so
+        # the caveat is documented at the module top.
         try:
             pipe = redis.pipeline()
             pipe.incr(bucket_key)
             pipe.expire(bucket_key, window_s)
-            results = await pipe.execute()
+            results = await asyncio.wait_for(pipe.execute(), timeout=2.0)
             return int(results[0])
-        except Exception as exc:
+        except (TimeoutError, Exception) as exc:
             logger.warning("rate-limit redis hit failed, falling back: {}", exc)
             return self._memory.hit(bucket_key, window_s)
 

@@ -183,12 +183,19 @@ class LocalSandboxDriver(SandboxDriver):
         return target
 
     async def read_file(self, handle: SandboxHandle, path: str) -> bytes:
-        return self._resolve(handle, path).read_bytes()
+        target = self._resolve(handle, path)
+        # Off the event loop — a large mission file can stall the API
+        # otherwise (P1-B24).
+        return await asyncio.to_thread(target.read_bytes)
 
     async def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
         target = self._resolve(handle, path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+
+        def _write() -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
+        await asyncio.to_thread(_write)
 
     async def list_tree(self, handle: SandboxHandle, root: str = "/workspace") -> FileTreeNode:
         base = self._resolve(handle, root)
@@ -246,14 +253,18 @@ class LocalSandboxDriver(SandboxDriver):
 
     # ---------------------------------------------------------------- diff
     async def apply_diff(self, handle: SandboxHandle, diff_text: str) -> ApplyResult:
-        diff_file = handle.workdir / ".arena_patch.diff"
+        # Stage the patch outside the working tree so the patch file never
+        # appears in the user-visible diff (P1-B23).
+        diff_file = self.root / f".arena_patch_{handle.id}.diff"
         diff_file.write_text(diff_text, encoding="utf-8")
-        result = await self.run(
-            handle,
-            ["git", "apply", "--3way", "--whitespace=fix", str(diff_file)],
-            timeout_s=30,
-        )
-        diff_file.unlink(missing_ok=True)
+        try:
+            result = await self.run(
+                handle,
+                ["git", "apply", "--3way", "--whitespace=fix", str(diff_file)],
+                timeout_s=30,
+            )
+        finally:
+            diff_file.unlink(missing_ok=True)
         if result.exit_code != 0:
             return ApplyResult(applied=False, error=result.stderr or result.stdout)
 

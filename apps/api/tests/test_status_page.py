@@ -68,13 +68,13 @@ async def test_status_shape_is_complete(client, monkeypatch) -> None:
         "links",
     }
 
-    # Components.
-    assert set(body["components"].keys()) == {
-        "api",
-        "database",
-        "redis",
-        "object_storage",
-    }
+    # Components — P2-B6 adds sandbox_pool + workers so the FE can render
+    # a single-pane verdict without separate calls.
+    assert {"api", "database", "redis", "object_storage"}.issubset(
+        body["components"].keys()
+    )
+    assert "sandbox_pool" in body["components"]
+    assert "workers" in body["components"]
     for name, comp in body["components"].items():
         assert set(comp.keys()) == {"status", "checked_at"}, name
         assert comp["status"] in {"operational", "degraded", "down"}, name
@@ -102,6 +102,8 @@ async def test_status_operational_when_all_probes_pass(client, monkeypatch) -> N
     assert body["components"]["database"]["status"] == "operational"
     assert body["components"]["redis"]["status"] == "operational"
     assert body["components"]["object_storage"]["status"] == "operational"
+    assert body["components"]["sandbox_pool"]["status"] == "operational"
+    assert body["components"]["workers"]["status"] == "operational"
 
 
 @pytest.mark.asyncio

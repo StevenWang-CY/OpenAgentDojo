@@ -86,6 +86,15 @@ async def terminal_ws(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="bad token")
         return
 
+    # Belt-and-braces ownership check: the WS token was originally minted by a
+    # cookie-authenticated REST call (``/ws-token`` requires ``_require_owned_session``).
+    # If the session has since been deleted / abandoned we refuse the upgrade
+    # so a stolen-but-valid token can't be reused after the session lifecycle
+    # ended. Cookie-based ownership re-check is not possible over WS upgrade.
+    if not await _session_exists(session_id):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="session not found")
+        return
+
     await websocket.accept()
     pool = getattr(websocket.app.state, "sandbox_pool", None)
 
@@ -243,3 +252,26 @@ def _read_fd(fd: int, n: int) -> bytes:
         return os.read(fd, n)
     except OSError:
         return b""
+
+
+async def _session_exists(session_id: uuid.UUID) -> bool:
+    """Return True when ``session_id`` resolves to a non-deleted row.
+
+    Used as a belt-and-braces ownership check on WS upgrade — see
+    :func:`terminal_ws`. Returns True on DB error so a transient outage
+    doesn't lock out legitimate users.
+    """
+    try:
+        from sqlalchemy import select
+
+        from app.db.session import AsyncSessionLocal
+        from app.models.session import SessionRow
+
+        async with AsyncSessionLocal() as db:
+            row = (
+                await db.execute(select(SessionRow.id).where(SessionRow.id == session_id))
+            ).first()
+            return row is not None
+    except Exception as exc:  # pragma: no cover — defensive, no lockout
+        logger.debug("session existence check failed for {}: {}", session_id, exc)
+        return True

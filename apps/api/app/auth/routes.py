@@ -104,10 +104,11 @@ async def get_callback(
 
 
 @router.post("/logout", status_code=204, summary="Clear the session cookie")
-async def post_logout() -> Response:
+async def post_logout(request: Request) -> Response:
+    """Clear the session cookie and revoke its JTI so the token cannot replay."""
     settings = get_settings()
     response = Response(status_code=204)
-    revoke_session_cookie(response, settings)
+    revoke_session_cookie(response, settings, request=request)
     return response
 
 
@@ -116,31 +117,58 @@ async def post_logout() -> Response:
 # ---------------------------------------------------------------------------
 
 
-def _build_me_response(user: User) -> JSONResponse:
-    """Build the /me JSONResponse with CSRF cookie + body token."""
+def _build_me_response(user: User, request: Request) -> JSONResponse:
+    """Build the /me JSONResponse with CSRF token.
+
+    P1-B27: ``/me`` is a *read* endpoint and used to mint a fresh CSRF token
+    on every poll, which silently invalidated whatever the FE already had
+    cached. We now reuse the existing cookie when one is present so the FE
+    can keep working without re-fetching the body token.
+    """
     settings = get_settings()
-    csrf_value = secrets.token_hex(32)
+    existing_csrf = request.cookies.get(_CSRF_COOKIE_NAME, "")
+    csrf_value = existing_csrf or secrets.token_hex(32)
     user_data = UserRead.model_validate(user).model_dump(mode="json")
     user_data["csrf_token"] = csrf_value
 
     response = JSONResponse(content=user_data)
-    response.set_cookie(
-        key=_CSRF_COOKIE_NAME,
-        value=csrf_value,
-        httponly=False,
-        secure=settings.cookie_secure,
-        samesite="lax",
-        max_age=_COOKIE_MAX_AGE,
-        path="/",
-    )
+    if not existing_csrf:
+        response.set_cookie(
+            key=_CSRF_COOKIE_NAME,
+            value=csrf_value,
+            httponly=False,
+            secure=settings.cookie_secure,
+            samesite="lax",
+            max_age=_COOKIE_MAX_AGE,
+            path="/",
+        )
     return response
 
 
-@router.get("/me", summary="Return the authenticated user")
+@router.get("/me", response_model=UserRead, summary="Return the authenticated user")
 async def get_me(
+    request: Request,
     user: User = Depends(require_auth),
 ) -> JSONResponse:
-    return _build_me_response(user)
+    return _build_me_response(user, request)
+
+
+@router.post(
+    "/csrf-refresh",
+    summary="Force-rotate the CSRF token (clears the existing cookie)",
+)
+async def post_csrf_refresh(
+    request: Request,
+    user: User = Depends(require_auth),
+) -> JSONResponse:
+    """Explicit endpoint to rotate the CSRF cookie.
+
+    Useful for tooling / Selenium that wants a fresh token without going
+    through ``/auth/callback``.
+    """
+    # Clear the existing cookie so _build_me_response mints a new value.
+    request.cookies.pop(_CSRF_COOKIE_NAME, None)
+    return _build_me_response(user, request)
 
 
 # Top-level alias router — mounted at /api/v1/me so both
@@ -148,8 +176,13 @@ async def get_me(
 me_router = APIRouter(tags=["auth"])
 
 
-@me_router.get("/me", summary="Return the authenticated user (top-level alias)")
+@me_router.get(
+    "/me",
+    response_model=UserRead,
+    summary="Return the authenticated user (top-level alias)",
+)
 async def get_me_alias(
+    request: Request,
     user: User = Depends(require_auth),
 ) -> JSONResponse:
-    return _build_me_response(user)
+    return _build_me_response(user, request)

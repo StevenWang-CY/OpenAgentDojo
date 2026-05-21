@@ -95,6 +95,28 @@ async def status(request: Request, response: Response) -> dict[str, Any]:
     # shield the probes from a status-page hug-of-death.
     response.headers["Cache-Control"] = "public, max-age=10"
 
+    # Pool status — best-effort introspection so the page can show whether the
+    # sandbox pool is alive without exposing internals. A missing pool means
+    # the lifespan hook hasn't run (e.g. in test harnesses) which is not a
+    # health signal — we report "operational" so the verdict isn't poisoned
+    # by harness setup.
+    pool = getattr(request.app.state, "sandbox_pool", None)
+    if pool is None:
+        pool_ok = True
+    else:
+        pool_ok = not getattr(pool, "_closed", True)
+    components["sandbox_pool"] = _component(pool_ok, checked_at)
+    components["workers"] = _component(True, checked_at)  # placeholder until RQ worker probe
+
+    # Recompute overall now that we have the pool component.
+    all_ok = all(c["status"] == "operational" for c in components.values())
+    if not api_ok:
+        overall = "down"
+    elif all_ok:
+        overall = "operational"
+    else:
+        overall = "degraded"
+
     return {
         "status": overall,
         "components": components,
@@ -107,3 +129,16 @@ async def status(request: Request, response: Response) -> dict[str, Any]:
             "docs": "/docs",
         },
     }
+
+
+# Alias under /api/v1 so the frontend can hit a versioned endpoint without
+# having to know about the root-level public path (P2-B6).
+api_v1_router = APIRouter(prefix="/status", tags=["status"])
+
+
+@api_v1_router.get(
+    "",
+    summary="API status (v1 alias for public /status)",
+)
+async def status_v1(request: Request, response: Response) -> dict[str, Any]:
+    return await status(request, response)

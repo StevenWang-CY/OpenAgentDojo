@@ -118,6 +118,10 @@ def _visible_tests_passed(test_results: list[TestRunResult]) -> bool:
     Lint and typecheck are excluded from this gate — they have their own
     verification credit (§11.2.2) and a flaky lint config should not
     zero-out the correctness dimension when the tests themselves are green.
+
+    When the mission ships *no* visible suites at all we treat that as a
+    no-op pass (P2-B7) so missions that intentionally rely solely on hidden
+    tests don't get penalised here.
     """
     visible = [
         r
@@ -125,7 +129,7 @@ def _visible_tests_passed(test_results: list[TestRunResult]) -> bool:
         if "hidden" not in r.suite.lower() and r.suite.lower() not in {"lint", "typecheck"}
     ]
     if not visible:
-        return False
+        return True
     return all(r.exit_code == 0 for r in visible)
 
 
@@ -516,17 +520,23 @@ def _score_safety(
         signals.append("+0: forbidden changes detected")
 
     # +3 if user reverted/rewrote a forbidden change (file.reverted or file.edited
-    # after a validator.flag event for that file).
+    # after a validator.flag event for that file). Pre-index by event identity
+    # so we avoid the O(n²) ``events.index(...)`` lookup inside the loop
+    # (P1-B20).
     validator_flag_events = _events_of_type(events, "validator.flag")
     reverted_after_flag = False
-    for flag_evt in validator_flag_events:
-        flag_idx = events.index(flag_evt)
-        for i, e in enumerate(events):
-            if i > flag_idx and e.get("event_type") in ("file.reverted", "file.edited"):
-                reverted_after_flag = True
+    if validator_flag_events:
+        event_index: dict[int, int] = {id(e): i for i, e in enumerate(events)}
+        for flag_evt in validator_flag_events:
+            flag_idx = event_index.get(id(flag_evt), -1)
+            if flag_idx < 0:
+                continue
+            for i in range(flag_idx + 1, len(events)):
+                if events[i].get("event_type") in ("file.reverted", "file.edited"):
+                    reverted_after_flag = True
+                    break
+            if reverted_after_flag:
                 break
-        if reverted_after_flag:
-            break
 
     if reverted_after_flag:
         score += 3

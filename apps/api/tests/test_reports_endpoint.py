@@ -155,7 +155,14 @@ async def test_bad_share_token_rejected(client, db_engine) -> None:
     resp = await client.get(
         f"/api/v1/reports/{submission_id}?share=this-is-not-a-jwt"
     )
-    assert resp.status_code == 401
+    # The route now returns a structured 400 when a share param is present but
+    # cannot be validated (clearer than a generic 401 for someone with a
+    # malformed link). The detail carries a ``reason`` so the FE can render an
+    # informative "your share link is broken" state.
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert body["detail"]["reason"] in {"invalid", "expired", "malformed"}
+    assert "share link" in body["detail"]["message"].lower()
 
 
 @pytest.mark.asyncio

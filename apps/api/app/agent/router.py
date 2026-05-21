@@ -30,7 +30,7 @@ from app.agent.service import AgentService, _find_mission_folder
 from app.auth.deps import require_auth
 from app.config import get_settings
 from app.db.session import get_db
-from app.missions.router import _cached_manifests
+from app.missions.cache import cached_manifests
 from app.models.user import User
 from app.schemas.agent_turn import AgentTurnResponse, PatchResult
 from app.schemas.session import ContextSelection
@@ -93,7 +93,7 @@ def _resolve_mission_folder(mission_id: str) -> Path:
 
 
 def _resolve_manifest(mission_id: str) -> Any:
-    loaded = _cached_manifests().get(mission_id)
+    loaded = cached_manifests().get(mission_id)
     if loaded is None:
         raise HTTPException(
             status_code=500,

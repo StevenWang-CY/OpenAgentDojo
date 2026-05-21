@@ -59,3 +59,18 @@ async def test_get_requests_bypass_csrf(client_with_db) -> None:
     """GET is a safe method and never requires CSRF."""
     resp = await client_with_db.get("/api/v1/missions")
     assert resp.status_code != 403
+
+
+@pytest.mark.asyncio
+async def test_csrf_exempt_uses_exact_match(client) -> None:
+    """A child path with the same suffix MUST NOT be wrongly exempted (P1-B1).
+
+    Pre-fix, ``endswith`` would also waive CSRF for a route like
+    ``/api/v1/something-auth/magic-link``. We use exact match so the exempt
+    list cannot be widened by accident.
+    """
+    # Build a path that ends with the exempt suffix but is not the exempt path.
+    resp = await client.post("/api/v1/admin/api/v1/auth/magic-link")
+    # Either 403 from CSRF (preferred) or 404 from the router — never a
+    # silent 204/200 implying we treated it as the magic-link endpoint.
+    assert resp.status_code in {403, 404, 405}

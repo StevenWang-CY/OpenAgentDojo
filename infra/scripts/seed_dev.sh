@@ -49,4 +49,14 @@ echo "[seed_dev] running alembic upgrade head..."
 echo "[seed_dev] running mission loader (idempotent upsert)..."
 "${RUNNER[@]}" python -m app.missions.loader
 
+# Demo users are only useful in dev/staging. The seed script itself refuses
+# to run when ARENA_ENV=production, but skip the call entirely in prod to
+# keep this script free of unnecessary noise.
+if [[ "${ARENA_ENV:-development}" != "production" ]]; then
+  echo "[seed_dev] seeding demo users (alice/bob/carol)..."
+  "${RUNNER[@]}" python -m app.scripts.seed_demo_users || {
+    echo "[seed_dev] demo-user seed failed; continuing (non-fatal in dev)." >&2
+  }
+fi
+
 echo "[seed_dev] done."

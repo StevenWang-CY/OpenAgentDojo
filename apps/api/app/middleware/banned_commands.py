@@ -81,8 +81,15 @@ class BannedCommandsMiddleware(BaseHTTPMiddleware):
 
         try:
             payload = json.loads(body_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return await call_next(request)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            # Fail closed — a malformed body must not bypass the banned-command
+            # guard. The downstream handler would also reject it but we
+            # short-circuit so the bypass window is zero (P1-B11).
+            logger.debug("[banned_commands] body parse failed: {}", exc)
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "invalid JSON body"},
+            )
 
         command = ""
         if isinstance(payload, dict):
