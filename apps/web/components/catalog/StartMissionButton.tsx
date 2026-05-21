@@ -48,7 +48,10 @@ export function StartMissionButton({ missionId }: StartMissionButtonProps) {
     mutationFn: () => createSession({ mission_id: missionId }),
     onSuccess(session) {
       track("mission_started", { mission_id: missionId, session_id: session.id });
-      toast.success("Session created. Spinning up your sandbox…");
+      // No toast here — the workspace renders a full-page "Provisioning your
+      // sandbox…" message immediately, which is more informative than a
+      // floating toast and avoids a Sonner-portal race with router.push that
+      // intermittently triggers "insertBefore on Node" on Next.js 15 / React 19.
       router.push(`/workspace/${session.id}`);
     },
     onError(error) {

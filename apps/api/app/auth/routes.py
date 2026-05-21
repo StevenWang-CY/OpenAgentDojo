@@ -54,7 +54,12 @@ async def post_magic_link(
     failure via :func:`loguru.warning`.
     """
     settings = get_settings()
-    base_url = str(request.base_url).rstrip("/")
+    # The link in the email points at the *web* frontend's /auth/callback,
+    # which forwards to the API's /api/v1/auth/callback. Using request.base_url
+    # (= the API host) lands users on a 404 because /auth/callback is a
+    # Next.js route, not a backend one. Prefer settings.web_origin when set;
+    # fall back to request.base_url only when no web origin is configured.
+    base_url = (settings.web_origin or str(request.base_url)).rstrip("/")
     magic_url = await create_magic_link(db, email=str(body.email), base_url=base_url)
     delivered = await send_magic_link_email(
         to_email=str(body.email),

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Loader2, RefreshCcw, Send } from "lucide-react";
+import { AlertCircle, Loader2, RefreshCcw, Send, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import type {
   AgentTurn,
@@ -22,7 +22,10 @@ import {
   markDiffOpened,
   submitPrompt,
 } from "@/lib/api";
-import { createReconnectingSocket } from "@/lib/ws";
+import {
+  createReconnectingSocket,
+  type ReconnectingSocketStatus,
+} from "@/lib/ws";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { PanelLayout } from "./PanelLayout";
 import { FileTree } from "./FileTree";
@@ -79,6 +82,12 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   // Controlled tab state — `openFile` flips us to the editor tab so the
   // user lands on the file they just clicked instead of an old surface.
   const [tab, setTab] = React.useState<WorkspaceTab>("editor");
+
+  // Live WS connection state for the events stream — drives the unobtrusive
+  // banner that tells the user "reconnecting…" so transient drops don't look
+  // like the app froze. Defaults to "open" so we don't flash a banner during
+  // the brief window before the first connect.
+  const [wsStatus, setWsStatus] = React.useState<ReconnectingSocketStatus>("open");
 
   // Ref tracks the latest event id we've ingested. The WS reconnect logic
   // reads this synchronously on every connect so the close-and-reopen path
@@ -202,6 +211,9 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
           // ignore malformed frames
         }
       },
+      onStatusChange(next) {
+        setWsStatus(next);
+      },
       onAttemptsExhausted() {
         toast.error(
           "Lost connection to the session event stream. Refresh the page to reconnect."
@@ -308,23 +320,7 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   }
 
   if (status === "submitting" && !submissionFailed) {
-    return (
-      <FullPageMessage
-        tone="info"
-        icon={<Loader2 aria-hidden className="size-6 animate-spin" />}
-        heading="Grading your submission"
-        body="Running hidden tests and validators. This usually takes 5–30 seconds."
-      >
-        <div
-          className="mt-4 h-2 w-64 overflow-hidden rounded-full bg-[var(--color-muted)]"
-          role="progressbar"
-          aria-valuetext="Grading in progress"
-          aria-busy
-        >
-          <div className="h-full w-1/3 animate-[shimmer_1.4s_linear_infinite] rounded-full bg-[var(--color-primary)]" />
-        </div>
-      </FullPageMessage>
-    );
+    return <GradingWait sessionId={sessionId} />;
   }
 
   if (status === "graded") {
@@ -413,6 +409,8 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
         diffChangedFiles={diff ? extractChangedFiles(diff) : []}
         onSubmitted={(submissionId) => router.push(`/report/${submissionId}`)}
       />
+
+      <WsStatusBanner status={wsStatus} />
 
       <PanelLayout
         missionId={mission.id}
@@ -641,6 +639,87 @@ function LoadingShell() {
     <div className="flex h-[calc(100dvh-3.5rem)] items-center justify-center text-sm text-[var(--color-muted-foreground)]">
       <Loader2 className="mr-2 size-4 animate-spin" aria-hidden /> Loading session…
     </div>
+  );
+}
+
+/**
+ * In-flow banner for transient WS drops. Stays out of the way during normal
+ * operation; appears the moment the events stream goes into backoff so users
+ * understand events are temporarily paused (not lost). `exhausted` flips it
+ * red so they know a refresh is needed.
+ */
+function WsStatusBanner({ status }: { status: ReconnectingSocketStatus }) {
+  if (status !== "reconnecting" && status !== "exhausted") return null;
+  const isExhausted = status === "exhausted";
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={
+        isExhausted
+          ? "flex items-center gap-2 border-b border-[var(--color-danger)] bg-[oklch(from_var(--color-danger)_l_c_h/0.08)] px-4 py-1.5 text-xs text-[var(--color-danger)]"
+          : "flex items-center gap-2 border-b border-[var(--color-warning)] bg-[oklch(from_var(--color-warning)_l_c_h/0.08)] px-4 py-1.5 text-xs text-[var(--color-warning)]"
+      }
+    >
+      {isExhausted ? (
+        <>
+          <WifiOff className="size-3.5" aria-hidden />
+          <span>
+            Lost the event stream. Refresh the page to resume — your sandbox
+            and progress are safe.
+          </span>
+        </>
+      ) : (
+        <>
+          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          <span>
+            Reconnecting to the event stream… your sandbox is still running.
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Grading-in-flight screen with an elapsed-time escalation: most submissions
+ * grade in 5–30s, but if it crosses 30s/60s we widen the language so the user
+ * knows the page is still alive rather than wondering whether to refresh.
+ */
+function GradingWait({ sessionId: _sessionId }: { sessionId: string }) {
+  const [elapsed, setElapsed] = React.useState(0);
+  React.useEffect(() => {
+    const id = window.setInterval(() => setElapsed((s) => s + 1), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+  const body =
+    elapsed > 60
+      ? "Still grading. Tougher mission packs can take up to two minutes — leave this tab open."
+      : elapsed > 30
+        ? "Almost there… hidden tests on this mission are a bit heavier than usual."
+        : "Running hidden tests and validators. This usually takes 5–30 seconds.";
+  return (
+    <FullPageMessage
+      tone="info"
+      icon={<Loader2 aria-hidden className="size-6 animate-spin" />}
+      heading="Grading your submission"
+      body={body}
+    >
+      <div
+        className="mt-4 h-2 w-64 overflow-hidden rounded-full bg-[var(--color-muted)]"
+        role="progressbar"
+        aria-valuetext={`Grading in progress, ${elapsed} seconds elapsed`}
+        aria-busy
+      >
+        <div className="h-full w-1/3 animate-[shimmer_1.4s_linear_infinite] rounded-full bg-[var(--color-primary)]" />
+      </div>
+      <p
+        aria-hidden
+        className="mt-2 font-mono text-[11px] text-[var(--color-muted-foreground)]"
+      >
+        {elapsed}s elapsed
+      </p>
+    </FullPageMessage>
   );
 }
 

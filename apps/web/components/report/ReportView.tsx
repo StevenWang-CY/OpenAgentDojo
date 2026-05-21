@@ -247,6 +247,9 @@ function ReportHeader({
   passed: boolean;
 }) {
   const [sharing, setSharing] = React.useState(false);
+  const [sharedExpiresAt, setSharedExpiresAt] = React.useState<string | null>(
+    null
+  );
 
   async function handleShare() {
     if (sharing) return;
@@ -254,6 +257,7 @@ function ReportHeader({
     setSharing(true);
     try {
       const result = await shareReport(submissionId);
+      setSharedExpiresAt(result.expires_at);
       try {
         await navigator.clipboard.writeText(result.share_url);
         toast.success("Share link copied to clipboard.");
@@ -308,23 +312,56 @@ function ReportHeader({
           </>
         )}
       </div>
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        onClick={() => void handleShare()}
-        disabled={sharing}
-      >
-        {sharing ? (
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+      <div className="flex flex-col items-center gap-1">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => void handleShare()}
+          disabled={sharing}
+        >
+          {sharing ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            <Share2 className="size-3.5" aria-hidden />
+          )}
+          {sharing ? "Generating link…" : "Share report"}
+          {!sharing ? <Copy className="size-3 opacity-60" aria-hidden /> : null}
+        </Button>
+        {sharedExpiresAt ? (
+          <p className="text-[11px] text-[var(--color-muted-foreground)]">
+            Link expires {formatShareExpiry(sharedExpiresAt)}
+          </p>
         ) : (
-          <Share2 className="size-3.5" aria-hidden />
+          <p className="text-[11px] text-[var(--color-muted-foreground)]">
+            Share links last 30 days
+          </p>
         )}
-        {sharing ? "Generating link…" : "Share report"}
-        {!sharing ? <Copy className="size-3 opacity-60" aria-hidden /> : null}
-      </Button>
+      </div>
     </header>
   );
+}
+
+/**
+ * Format the share-token expiry as a friendly "in 30 days" / "on Jun 20"
+ * label. We bias toward a relative form for near-term ranges so users see at
+ * a glance how long they have before re-minting.
+ */
+function formatShareExpiry(iso: string): string {
+  const target = new Date(iso);
+  if (Number.isNaN(target.getTime())) return "in ~30 days";
+  const deltaMs = target.getTime() - Date.now();
+  const days = Math.round(deltaMs / (24 * 60 * 60 * 1000));
+  if (days <= 0) return "soon";
+  if (days <= 14) return `in ${days} day${days === 1 ? "" : "s"}`;
+  try {
+    return `on ${target.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    })}`;
+  } catch {
+    return `in ${days} days`;
+  }
 }
 
 function BulletSection({

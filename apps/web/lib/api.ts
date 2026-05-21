@@ -43,19 +43,18 @@ import { env } from "./env";
  *     - WS   /ws/sessions/{id}/terminal
  *     - WS   /ws/sessions/{id}/events
  *
- *   M3+:
+ *   M3+ (live):
  *     - POST /auth/magic-link
  *     - GET  /auth/callback
  *     - POST /auth/logout
- *     - GET  /auth/me              (no `/me` alias yet — see seam in `auth.me`)
+ *     - GET  /auth/me              (also exposed at top-level `/me` alias)
  *     - POST /sessions/{id}/prompts
  *     - POST /sessions/{id}/patches/{turn_id}/apply
  *     - POST /sessions/{id}/submit
  *     - GET  /sessions/{id}/submission
  *     - GET  /reports/{submission_id}
- *
- *   Not yet implemented (501 / 404 from the backend):
- *     - GET  /profiles/{handle}    (M7)
+ *     - POST /reports/{submission_id}/share
+ *     - GET  /profiles/{handle}    (M7 — public profile, no auth required)
  *
  * Contract drift between the response types referenced here and
  * `apps/api/openapi.json` is enforced by `.github/workflows/contracts.yml`.
