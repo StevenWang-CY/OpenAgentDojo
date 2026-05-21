@@ -38,6 +38,48 @@ _GRADED_CLOSE_REASON = "graded"
 # Fallback poll cadence used only when Redis is unavailable on connect.
 _FALLBACK_POLL_INTERVAL_S = 1.0
 
+# Hard upper bound on a single event payload pushed over WS. Anything larger
+# almost always means a runaway log dump in ``payload`` — fan-out keeps the
+# event envelope but replaces the body with a "truncated" marker so the FE
+# can still cursor past the row without OOM'ing on receive.
+_MAX_EVENT_BYTES = 65_536  # 64 KiB
+
+
+def _enforce_event_size(message: dict[str, Any]) -> dict[str, Any]:
+    """Return ``message`` unchanged, or a truncated stub if the wire size is too big.
+
+    Uses ``default=str`` so datetimes / Paths that slipped past the emitter
+    still serialise cleanly here.
+    """
+    try:
+        serialised = json.dumps(message, default=str)
+    except TypeError as exc:
+        logger.warning("events ws: payload serialisation failed: {}", exc)
+        return {
+            "id": message.get("id"),
+            "session_id": message.get("session_id"),
+            "event_type": message.get("event_type"),
+            "occurred_at": message.get("occurred_at"),
+            "payload": {"truncated": True, "size": 0, "reason": "serialisation_error"},
+        }
+    size = len(serialised.encode("utf-8"))
+    if size <= _MAX_EVENT_BYTES:
+        return message
+    logger.warning(
+        "events ws: event {} type={} exceeded {}B (size={}B) — sending stub payload",
+        message.get("id"),
+        message.get("event_type"),
+        _MAX_EVENT_BYTES,
+        size,
+    )
+    return {
+        "id": message.get("id"),
+        "session_id": message.get("session_id"),
+        "event_type": message.get("event_type"),
+        "occurred_at": message.get("occurred_at"),
+        "payload": {"truncated": True, "size": size},
+    }
+
 
 def _serialise(ev: SupervisionEvent) -> dict[str, Any]:
     return {
@@ -72,7 +114,14 @@ async def _backfill(session_id: uuid.UUID, last_id: int) -> list[dict[str, Any]]
 
 
 async def _session_exists(session_id: uuid.UUID) -> bool:
-    """Belt-and-braces existence check for the events WS upgrade."""
+    """Belt-and-braces existence check for the events WS upgrade.
+
+    Fails CLOSED on DB error: a transient outage will briefly reject a valid
+    client, but that is the right trade-off because the WS token is
+    short-lived and the FE will reconnect. Failing open here would let any
+    token-holder (e.g. a leaked URL) ride the channel even after the session
+    has been deleted from the DB.
+    """
     try:
         from app.models.session import SessionRow
 
@@ -81,9 +130,9 @@ async def _session_exists(session_id: uuid.UUID) -> bool:
                 await db.execute(select(SessionRow.id).where(SessionRow.id == session_id))
             ).first()
             return row is not None
-    except Exception as exc:  # pragma: no cover — defensive, no lockout
-        logger.debug("events WS existence check failed for {}: {}", session_id, exc)
-        return True
+    except Exception as exc:
+        logger.warning("events WS existence check failed for {}: {}", session_id, exc)
+        return False
 
 
 def _is_graded(message: dict[str, Any]) -> bool:
@@ -107,7 +156,7 @@ async def _send_backfill(
     saw_graded = False
     for ev in backfill:
         cursor = max(cursor, int(ev["id"]))
-        await websocket.send_json(ev)
+        await websocket.send_json(_enforce_event_size(ev))
         if _is_graded(ev):
             saw_graded = True
     return cursor, saw_graded
@@ -177,7 +226,7 @@ async def _forward_subscription(
                 continue
             cursor = max(cursor, msg_id)
 
-            await websocket.send_json(message)
+            await websocket.send_json(_enforce_event_size(message))
 
             if _is_graded(message):
                 await websocket.close(code=_GRADED_CLOSE_CODE, reason=_GRADED_CLOSE_REASON)
@@ -213,7 +262,10 @@ async def events_ws(
         return
 
     if not await _session_exists(session_id):
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="session not found")
+        # Close code 4404 is a Starlette-allowed application code (>=4000)
+        # the FE can use to distinguish "session vanished" from generic 1008
+        # policy violations (bad token).
+        await websocket.close(code=4404, reason="session not found")
         return
 
     await websocket.accept()
@@ -252,7 +304,7 @@ async def _poll_loop(websocket: WebSocket, session_id: uuid.UUID, start_cursor: 
                 rows = []
             for ev in rows:
                 cursor = max(cursor, int(ev["id"]))
-                await websocket.send_json(ev)
+                await websocket.send_json(_enforce_event_size(ev))
                 if _is_graded(ev):
                     await websocket.close(code=_GRADED_CLOSE_CODE, reason=_GRADED_CLOSE_REASON)
                     return

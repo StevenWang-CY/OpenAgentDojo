@@ -17,6 +17,7 @@ Two reliability fixes (P0-B2 / P0-B3):
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +25,13 @@ from fastapi import HTTPException, Request
 from loguru import logger
 from sqlalchemy import update
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.grading.runner import GradingRunner
 from app.missions.loader import MissionLoader
+from app.missions.resolver import MissionFolderNotFoundError, resolve_mission_dir
 from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.schemas.submission import SubmissionRead
@@ -40,11 +43,19 @@ _TERMINAL_STATUSES = frozenset({"submitting", "graded"})
 def _find_manifest_folder(settings: Any, mission_id: str) -> Path:
     """Locate the mission folder for ``mission_id`` (``NN-{mission_id}`` or exact)."""
     missions_root: Path = settings.missions_root
-    candidates = list(missions_root.glob(f"*-{mission_id}")) + list(missions_root.glob(mission_id))
-    for candidate in candidates:
-        if candidate.is_dir() and (candidate / "mission.yaml").exists():
-            return candidate
-    raise LookupError(f"mission folder for '{mission_id}' not found under {missions_root}")
+    try:
+        folder = resolve_mission_dir(missions_root, mission_id)
+    except (FileNotFoundError, ValueError, MissionFolderNotFoundError) as exc:
+        raise LookupError(
+            f"mission folder for '{mission_id}' not found under {missions_root}"
+        ) from exc
+    # Submit additionally requires the mission.yaml to be present — without it
+    # there's nothing for the loader to read.
+    if not (folder / "mission.yaml").exists():
+        raise LookupError(
+            f"mission folder for '{mission_id}' has no mission.yaml under {folder}"
+        )
+    return folder
 
 
 def _locate_handle(request: Request, session_id: uuid.UUID) -> Any:
@@ -76,11 +87,16 @@ async def _claim_for_submit(db: AsyncSession, session: SessionRow) -> bool:
     Returns True when this caller claimed the session, False when another
     request beat us to it. Uses a single UPDATE with a guard predicate so the
     semantics work on SQLite (no SELECT ... FOR UPDATE).
+
+    Also stamps ``last_activity_at`` so the idle reaper treats the submit
+    handshake as a fresh interaction — the heavy grading work that follows
+    must not get sniped by the orphan sweeper while it runs.
     """
+    now = datetime.now(UTC)
     result = await db.execute(
         update(SessionRow)
         .where(SessionRow.id == session.id, SessionRow.status == "active")
-        .values(status="submitting")
+        .values(status="submitting", last_activity_at=now)
     )
     # Runtime guard (not ``assert`` — that vanishes under ``python -O``). UPDATE
     # statements always yield a ``CursorResult``, but we still verify so a type
@@ -90,8 +106,9 @@ async def _claim_for_submit(db: AsyncSession, session: SessionRow) -> bool:
         raise RuntimeError(f"expected CursorResult from UPDATE, got {type(result).__name__}")
     if result.rowcount == 0:
         return False
-    # Reflect the new value on the ORM instance for downstream code.
+    # Reflect the new values on the ORM instance for downstream code.
     session.status = "submitting"
+    session.last_activity_at = now
     return True
 
 
@@ -112,6 +129,30 @@ async def submit_session(
             detail=f"session is already in state '{session.status}'",
         )
 
+    driver = _resolve_driver(request)
+    if driver is None:
+        raise HTTPException(status_code=503, detail="sandbox pool unavailable")
+
+    # Atomic claim FIRST — reject concurrent submitters with 409 BEFORE any
+    # status='error' mutation. The previous ordering (look up handle/manifest
+    # → mark error → claim) let a transient lookup miss flip the session row
+    # into ``error`` even when another caller already owned the submit.
+    claimed = await _claim_for_submit(db, session)
+    if not claimed:
+        # Re-fetch the row so we surface the current (raced) status without
+        # mutating it.
+        await db.refresh(session)
+        raise HTTPException(
+            status_code=409,
+            detail=f"session is already in state '{session.status}'",
+        )
+    # Persist the claim before kicking off the runner so a crashed runner
+    # doesn't leave the session stuck in 'active' for another submitter to
+    # grab.
+    await db.commit()
+
+    # Now that we own the row, any failure path below can safely flip status
+    # to ``error`` without racing another submitter.
     handle = _locate_handle(request, session_id)
     if handle is None:
         logger.error("[submit] sandbox handle not found for session {}", session_id)
@@ -121,10 +162,6 @@ async def submit_session(
             status_code=503,
             detail="sandbox not available — session may have expired",
         )
-
-    driver = _resolve_driver(request)
-    if driver is None:
-        raise HTTPException(status_code=503, detail="sandbox pool unavailable")
 
     try:
         manifest_folder = _find_manifest_folder(settings, session.mission_id)
@@ -139,20 +176,6 @@ async def submit_session(
             status_code=422,
             detail=f"could not load mission manifest: {exc}",
         ) from exc
-
-    # Atomic claim — reject concurrent submitters with 409.
-    claimed = await _claim_for_submit(db, session)
-    if not claimed:
-        # Re-fetch the row so we surface the current (raced) status.
-        await db.refresh(session)
-        raise HTTPException(
-            status_code=409,
-            detail=f"session is already in state '{session.status}'",
-        )
-    # Persist the claim before kicking off the runner so a crashed runner
-    # doesn't leave the session stuck in 'active' for another submitter to
-    # grab.
-    await db.commit()
 
     runner = GradingRunner(settings)
     try:
@@ -194,14 +217,30 @@ async def _ensure_failed_stub(
     *,
     reason: str,
 ) -> Submission | None:
-    """Persist a placeholder ``submissions`` row so GET returns 200."""
+    """Persist a placeholder ``submissions`` row so GET returns 200.
+
+    The grading pipeline can raise mid-transaction (validator crash, driver
+    timeout) which leaves the AsyncSession in an aborted state on Postgres —
+    the very next ``execute`` would otherwise raise ``InFailedSQLTransaction``
+    before we ever get to the INSERT. Rolling back up-front clears that
+    state so this best-effort stub-writer has a clean slate to work with.
+    """
     from sqlalchemy import select
+
+    try:
+        await db.rollback()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("[submit] rollback before stub failed for {}: {}", session_id, exc)
 
     # If the runner managed to write a row already (e.g. validator crash before
     # commit failure) leave it alone — we don't want to clobber real data.
-    existing = (
-        await db.execute(select(Submission).where(Submission.session_id == session_id))
-    ).scalar_one_or_none()
+    try:
+        existing = (
+            await db.execute(select(Submission).where(Submission.session_id == session_id))
+        ).scalar_one_or_none()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("[submit] could not query existing submission for {}: {}", session_id, exc)
+        existing = None
     if existing is not None:
         return existing
     try:
@@ -225,6 +264,30 @@ async def _ensure_failed_stub(
         db.add(stub)
         await db.commit()
         return stub
+    except IntegrityError as exc:
+        # Another writer raced us — clear the failed tx so a follow-up SELECT
+        # works, then surface None so the caller can continue with its
+        # original exception.
+        logger.warning(
+            "[submit] failure stub insert raced for {}: {}", session_id, exc
+        )
+        try:
+            await db.rollback()
+        except Exception as inner_exc:  # pragma: no cover — defensive
+            logger.debug(
+                "[submit] rollback after IntegrityError failed for {}: {}",
+                session_id,
+                inner_exc,
+            )
+        return None
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("[submit] could not write failure stub for {}: {}", session_id, exc)
+        try:
+            await db.rollback()
+        except Exception as inner_exc:  # pragma: no cover — defensive
+            logger.debug(
+                "[submit] rollback after stub error failed for {}: {}",
+                session_id,
+                inner_exc,
+            )
         return None

@@ -103,6 +103,11 @@ export function CodeEditor({
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   );
+  // While `true`, any pending debounced `writeFile` must be cancelled and any
+  // editor-change events ignored — otherwise the revert's `setActiveFileContent`
+  // races with a tail-end write of the *pre-revert* content and resurrects the
+  // user's edits.
+  const revertingRef = React.useRef(false);
 
   React.useEffect(
     () => () => {
@@ -112,11 +117,18 @@ export function CodeEditor({
   );
 
   function scheduleWrite(targetPath: string, value: string) {
+    // A revert is in progress — any value we'd schedule here is by
+    // definition stale, so skip it entirely.
+    if (revertingRef.current) return;
     setSavingState("saving");
     if (saveTimerRef.current !== undefined) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
+      // Re-check on fire as well — the revert might have started during
+      // the debounce window after we scheduled.
+      if (revertingRef.current) return;
       void writeFile(sessionId, targetPath, value)
         .then(() => {
+          if (revertingRef.current) return;
           setSavingState("saved");
           queryClient.invalidateQueries({
             queryKey: ["session", sessionId, "diff"],
@@ -133,6 +145,7 @@ export function CodeEditor({
 
   function handleEditorChange(next: string | undefined) {
     if (!path) return;
+    if (revertingRef.current) return;
     const value = next ?? "";
     setActiveFileContent(path, value);
     scheduleWrite(path, value);
@@ -140,19 +153,38 @@ export function CodeEditor({
 
   async function handleRevert() {
     if (!path) return;
+    const revertPath = path;
+    revertingRef.current = true;
+    // Cancel any pending debounced write so it can't fire mid-revert with
+    // stale content.
+    if (saveTimerRef.current !== undefined) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = undefined;
+    }
+    setSavingState("idle");
     try {
-      await revertFile(sessionId, path);
-      // Drop the cached buffer so the next fetch re-seeds.
-      setActiveFileContent(path, "");
-      queryClient.invalidateQueries({ queryKey: ["file", sessionId, path] });
-      queryClient.invalidateQueries({ queryKey: ["session", sessionId, "diff"] });
-      const refreshed = await getFile(sessionId, path);
-      setActiveFileContent(path, refreshed.content);
-      toast.success(`Reverted ${path}.`);
+      await revertFile(sessionId, revertPath);
+      // Cancel any in-flight `file` query so a stale resolution can't race
+      // the refetch we're about to issue. Then invalidate + refetch via
+      // React Query (no manual `getFile` — single source of truth).
+      await queryClient.cancelQueries({
+        queryKey: ["file", sessionId, revertPath],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["session", sessionId, "diff"],
+      });
+      const refreshed = await queryClient.fetchQuery({
+        queryKey: ["file", sessionId, revertPath],
+        queryFn: ({ signal }) => getFile(sessionId, revertPath, signal),
+      });
+      setActiveFileContent(revertPath, refreshed.content);
+      toast.success(`Reverted ${revertPath}.`);
     } catch (err) {
       toast.error(
         err instanceof ApiError ? err.message : "Failed to revert."
       );
+    } finally {
+      revertingRef.current = false;
     }
   }
 

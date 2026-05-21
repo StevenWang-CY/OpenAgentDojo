@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, getReport, getTimeline, shareReport } from "@/lib/api";
+import type { ScoreReport } from "@arena/shared-types";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { track } from "@/lib/telemetry";
@@ -66,7 +67,10 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
   });
 
   // Fire `report_viewed` exactly once per submission id, once the payload
-  // is in hand. We don't want to fire on every refetch.
+  // is in hand. We don't want to fire on every refetch. `passed` is only
+  // meaningful when the rubric actually graded — for half-graded
+  // submissions (the F4 null-guard branch below) `missed` is `undefined`
+  // and we report `passed: null` rather than misleadingly emitting `true`.
   const reportedRef = React.useRef<string | null>(null);
   const total = reportQuery.data?.total_score;
   const missed = reportQuery.data?.score_report?.missed_failure_mode;
@@ -76,7 +80,7 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
       track("report_viewed", {
         submission_id: submissionId,
         total_score: total,
-        passed: missed === false,
+        passed: missed === undefined ? null : missed === false,
       });
     }
   }, [reportQuery.data, submissionId, total, missed]);
@@ -108,8 +112,19 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
     return <NotFoundState submissionId={submissionId} />;
   }
 
-  const report = submission.score_report;
-  const passed = !report.missed_failure_mode;
+  // Defensive: the backend may return a `Submission` with a null
+  // `score_report` if grading aborted partway through (e.g. validators
+  // crashed). The TS type asserts presence — but JSON over the wire can
+  // still be `null` for half-graded rows, so we narrow at runtime.
+  const report = submission.score_report as ScoreReport | null | undefined;
+  if (!report) {
+    return (
+      <ReportErrorState reason="Submission failed before grading completed." />
+    );
+  }
+  // `missed_failure_mode` may legitimately be undefined on partially graded
+  // submissions; treat that as "did not pass" since we can't claim success.
+  const passed = report.missed_failure_mode === false;
   const events = timelineQuery.data ?? [];
 
   return (
@@ -457,5 +472,39 @@ function ErrorState({
         Try again
       </Button>
     </div>
+  );
+}
+
+/**
+ * Shown when a `Submission` row exists but `score_report` is missing — i.e.
+ * the grading pipeline aborted before the rubric was emitted. The state is
+ * terminal (no retry CTA) because the submission can't be re-graded; the
+ * user's path forward is to start a fresh mission attempt.
+ */
+function ReportErrorState({ reason }: { reason: string }) {
+  return (
+    <main
+      className="mx-auto max-w-2xl px-6 py-16"
+      aria-labelledby="report-error-heading"
+    >
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center shadow-soft">
+        <AlertCircle
+          className="mx-auto size-6 text-[var(--color-muted-foreground)]"
+          aria-hidden
+        />
+        <h1
+          id="report-error-heading"
+          className="mt-3 text-2xl font-semibold tracking-tight"
+        >
+          Report not available
+        </h1>
+        <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">
+          {reason}
+        </p>
+        <Button asChild variant="secondary" className="mt-6">
+          <Link href="/missions">Back to missions</Link>
+        </Button>
+      </div>
+    </main>
   );
 }

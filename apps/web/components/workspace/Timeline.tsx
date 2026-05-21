@@ -206,7 +206,19 @@ function render(event: SupervisionEvent): RenderedEvent {
         detail: `Total ${event.payload.score} / 100`,
         breakdown:
           entries.length > 0
-            ? entries.map(([key, value]) => ({ key, value }))
+            ? entries.map(([key, dim]) => ({
+                key,
+                // Older payloads (legacy submission.graded events emitted
+                // before the rubric envelope landed) shipped a bare number
+                // here; the new contract is a full `ScoreDimension`. Read
+                // ``score`` defensively so the timeline keeps rendering.
+                value:
+                  typeof dim === "number"
+                    ? dim
+                    : typeof dim?.score === "number"
+                      ? dim.score
+                      : 0,
+              }))
             : undefined,
       };
     }

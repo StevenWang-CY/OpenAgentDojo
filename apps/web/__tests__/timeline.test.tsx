@@ -138,8 +138,8 @@ describe("Timeline rendering — Phase 4.A contract", () => {
           event(7, "submission.graded", {
             score: 82,
             breakdown: {
-              final_correctness: 28,
-              verification: 18,
+              final_correctness: { score: 28, max: 30, signals: [] },
+              verification: { score: 18, max: 20, signals: [] },
             },
           }),
         ]}

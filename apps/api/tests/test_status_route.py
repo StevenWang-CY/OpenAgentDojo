@@ -37,6 +37,11 @@ async def test_healthz_ready_returns_expected_shape(client, monkeypatch) -> None
 
 @pytest.mark.asyncio
 async def test_healthz_ready_reports_failure_per_probe(client, monkeypatch) -> None:
+    """A failing DB or Redis probe MUST surface as 503 (F2).
+
+    Load balancers and Kubernetes need the explicit failure code so they
+    can de-list the pod from the routing pool.
+    """
     from app import healthz as healthz_mod
 
     async def _ok():
@@ -50,8 +55,31 @@ async def test_healthz_ready_reports_failure_per_probe(client, monkeypatch) -> N
     monkeypatch.setattr(healthz_mod, "_s3_ok_bounded", _ok)
 
     resp = await client.get("/healthz/ready")
-    assert resp.status_code == 200
+    assert resp.status_code == 503
     body = resp.json()
     assert body["db"] is True
     assert body["redis"] is False
     assert body["s3"] is True
+
+
+@pytest.mark.asyncio
+async def test_healthz_ready_s3_failure_still_200(client, monkeypatch) -> None:
+    """An S3 hiccup is best-effort — must NOT take the pod out of rotation."""
+    from app import healthz as healthz_mod
+
+    async def _ok():
+        return True
+
+    async def _fail():
+        return False
+
+    monkeypatch.setattr(healthz_mod, "_db_ok_bounded", _ok)
+    monkeypatch.setattr(healthz_mod, "_redis_ok_bounded", _ok)
+    monkeypatch.setattr(healthz_mod, "_s3_ok_bounded", _fail)
+
+    resp = await client.get("/healthz/ready")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["db"] is True
+    assert body["redis"] is True
+    assert body["s3"] is False

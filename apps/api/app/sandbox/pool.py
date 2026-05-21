@@ -28,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -45,6 +45,13 @@ _DO_NOT_REAP_STATUSES = frozenset({"graded", "submitting"})
 
 # Default cadence for the orphan sweeper.
 _ORPHAN_SWEEP_INTERVAL_S = 300
+
+# Age guards on the orphan sweep: a row in "provisioning" / "submitting" is
+# legitimately in-flight for a short window after the API crashes mid-step.
+# Only flip the row when it has been stuck for at least this long. (Without
+# this guard the sweeper could race a legitimately-starting session.)
+_ORPHAN_PROVISIONING_GRACE_S = 5 * 60        # 5 minutes
+_ORPHAN_SUBMITTING_GRACE_S = 15 * 60          # 15 minutes
 
 
 def _touch(handle: SandboxHandle) -> None:
@@ -166,19 +173,33 @@ class SandboxPool:
         return handle
 
     async def release(self, handle: SandboxHandle) -> None:
+        # Make sure we only destroy a handle the pool actually owns. We hold a
+        # local reference and confirm membership under the lock, but we
+        # intentionally DO NOT pop the indexes until ``destroy()`` returns —
+        # otherwise a request that arrives between the pop and the destroy
+        # would see "no handle for this session" and respond 503, even though
+        # the sandbox is still mid-teardown and could in principle still
+        # serve a final read. Keeping the handle visible until destroy
+        # completes narrows that window from "however long destroy takes"
+        # down to "post-destroy bookkeeping".
         async with self._lock:
-            existed = self._handles.pop(handle.id, None) is not None
-            self._handles_by_session.pop(handle.session_id, None)
+            owned = self._handles.get(handle.id) is handle
+        if not owned:
+            return
 
-        if existed:
-            sessions_active.dec()
-            try:
-                await self._driver.destroy(handle)
-            except Exception as exc:
-                logger.warning("sandbox destroy failed for {}: {}", handle.id, exc)
-            finally:
-                self._semaphore.release()
-                logger.debug("sandbox pool: released {} ({} active)", handle.id, len(self._handles))
+        sessions_active.dec()
+        try:
+            await self._driver.destroy(handle)
+        except Exception as exc:
+            logger.warning("sandbox destroy failed for {}: {}", handle.id, exc)
+        finally:
+            async with self._lock:
+                self._handles.pop(handle.id, None)
+                self._handles_by_session.pop(handle.session_id, None)
+            self._semaphore.release()
+            logger.debug(
+                "sandbox pool: released {} ({} active)", handle.id, len(self._handles)
+            )
 
     def get(self, handle_id: str) -> SandboxHandle | None:
         return self._handles.get(handle_id)
@@ -266,10 +287,21 @@ class SandboxPool:
             pass
 
     async def _sweep_orphans_once(self) -> int:
-        """Flip orphaned 'active' sessions to 'abandoned'. Returns number updated.
+        """Flip orphaned in-flight sessions to a terminal state.
 
-        Emits one ``session.abandoned`` supervision event per swept row so the
-        FE / timeline can distinguish a clean teardown from a crashed worker.
+        Three cases:
+
+        * ``active``      → ``abandoned`` (clean teardown of an interactive
+                            session whose pool handle vanished).
+        * ``provisioning``→ ``abandoned`` if stuck for >5 minutes (the API
+                            crashed before the sandbox was up).
+        * ``submitting``  → ``error`` (NOT abandoned) if stuck for >15
+                            minutes — the user submitted, the worker died,
+                            and we want the FE to keep showing the diff /
+                            report rather than a generic "abandoned" stub.
+
+        Emits one supervision event per swept row so the FE / timeline can
+        distinguish a clean teardown from a crashed worker.
         """
         live_session_ids = {h.session_id for h in self.handles_snapshot()}
         try:
@@ -279,21 +311,58 @@ class SandboxPool:
         except Exception:  # pragma: no cover
             return 0
 
+        now = datetime.now(UTC)
+        provisioning_cutoff = now - timedelta(seconds=_ORPHAN_PROVISIONING_GRACE_S)
+        submitting_cutoff = now - timedelta(seconds=_ORPHAN_SUBMITTING_GRACE_S)
+
         try:
             redis = await get_redis()
             async with AsyncSessionLocal() as db:
-                stmt = select(SessionRow.id).where(SessionRow.status == "active")
-                rows = (await db.execute(stmt)).scalars().all()
-                orphans = [sid for sid in rows if sid not in live_session_ids]
-                if not orphans:
-                    return 0
-                await db.execute(
-                    update(SessionRow)
-                    .where(SessionRow.id.in_(orphans))
-                    .values(status="abandoned", completed_at=datetime.now(UTC))
+                stmt = select(
+                    SessionRow.id,
+                    SessionRow.status,
+                    SessionRow.started_at,
+                ).where(
+                    SessionRow.status.in_(("active", "provisioning", "submitting"))
                 )
+                rows = (await db.execute(stmt)).all()
+
+                abandoned: list[uuid.UUID] = []
+                errored: list[uuid.UUID] = []
+                for sid, sstatus, started_at in rows:
+                    if sid in live_session_ids:
+                        continue
+                    if sstatus == "active":
+                        abandoned.append(sid)
+                    elif sstatus == "provisioning":
+                        if started_at is None or started_at < provisioning_cutoff:
+                            abandoned.append(sid)
+                    elif sstatus == "submitting":
+                        if started_at is None or started_at < submitting_cutoff:
+                            errored.append(sid)
+
+                if not abandoned and not errored:
+                    return 0
+
+                if abandoned:
+                    await db.execute(
+                        update(SessionRow)
+                        .where(SessionRow.id.in_(abandoned))
+                        .values(status="abandoned", completed_at=now)
+                    )
+                if errored:
+                    # ``submitting`` rows graduate to ``error`` so the existing
+                    # report (if any) and the user-visible diff stay reachable.
+                    # ``completed_at`` is still stamped so the row drops out of
+                    # the "active sessions" cap.
+                    await db.execute(
+                        update(SessionRow)
+                        .where(SessionRow.id.in_(errored))
+                        .values(status="error", completed_at=now)
+                    )
+
                 emitter = EventEmitter(db=db, redis_client=redis)
-                for sid in orphans:
+                for sid in abandoned:
                     try:
                         await emitter.emit(
                             session_id=sid,
@@ -303,9 +372,24 @@ class SandboxPool:
                         )
                     except Exception as exc:  # pragma: no cover
                         logger.debug("session.abandoned emit failed for {}: {}", sid, exc)
+                for sid in errored:
+                    try:
+                        await emitter.emit(
+                            session_id=sid,
+                            event_type="session.errored",
+                            payload={"stage": "grading", "detail": "worker_crashed"},
+                            publish_after_commit=False,
+                        )
+                    except Exception as exc:  # pragma: no cover
+                        logger.debug("session.errored emit failed for {}: {}", sid, exc)
+
                 await db.commit()
-                logger.info("orphan sweep: marked {} abandoned session rows", len(orphans))
-                return len(orphans)
+                logger.info(
+                    "orphan sweep: marked {} abandoned + {} errored session rows",
+                    len(abandoned),
+                    len(errored),
+                )
+                return len(abandoned) + len(errored)
         except Exception as exc:  # pragma: no cover
             logger.warning("orphan sweep DB error: {}", exc)
             return 0

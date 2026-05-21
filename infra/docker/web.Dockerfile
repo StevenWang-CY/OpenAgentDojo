@@ -17,12 +17,24 @@ RUN apk add --no-cache libc6-compat \
 
 WORKDIR /repo
 
-# Copy only the manifests for the cache layer.
-COPY package.json pnpm-workspace.yaml ./
+# Copy only the manifests for the cache layer. We copy ONLY the per-package
+# package.json files (not the whole packages/ + missions/ trees) so the deps
+# stage is invalidated only when a manifest changes, not on every source edit.
+# Every workspace member declared in pnpm-workspace.yaml must have its
+# package.json present here or `pnpm install --frozen-lockfile` will fail
+# because pnpm-lock.yaml has an `importers:` entry for each.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/web/package.json ./apps/web/package.json
-COPY packages ./packages
+COPY packages/shared-types/package.json ./packages/shared-types/package.json
+COPY missions/_shared/repos/fullstack-auth-demo/package.json ./missions/_shared/repos/fullstack-auth-demo/package.json
+COPY missions/_shared/repos/fullstack-auth-demo/backend/package.json ./missions/_shared/repos/fullstack-auth-demo/backend/package.json
+COPY missions/_shared/repos/fullstack-auth-demo/frontend/package.json ./missions/_shared/repos/fullstack-auth-demo/frontend/package.json
+COPY missions/_shared/repos/data-api-demo/package.json ./missions/_shared/repos/data-api-demo/package.json
+COPY missions/_shared/repos/data-api-demo/frontend/package.json ./missions/_shared/repos/data-api-demo/frontend/package.json
 
-RUN pnpm install --frozen-lockfile=false --filter @arena/web... --prod=false
+# Frozen lockfile in CI: drift between pnpm-lock.yaml and package.json must
+# fail the build loudly rather than silently regenerating the lockfile.
+RUN pnpm install --frozen-lockfile --filter @arena/web... --prod=false
 
 # ---------- builder ----------
 FROM node:${NODE_VERSION}-alpine AS builder

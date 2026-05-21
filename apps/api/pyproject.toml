@@ -71,7 +71,9 @@ markers = [
 [tool.coverage.run]
 source = ["app"]
 branch = true
-omit = ["app/agent/*", "app/grading/*"]
+# No omit list — agent/ and grading/ are the highest-stakes modules in the
+# repo (deterministic grading, sandboxed execution). They must appear in
+# coverage reports so we notice when a refactor drops their coverage.
 
 [tool.coverage.report]
 show_missing = true

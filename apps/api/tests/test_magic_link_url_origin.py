@@ -14,6 +14,21 @@ from app.auth import email as email_module
 from app.config import get_settings
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rate_limit(monkeypatch):
+    """Force the rate-limit middleware off real Redis for these tests.
+
+    F3 added a per-email magic-link cap (3 / 15 min) that persists in Redis
+    across test runs. Without this fixture a developer who runs the suite
+    more than three times in a row would start seeing 429s here even though
+    nothing about the URL-origin contract changed.
+    """
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:1/0")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.mark.asyncio
 async def test_magic_link_email_uses_web_origin(client_with_db, monkeypatch) -> None:
     """The generated URL has the web_origin as its scheme+host, not the API host."""

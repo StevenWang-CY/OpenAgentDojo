@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from loguru import logger
+
 from app.grading.diff import ParsedDiff
 from app.grading.validators.base import ValidatorResult
 from app.grading.validators.tests_pass import TestRunResult
@@ -24,7 +26,7 @@ class DimensionScore:
     def to_dict(self) -> dict[str, Any]:
         return {
             "score": self.score,
-            "max_score": self.max_score,
+            "max": self.max_score,
             "signals": self.signals,
         }
 
@@ -89,6 +91,39 @@ def _event_occurred_before(
     return target_idx < before_idx
 
 
+def _coerce_event_timestamp(event: dict[str, Any]) -> datetime | None:
+    """Best-effort: turn an event's ``occurred_at`` into a timezone-aware datetime.
+
+    Tries (in order) the top-level ``occurred_at`` key, the payload's
+    ``occurred_at`` key, and a final fallback to ``created_at`` /
+    ``submitted_at`` on the payload — so a malformed-but-recoverable event
+    doesn't poison the rushed-submit signal. Returns ``None`` when nothing
+    parseable is available; the caller is expected to log + skip rather than
+    silently pretend the timestamp didn't matter.
+    """
+    raw = event.get("occurred_at")
+    payload = event.get("payload") or {}
+    if raw is None and isinstance(payload, dict):
+        raw = payload.get("occurred_at")
+    if raw is None and isinstance(payload, dict):
+        raw = payload.get("created_at") or payload.get("submitted_at")
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, str):
+            # Py 3.11+ handles trailing "Z" via fromisoformat.
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return datetime.fromtimestamp(float(raw))
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "[score] could not parse occurred_at {!r} for event {!r}: {}",
+            raw,
+            event.get("event_type"),
+            exc,
+        )
+        return None
+
+
 def _event_occurred_after(
     events: list[dict[str, Any]],
     after_type: str,
@@ -120,8 +155,11 @@ def _visible_tests_passed(test_results: list[TestRunResult]) -> bool:
     zero-out the correctness dimension when the tests themselves are green.
 
     When the mission ships *no* visible suites at all we treat that as a
-    no-op pass (P2-B7) so missions that intentionally rely solely on hidden
-    tests don't get penalised here.
+    fail (P0-B4): an empty visible-tests set used to score the free +8
+    credit because there was nothing to disagree with, which let a
+    misconfigured mission (visible_tests declared but no ``test_commands``
+    wired up) silently award correctness points. The loader now blocks that
+    drift up-front, but we keep the engine honest as a defence in depth.
     """
     visible = [
         r
@@ -129,7 +167,7 @@ def _visible_tests_passed(test_results: list[TestRunResult]) -> bool:
         if "hidden" not in r.suite.lower() and r.suite.lower() not in {"lint", "typecheck"}
     ]
     if not visible:
-        return True
+        return False
     return all(r.exit_code == 0 for r in visible)
 
 
@@ -217,10 +255,16 @@ def _score_verification(
 
     # +8: test command run that matches require_targeted_test.
     targeted_test_pattern: str | None = None
-    try:
-        targeted_test_pattern = manifest.reward_signals.verification.require_targeted_test
-    except AttributeError:
-        pass
+    reward_signals = getattr(manifest, "reward_signals", None)
+    verification_cfg = getattr(reward_signals, "verification", None)
+    if reward_signals is not None and verification_cfg is None:
+        logger.debug(
+            "[score] manifest reward_signals missing 'verification' section "
+            "(id={!r}) — falling through with no targeted-test pattern",
+            getattr(manifest, "id", "<unknown>"),
+        )
+    if verification_cfg is not None:
+        targeted_test_pattern = getattr(verification_cfg, "require_targeted_test", None)
 
     has_targeted_test = False
     for e in command_run_events:
@@ -295,24 +339,20 @@ def _score_agent_review(
     if submission_events and agent_responded_events:
         last_agent = agent_responded_events[-1]
         first_submit = submission_events[0]
-        agent_ts = last_agent.get("occurred_at") or last_agent.get("payload", {}).get("occurred_at")
-        submit_ts = first_submit.get("occurred_at") or first_submit.get("payload", {}).get(
-            "occurred_at"
-        )
-        if agent_ts and submit_ts:
-            # occurred_at may be a string (ISO 8601) or a number (epoch seconds).
-            try:
-                if isinstance(agent_ts, str):
-                    # Py 3.11+ handles trailing "Z" via fromisoformat.
-                    agent_dt = datetime.fromisoformat(agent_ts.replace("Z", "+00:00"))
-                    submit_dt = datetime.fromisoformat(submit_ts.replace("Z", "+00:00"))
-                    delta = (submit_dt - agent_dt).total_seconds()
-                else:
-                    delta = float(submit_ts) - float(agent_ts)
-                if delta <= 15 and not diff_opened_events:
-                    rushed_submit = True
-            except (ValueError, TypeError):
-                pass
+        agent_dt = _coerce_event_timestamp(last_agent)
+        submit_dt = _coerce_event_timestamp(first_submit)
+        if agent_dt is None or submit_dt is None:
+            # Don't silently treat the missing timestamp as "not rushed" — log
+            # so a schema regression is loud, then skip the heuristic.
+            logger.warning(
+                "[score] rushed-submit heuristic skipped: agent_dt={} submit_dt={}",
+                agent_dt,
+                submit_dt,
+            )
+        else:
+            delta = (submit_dt - agent_dt).total_seconds()
+            if delta <= 15 and not diff_opened_events:
+                rushed_submit = True
 
     if rushed_submit:
         signals.append("0/15: submit within 15s of agent.responded with no diff opened (hard zero)")
@@ -341,7 +381,7 @@ def _score_agent_review(
         payload = e.get("payload", {})
         intent = payload.get("intent", "")
         keyword_hits = payload.get("keyword_hits", [])
-        prompt_text = payload.get("prompt", "").lower()
+        prompt_text = payload.get("text", payload.get("prompt", "")).lower()
 
         if intent in revise_intents:
             has_revise_prompt = True
@@ -376,11 +416,17 @@ def _score_prompt_quality(
 
     must_include: list[str] = []
     bonus_keywords: list[str] = []
-    try:
-        must_include = list(manifest.reward_signals.prompt_quality.must_include_any)
-        bonus_keywords = list(manifest.reward_signals.prompt_quality.bonus_keywords)
-    except AttributeError:
-        pass
+    reward_signals = getattr(manifest, "reward_signals", None)
+    prompt_cfg = getattr(reward_signals, "prompt_quality", None)
+    if reward_signals is not None and prompt_cfg is None:
+        logger.debug(
+            "[score] manifest reward_signals missing 'prompt_quality' section "
+            "(id={!r}) — using empty keyword lists",
+            getattr(manifest, "id", "<unknown>"),
+        )
+    if prompt_cfg is not None:
+        must_include = list(getattr(prompt_cfg, "must_include_any", []) or [])
+        bonus_keywords = list(getattr(prompt_cfg, "bonus_keywords", []) or [])
 
     best_score = 0
 
@@ -459,12 +505,17 @@ def _score_context_selection(
     required: list[str] = []
     recommended: list[str] = []
     discouraged: list[str] = []
-    try:
-        required = list(manifest.expected_context.required)
-        recommended = list(manifest.expected_context.recommended)
-        discouraged = list(manifest.expected_context.discouraged)
-    except AttributeError:
-        pass
+    expected_context = getattr(manifest, "expected_context", None)
+    if expected_context is None:
+        logger.debug(
+            "[score] manifest missing 'expected_context' section "
+            "(id={!r}) — context-selection will score 0",
+            getattr(manifest, "id", "<unknown>"),
+        )
+    else:
+        required = list(getattr(expected_context, "required", []) or [])
+        recommended = list(getattr(expected_context, "recommended", []) or [])
+        discouraged = list(getattr(expected_context, "discouraged", []) or [])
 
     # Get selected files from the last context.selected event.
     selected_files: list[str] = []
@@ -554,10 +605,16 @@ def _score_safety(
 
     # +1 if no banned commands run.
     banned_commands: list[str] = []
-    try:
-        banned_commands = list(manifest.reward_signals.safety.must_not_run_commands)
-    except AttributeError:
-        pass
+    reward_signals = getattr(manifest, "reward_signals", None)
+    safety_cfg = getattr(reward_signals, "safety", None)
+    if reward_signals is not None and safety_cfg is None:
+        logger.debug(
+            "[score] manifest reward_signals missing 'safety' section "
+            "(id={!r}) — safety check will treat all commands as allowed",
+            getattr(manifest, "id", "<unknown>"),
+        )
+    if safety_cfg is not None:
+        banned_commands = list(getattr(safety_cfg, "must_not_run_commands", []) or [])
 
     command_run_events = _events_of_type(events, "command.run")
     has_banned = False

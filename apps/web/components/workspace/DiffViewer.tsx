@@ -99,13 +99,19 @@ export function DiffViewer({
     }
   }, [unifiedDiff]);
 
-  const firedRef = React.useRef(false);
+  // Track which paths we've already emitted `diff.opened` for so that
+  // switching between files in the same session each fires exactly once,
+  // rather than only the very first one (the previous behaviour, a global
+  // boolean, masked drift between per-file scoring expectations and what
+  // the workspace actually emitted).
+  const firedPathsRef = React.useRef<Set<string>>(new Set());
   React.useEffect(() => {
-    if (!onDiffOpened || firedRef.current) return;
+    if (!onDiffOpened) return;
     if (files.length === 0) return;
-    firedRef.current = true;
+    if (firedPathsRef.current.has(activePath)) return;
+    firedPathsRef.current.add(activePath);
     onDiffOpened(activePath);
-  }, [files.length, onDiffOpened, activePath]);
+  }, [activePath, files.length, onDiffOpened]);
 
   if (files.length === 0) {
     return (

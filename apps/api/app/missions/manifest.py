@@ -23,6 +23,15 @@ Difficulty = Literal["beginner", "intermediate", "advanced"]
 LanguageRuntime = Literal["node20", "python312"]
 
 
+class MissionConfigError(ValueError):
+    """Raised when a mission manifest fails a hard configuration invariant.
+
+    Subclasses :class:`ValueError` so Pydantic's own validators integrate
+    naturally (they accept ValueErrors as the canonical failure type) while
+    callers that catch ``MissionConfigError`` see a more specific signal.
+    """
+
+
 class RepoConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -256,3 +265,23 @@ class MissionManifest(BaseModel):
         if len(set(v)) != len(v):
             raise ValueError("expected_files contains duplicates")
         return v
+
+    @model_validator(mode="after")
+    def _require_test_commands_for_visible_suites(self) -> MissionManifest:
+        """Reject manifests that declare visible tests but ship no commands.
+
+        Mission grading routes ``repo.test_commands`` through both drivers
+        (docker + local) and the score engine credits ``visible_tests_pass``
+        based on the resulting suites. A manifest that lists visible test
+        labels in ``visible_tests`` but never wires up ``repo.test_commands``
+        used to score a free ``+8`` for visible tests passing because the
+        driver returned an empty result set and the grader treated empty as
+        pass. Surface this drift at load time instead (P0-B4).
+        """
+        if self.visible_tests and not self.repo.test_commands:
+            raise MissionConfigError(
+                f"mission '{self.id}' declares visible_tests "
+                f"{self.visible_tests!r} but repo.test_commands is empty — "
+                "add at least one command so the grader can verify them."
+            )
+        return self

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.deps import get_current_user, require_auth
 from app.config import Settings, get_settings
 from app.db.session import get_db
+from app.missions.resolver import MissionFolderNotFoundError, resolve_mission_dir
 from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.user import User
@@ -111,11 +112,14 @@ def decode_share_token(token: str, settings: Settings) -> uuid.UUID | None:
 
 
 def _find_mission_folder(missions_root: Path, mission_id: str) -> Path | None:
-    candidates = list(missions_root.glob(f"*-{mission_id}")) + list(missions_root.glob(mission_id))
-    for candidate in candidates:
-        if candidate.is_dir() and (candidate / "mission.yaml").exists():
-            return candidate
-    return None
+    try:
+        folder = resolve_mission_dir(missions_root, mission_id)
+    except (MissionFolderNotFoundError, ValueError) as exc:
+        logger.debug("[reports] could not resolve mission folder for {}: {}", mission_id, exc)
+        return None
+    if not (folder / "mission.yaml").exists():
+        return None
+    return folder
 
 
 def _read_ideal_solution(missions_root: Path, mission_id: str) -> str | None:
@@ -194,12 +198,16 @@ async def get_report(
     submission, session = await _fetch_submission(db, submission_id)
 
     share_ok = False
+    # Stash the share-decode error rather than raising inline: a malformed or
+    # expired ?share= must NOT shadow a perfectly good cookie auth. Only
+    # surface the 400 if cookie auth would also have failed (P2-8).
+    share_error: HTTPException | None = None
     if share:
         try:
             share_sub = decode_share_token_strict(share, settings)
             share_ok = share_sub == submission_id
             if not share_ok:
-                raise HTTPException(
+                share_error = HTTPException(
                     status_code=400,
                     detail={
                         "reason": "invalid",
@@ -207,15 +215,25 @@ async def get_report(
                     },
                 )
         except ShareTokenError as exc:
-            raise HTTPException(
+            share_error = HTTPException(
                 status_code=400,
                 detail={"reason": exc.reason, "message": str(exc)},
-            ) from exc
+            )
 
     if not share_ok:
         if user is None:
+            # No share auth, no cookie. Prefer the more-specific share-decode
+            # error when the caller attached a token; fall back to the usual
+            # 401 otherwise.
+            if share_error is not None:
+                raise share_error
             raise HTTPException(status_code=401, detail="authentication required")
         if session.user_id != user.id:
+            # Cookie present but does not own the submission AND the share
+            # didn't validate either — surface the share-decode error if any,
+            # otherwise the generic 403.
+            if share_error is not None:
+                raise share_error
             raise HTTPException(status_code=403, detail="not your report")
 
     ideal = _read_ideal_solution(settings.missions_root, session.mission_id)

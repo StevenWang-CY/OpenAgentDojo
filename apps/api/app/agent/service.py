@@ -34,6 +34,7 @@ from app.agent.intents import IntentClassifier
 from app.agent.llm import AnthropicClient
 from app.agent.templates import TemplateRenderer
 from app.config import get_settings
+from app.missions.resolver import MissionFolderNotFoundError, resolve_mission_dir
 from app.models.agent_turn import AgentTurn
 from app.models.session import SessionRow
 from app.observability import agent_responses_total
@@ -43,19 +44,19 @@ from app.sessions.events import EventEmitter
 
 
 def _find_mission_folder(mission_id: str, missions_root: Path) -> Path | None:
-    """Scan ``missions_root`` for a sub-directory matching ``*-{mission_id}``.
+    """Scan ``missions_root`` for the folder backing ``mission_id``.
 
-    Missions follow the ``NN-id/`` naming convention; we match by the id
-    suffix so the numeric prefix is ignored.
+    Missions follow the ``NN-id/`` naming convention; we delegate to the
+    shared :func:`resolve_mission_dir` so the agent, submit, and reports
+    surfaces all agree on which folder belongs to a given id (P0-B5).
     """
-    if not missions_root.exists():
+    try:
+        return resolve_mission_dir(missions_root, mission_id)
+    except (MissionFolderNotFoundError, ValueError) as exc:
+        logger.debug(
+            "[agent] could not resolve mission folder for {}: {}", mission_id, exc
+        )
         return None
-    for child in missions_root.iterdir():
-        if not child.is_dir():
-            continue
-        if child.name == mission_id or child.name.endswith(f"-{mission_id}"):
-            return child
-    return None
 
 
 def _context_to_list(context: ContextSelection) -> list[str]:

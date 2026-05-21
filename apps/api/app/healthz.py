@@ -12,6 +12,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import text
 
@@ -122,18 +123,29 @@ async def healthz() -> dict[str, Any]:
 
 
 @router.get("/healthz/ready", summary="Readiness probe")
-async def healthz_ready() -> dict[str, Any]:
-    """Full readiness check with bounded per-probe timeouts."""
+async def healthz_ready() -> Any:
+    """Full readiness check with bounded per-probe timeouts.
+
+    Returns HTTP 200 when both the DB and Redis are reachable. When either
+    fails we return the same JSON body with HTTP 503 so load balancers and
+    Kubernetes can de-list the pod. ``s3_ok`` is treated as best-effort and
+    does NOT force 503 — object storage is not on the request hot-path for
+    every endpoint, and a transient S3 hiccup shouldn't take traffic away
+    from the API.
+    """
     settings = get_settings()
     db_ok, redis_ok, s3_ok = await asyncio.gather(
         _db_ok_bounded(),
         _redis_ok_bounded(),
         _s3_ok_bounded(),
     )
-    return {
+    body: dict[str, Any] = {
         "db": db_ok,
         "redis": redis_ok,
         "s3": s3_ok,
         "sandbox_driver": settings.sandbox_driver,
         "version": __version__,
     }
+    if not (db_ok and redis_ok):
+        return JSONResponse(content=body, status_code=503)
+    return body

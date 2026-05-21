@@ -53,7 +53,7 @@ class CommandRunResponse(BaseModel):
     id: str
     session_id: str
     command: str
-    category: str = "other"
+    category: CommandCategory = "other"
     exit_code: int | None = None
     duration_ms: int | None = None
     created_at: str = ""
@@ -67,7 +67,7 @@ class SupervisionEventRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    session_id: str
+    session_id: str = Field(..., json_schema_extra={"format": "uuid"})
     event_type: str
     payload: dict = Field(default_factory=dict)
     occurred_at: str

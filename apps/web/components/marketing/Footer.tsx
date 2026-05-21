@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { Compass, ExternalLink, Github } from "lucide-react";
-import { env } from "@/lib/env";
 
-// Status lives on the API host (public JSON route — see apps/api/app/status/router.py).
-// Linked as a regular anchor (not next/link) because it leaves the Next app.
-const STATUS_URL = `${env.apiBaseUrl}/status`;
+// The status page is an in-app route at `/status` that proxies the API's
+// `/status` JSON endpoint and renders it server-side. Using the internal
+// route lets us keep the user inside our domain (and our theming) while still
+// surfacing live backend health.
+const STATUS_URL = "/status";
 
 /**
  * Marketing footer for the public landing page. Distinct from the in-app
@@ -53,10 +54,7 @@ export function MarketingFooter() {
             <Github className="size-3.5" aria-hidden /> GitHub
             <ExternalLink className="size-3 opacity-60" aria-hidden />
           </FooterLink>
-          <FooterLink href={STATUS_URL} external>
-            Status
-            <ExternalLink className="size-3 opacity-60" aria-hidden />
-          </FooterLink>
+          <FooterLink href={STATUS_URL}>Status</FooterLink>
         </FooterColumn>
       </div>
       <div className="border-t border-[var(--color-border)]">

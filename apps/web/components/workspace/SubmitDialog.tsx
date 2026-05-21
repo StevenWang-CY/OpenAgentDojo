@@ -33,7 +33,13 @@ interface SubmitDialogProps {
   showShortcutHint?: boolean;
   /** Whether the platform is macOS — drives ⌘ vs. Ctrl in the kbd hint. */
   isMac?: boolean;
-  /** Called with the new submission id once grading finishes. */
+  /**
+   * Retained for backward compatibility — callers can still pass a
+   * post-submission callback. This dialog no longer fires it, because
+   * the `submitSession` response is a not-yet-graded `Submission` (the
+   * backend kicks off async grading). `WorkspaceShell` drives the
+   * report navigation off `status === "graded"` instead.
+   */
   onSubmitted?(submissionId: string): void;
 }
 
@@ -44,7 +50,6 @@ export function SubmitDialog({
   triggerRef,
   showShortcutHint,
   isMac,
-  onSubmitted,
 }: SubmitDialogProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -53,10 +58,13 @@ export function SubmitDialog({
       track("submission_started", { session_id: sessionId });
       return submitSession(sessionId);
     },
-    onSuccess(submission) {
-      toast.success("Submission graded.");
+    onSuccess() {
+      // Submission only kicks off grading — the report doesn't exist yet.
+      // Closing the dialog and surfacing a "now grading" toast is enough:
+      // `WorkspaceShell` is already polling the session and will navigate
+      // to /report/{id} once the status flips to `graded`.
       setOpen(false);
-      onSubmitted?.(submission.id);
+      toast.success("Submitted. Grading…");
     },
     onError(error) {
       const msg =

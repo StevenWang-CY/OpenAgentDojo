@@ -142,15 +142,32 @@ class EventEmitter:
         await self.db.flush()  # get the auto-incremented id
 
         channel = f"events:session:{session_id}"
-        message = json.dumps(
-            {
-                "id": event.id,
-                "session_id": str(session_id),
-                "event_type": event_type,
-                "payload": payload,
-                "occurred_at": now.isoformat(),
-            }
-        )
+        # ``default=str`` coerces datetimes, Paths, UUIDs and any other
+        # stringifiable object so an upstream caller can't silently break
+        # the publish path just by passing a richer payload. On the rare
+        # raise (a custom __repr__ that re-throws, for example) we keep
+        # the DB row but drop the publish — subscribers will catch up via
+        # the next reconnect's backfill.
+        try:
+            message = json.dumps(
+                {
+                    "id": event.id,
+                    "session_id": str(session_id),
+                    "event_type": event_type,
+                    "payload": payload,
+                    "occurred_at": now.isoformat(),
+                },
+                default=str,
+            )
+        except TypeError as exc:
+            logger.warning(
+                "supervision event {} type={} could not be serialised — DB row kept, publish dropped: {}",
+                event.id,
+                event_type,
+                exc,
+            )
+            event_publish_failures_total.labels(reason="serialisation_error").inc()
+            return
 
         if publish_after_commit:
             queue: list[tuple[str, str]] = self.db.info.setdefault(_PENDING_KEY, [])

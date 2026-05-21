@@ -29,6 +29,19 @@ from app.workers.queue import get_queue
 # don't have to thread `request.app` everywhere.
 _APP_REF: Any = None
 
+# Strong refs to in-flight in-process provisioning tasks so the asyncio event
+# loop cannot garbage-collect them mid-flight (the asyncio docs explicitly
+# warn fire-and-forget ``create_task`` can be GC'd before completion). Tasks
+# self-discard via ``add_done_callback`` once they finish.
+_BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _track_task(task: asyncio.Task[Any]) -> asyncio.Task[Any]:
+    """Register ``task`` so the loop keeps a strong ref until it completes."""
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
 
 def register_app(app: Any) -> None:
     """Wire the running app instance so in-process provisioning can reach it."""
@@ -62,7 +75,12 @@ def enqueue_provision(session_id: uuid.UUID) -> None:
     # bounded by the sandbox driver's own timeouts.
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_async_run_provision(session_id, in_process=True))
+        _track_task(
+            loop.create_task(
+                _async_run_provision(session_id, in_process=True),
+                name=f"provision-{session_id}",
+            )
+        )
         return
     except RuntimeError as exc:
         logger.error(
@@ -85,7 +103,12 @@ def _mark_session_error_sync(session_id: uuid.UUID) -> None:
         except RuntimeError:
             asyncio.run(_mark_session_error(session_id))
             return
-        loop.create_task(_mark_session_error(session_id))
+        _track_task(
+            loop.create_task(
+                _mark_session_error(session_id),
+                name=f"mark-session-error-{session_id}",
+            )
+        )
     except Exception as exc:
         logger.warning("could not mark session {} as error: {}", session_id, exc)
 
@@ -166,21 +189,9 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
 
             if not await _attach_sandbox(db, session_id, handle.id):
                 return
-
-            await emitter.emit(
-                session_id=session_id,
-                event_type="session.started",
-                payload={
-                    "mission_id": session.mission_id,
-                    "initial_commit": getattr(manifest.repo, "initial_commit", None)
-                    or getattr(manifest, "initial_commit", None),
-                    "sandbox_driver": settings.sandbox_driver,
-                },
-                publish_after_commit=False,
-            )
-            # Persist sandbox + event before the (potentially slow) ready check
-            # so subscribers see ``session.started`` immediately. The status
-            # flip to ``active`` waits until ready_check succeeds (P1-B16).
+            # Persist the sandbox handle before we start the (potentially slow)
+            # ready check so a crash in ready_check still leaves a row that the
+            # idle reaper can clean up.
             await db.commit()
 
             try:
@@ -206,8 +217,22 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
                 )
                 return
 
-            # Ready_check OK → flip to active.
+            # Ready_check OK → flip to active and announce. We deliberately
+            # emit ``session.started`` AFTER the readiness gate so subscribers
+            # never see a "started" event for a sandbox that is about to flip
+            # to ``error`` (P1-B16).
             await set_status(db, session_id, "active")
+            await emitter.emit(
+                session_id=session_id,
+                event_type="session.started",
+                payload={
+                    "mission_id": session.mission_id,
+                    "initial_commit": getattr(manifest.repo, "initial_commit", None)
+                    or getattr(manifest, "initial_commit", None),
+                    "sandbox_driver": settings.sandbox_driver,
+                },
+                publish_after_commit=False,
+            )
             await db.commit()
         except Exception as exc:  # safety net — should be unreachable
             logger.exception("provision pipeline failed for {}: {}", session_id, exc)

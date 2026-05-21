@@ -18,7 +18,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.session_cookie import get_user_id_from_cookie
+from app.auth.session_cookie import get_user_id_from_cookie_async
 from app.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
@@ -62,7 +62,7 @@ async def get_current_user(
     so it cannot silently mask a production misconfiguration.
     """
     settings = get_settings()
-    user_id_str = get_user_id_from_cookie(request, settings)
+    user_id_str = await get_user_id_from_cookie_async(request, settings)
 
     if user_id_str is not None:
         try:

@@ -38,6 +38,11 @@ _BANNED_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 _SESSION_COMMANDS_RE = re.compile(r"^/api/v1/sessions/(?P<sid>[0-9a-fA-F-]{36})/commands/?$")
 
+# Hard upper bound on the request body we are willing to buffer in this
+# middleware. The route only accepts ``{"command": "..."}`` JSON; anything
+# larger is almost certainly an attempt to OOM the API process (P2-1).
+_MAX_BODY_BYTES = 1_048_576  # 1 MiB
+
 
 def _matches_banned(command: str) -> str | None:
     """Return the matched pattern source string or None."""
@@ -65,11 +70,34 @@ class BannedCommandsMiddleware(BaseHTTPMiddleware):
         if m is None:
             return await call_next(request)
 
+        # Reject oversize bodies BEFORE we buffer them — protects the API
+        # from a trivial OOM by a single malicious client (P2-1). We look
+        # at the Content-Length header (defence-in-depth: ``request.body``
+        # also caps reads at Starlette's own limit, but the header check
+        # short-circuits before any bytes are read).
+        cl_header = request.headers.get("content-length")
+        if cl_header is not None:
+            try:
+                if int(cl_header) > _MAX_BODY_BYTES:
+                    return JSONResponse(
+                        status_code=413,
+                        content={"detail": "request body too large"},
+                    )
+            except ValueError:
+                # Garbage Content-Length — let the downstream handler reject.
+                pass
+
         # Read the body once and re-inject so the downstream handler still sees it.
         try:
             body_bytes = await request.body()
-        except Exception:
-            return await call_next(request)
+        except Exception as exc:
+            # Fail closed — we can't enforce the banned-command guard if we
+            # can't see the body. The request must not be forwarded.
+            logger.warning("[banned_commands] could not read request body: {}", exc)
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "could not read request body"},
+            )
 
         async def _replay() -> dict[str, object]:  # ASGI receive
             return {"type": "http.request", "body": body_bytes, "more_body": False}

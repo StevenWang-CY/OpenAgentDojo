@@ -65,6 +65,16 @@ export function FileTree({
   );
   const lastSyncedKey = React.useRef<string>("");
   const selectedKey = JSON.stringify(selectedContext ?? []);
+  // Stash the latest selection so the unmount cleanup can read the freshest
+  // value without forcing the cleanup-on-dep-change to also flush.
+  const latestSelectedRef = React.useRef<string[]>(selectedContext ?? []);
+  React.useEffect(() => {
+    latestSelectedRef.current = selectedContext ?? [];
+  }, [selectedContext]);
+  const latestSessionIdRef = React.useRef<string | undefined>(sessionId);
+  React.useEffect(() => {
+    latestSessionIdRef.current = sessionId;
+  }, [sessionId]);
   React.useEffect(() => {
     if (!sessionId) return;
     if (selectedKey === lastSyncedKey.current) return;
@@ -81,10 +91,36 @@ export function FileTree({
       });
     }, CONTEXT_DEBOUNCE_MS);
     return () => {
-      if (debounceRef.current !== undefined) clearTimeout(debounceRef.current);
+      if (debounceRef.current !== undefined) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = undefined;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKey, sessionId]);
+
+  // Unmount-only flush: if the user toggled a path inside the debounce window
+  // and then navigated away (e.g. the workspace teardown), we want to fire
+  // one final POST so their intent isn't silently dropped. This effect has
+  // an empty dep array so the cleanup runs only on unmount, not on every
+  // selection change — that path is owned by the debounced effect above.
+  React.useEffect(() => {
+    return () => {
+      const finalSelectedKey = JSON.stringify(latestSelectedRef.current);
+      if (finalSelectedKey === lastSyncedKey.current) return;
+      const sid = latestSessionIdRef.current;
+      if (!sid) return;
+      lastSyncedKey.current = finalSelectedKey;
+      void setContext(sid, {
+        files: latestSelectedRef.current,
+        logs: [],
+        tests: [],
+        extras: [],
+      }).catch(() => {
+        /* best-effort — same as the debounced path */
+      });
+    };
+  }, []);
 
   function handleToggleContext(path: string): void {
     onToggleContext?.(path);

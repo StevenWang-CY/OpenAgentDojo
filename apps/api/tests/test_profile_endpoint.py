@@ -50,13 +50,13 @@ def _score_report(
         "total": final + verification + agent_review + prompt_quality
         + context_selection + safety + diff_minimality,
         "dimensions": {
-            "final_correctness": {"score": final, "max_score": 30, "signals": []},
-            "verification": {"score": verification, "max_score": 20, "signals": []},
-            "agent_review": {"score": agent_review, "max_score": 15, "signals": []},
-            "prompt_quality": {"score": prompt_quality, "max_score": 10, "signals": []},
-            "context_selection": {"score": context_selection, "max_score": 10, "signals": []},
-            "safety": {"score": safety, "max_score": 10, "signals": []},
-            "diff_minimality": {"score": diff_minimality, "max_score": 5, "signals": []},
+            "final_correctness": {"score": final, "max": 30, "signals": []},
+            "verification": {"score": verification, "max": 20, "signals": []},
+            "agent_review": {"score": agent_review, "max": 15, "signals": []},
+            "prompt_quality": {"score": prompt_quality, "max": 10, "signals": []},
+            "context_selection": {"score": context_selection, "max": 10, "signals": []},
+            "safety": {"score": safety, "max": 10, "signals": []},
+            "diff_minimality": {"score": diff_minimality, "max": 5, "signals": []},
         },
         "strengths": [],
         "weaknesses": [],
@@ -323,8 +323,8 @@ async def test_radar_only_includes_present_dimensions(client, db_engine) -> None
                 score_report={
                     "total": 50,
                     "dimensions": {
-                        "final_correctness": {"score": 25, "max_score": 30, "signals": []},
-                        "safety": {"score": 8, "max_score": 10, "signals": []},
+                        "final_correctness": {"score": 25, "max": 30, "signals": []},
+                        "safety": {"score": 8, "max": 10, "signals": []},
                     },
                     "strengths": [],
                     "weaknesses": [],
@@ -536,7 +536,7 @@ async def test_malformed_score_report_excluded_and_counted(
                 score_report={
                     "total": 50,
                     "dimensions": {
-                        "safety": {"score": "NaN", "max_score": 10, "signals": []},
+                        "safety": {"score": "NaN", "max": 10, "signals": []},
                     },
                 },
                 total_score=50,

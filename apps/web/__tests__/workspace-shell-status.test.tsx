@@ -23,6 +23,9 @@ vi.mock("next/link", () => ({
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace }),
+  // `WorkspaceShell` now reads `usePathname()` to build the `?next=` param
+  // it forwards to /auth/sign-in on a 401 token refetch.
+  usePathname: () => "/workspace/session-1",
 }));
 
 // Don't actually open a WebSocket in tests.
@@ -67,6 +70,7 @@ const getSubmission = vi.fn();
 const getFileTree = vi.fn();
 const getDiff = vi.fn();
 const getTimeline = vi.fn();
+const getWsToken = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -77,6 +81,7 @@ vi.mock("@/lib/api", async () => {
     getFileTree: (...args: unknown[]) => getFileTree(...args),
     getDiff: (...args: unknown[]) => getDiff(...args),
     getTimeline: (...args: unknown[]) => getTimeline(...args),
+    getWsToken: (...args: unknown[]) => getWsToken(...args),
   };
 });
 
@@ -137,6 +142,7 @@ beforeEach(() => {
   getFileTree.mockResolvedValue([]);
   getDiff.mockResolvedValue({ unified_diff: "" });
   getTimeline.mockResolvedValue([]);
+  getWsToken.mockResolvedValue({ token: "ws-fresh", ttl_seconds: 60 });
   getSubmission.mockResolvedValue({
     id: "sub-1",
     session_id: "session-1",

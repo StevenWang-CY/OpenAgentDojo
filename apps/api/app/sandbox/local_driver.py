@@ -253,10 +253,22 @@ class LocalSandboxDriver(SandboxDriver):
 
     # ---------------------------------------------------------------- diff
     async def apply_diff(self, handle: SandboxHandle, diff_text: str) -> ApplyResult:
-        # Stage the patch outside the working tree so the patch file never
-        # appears in the user-visible diff (P1-B23).
-        diff_file = self.root / f".arena_patch_{handle.id}.diff"
-        diff_file.write_text(diff_text, encoding="utf-8")
+        # Stage the patch in a per-sandbox subdir so concurrent sessions
+        # can't clobber each other's patch files (and so a stray patch
+        # never ends up in the shared sandbox-root listing). Write with
+        # mode 0o600 — the diff may contain unreviewed model output and
+        # has no business being world-readable on the host.
+        diff_file = handle.workdir / ".arena_patch.diff"
+        diff_bytes = diff_text.encode("utf-8")
+        fd = os.open(
+            str(diff_file),
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        try:
+            os.write(fd, diff_bytes)
+        finally:
+            os.close(fd)
         try:
             result = await self.run(
                 handle,

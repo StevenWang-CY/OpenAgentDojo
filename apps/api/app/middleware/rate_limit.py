@@ -25,6 +25,8 @@ Limits (from §16 of the implementation plan):
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -38,6 +40,12 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from app.config import get_settings
+
+# Per-email cap on the magic-link route — defence-in-depth on top of the
+# per-IP bucket so a single email address can't be spammed even from a
+# rotating pool of source IPs.
+_MAGIC_LINK_PER_EMAIL_LIMIT = 3
+_MAGIC_LINK_PER_EMAIL_WINDOW_S = 900  # 15 minutes
 
 # ---------------------------------------------------------------------------
 # Rule table.
@@ -240,4 +248,62 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": str(rule.window_s)},
             )
 
+        # Defence-in-depth: cap magic-link sends per email address so a single
+        # account can't be spammed from a rotating pool of source IPs. The
+        # check is best-effort — we skip silently if the body can't be parsed
+        # (the route handler will then surface its own 422).
+        if rule.name == "auth_magic_link":
+            email = await self._peek_magic_link_email(request)
+            if email is not None:
+                email_hash = hashlib.sha256(email.encode("utf-8")).hexdigest()
+                email_window = int(
+                    time.time() // _MAGIC_LINK_PER_EMAIL_WINDOW_S
+                )
+                email_key = f"rl:magic:email:{email_hash}:{email_window}"
+                email_count = await self._count(
+                    email_key, _MAGIC_LINK_PER_EMAIL_WINDOW_S
+                )
+                if email_count > _MAGIC_LINK_PER_EMAIL_LIMIT:
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "detail": "rate limit exceeded for auth_magic_link (per email)",
+                            "code": "rate_limited",
+                            "limit": _MAGIC_LINK_PER_EMAIL_LIMIT,
+                            "window_seconds": _MAGIC_LINK_PER_EMAIL_WINDOW_S,
+                        },
+                        headers={"Retry-After": str(_MAGIC_LINK_PER_EMAIL_WINDOW_S)},
+                    )
+
         return await call_next(request)
+
+    @staticmethod
+    async def _peek_magic_link_email(request: Request) -> str | None:
+        """Buffer the JSON body and return the ``email`` field if present.
+
+        The body is re-injected via a custom ``receive`` callable so the
+        downstream handler still sees an unconsumed request — mirrors the
+        pattern used by ``banned_commands.py``.
+        """
+        try:
+            body_bytes = await request.body()
+        except Exception:  # pragma: no cover — defence-in-depth
+            return None
+
+        async def _replay() -> dict[str, object]:  # ASGI receive
+            return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+        request._receive = _replay
+
+        if not body_bytes:
+            return None
+        try:
+            payload = json.loads(body_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        email = payload.get("email")
+        if not isinstance(email, str) or not email:
+            return None
+        return email.strip().lower()

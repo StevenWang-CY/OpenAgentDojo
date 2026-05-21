@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import Request, Response
 from jose import JWTError, jwt
@@ -32,6 +34,15 @@ _COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days in seconds
 # first as a fast path.
 _REVOKED_JTIS: set[str] = set()
 _REVOCATION_KEY_PREFIX = "auth:revoked_jti:"
+
+# Per-process positive cache: JTIs that Redis confirmed are revoked. Cached
+# for ``_REDIS_REVOKED_TTL_S`` so we don't hit Redis on every authenticated
+# request once a token is known-bad. Values are the insertion time so the
+# cache self-expires without needing an additional dependency. We keep the
+# data structure tiny on purpose — revoked JTIs are rare, and any miss falls
+# back to a Redis GET that's already fast.
+_REDIS_REVOKED_CACHE: dict[str, float] = {}
+_REDIS_REVOKED_TTL_S = 60.0
 
 # Strong refs to in-flight revocation persistence tasks so the asyncio event
 # loop cannot garbage-collect them mid-flight (and so their exceptions are
@@ -61,24 +72,65 @@ def issue_session_cookie(response: Response, user_id: str, settings: Settings) -
     )
 
 
-def get_user_id_from_cookie(request: Request, settings: Settings) -> str | None:
-    """Decode and verify the session JWT.  Returns the subject or None on any error."""
+def _decode_cookie_payload(request: Request, settings: Settings) -> dict | None:
+    """Decode the cookie JWT — returns the payload dict or None on any error.
+
+    Shared between :func:`get_user_id_from_cookie` (sync, in-proc-only) and
+    :func:`get_user_id_from_cookie_async` (async, also consults Redis).
+    """
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
         return None
     try:
-        payload = jwt.decode(token, settings.session_secret, algorithms=[_ALGORITHM])
-        jti = payload.get("jti")
-        if jti and _is_revoked(jti):
-            return None
-        user_id: str | None = payload.get("sub")
-        return user_id or None
+        payload: dict[Any, Any] = jwt.decode(
+            token, settings.session_secret, algorithms=[_ALGORITHM]
+        )
+        return payload
     except JWTError as exc:
         logger.debug("session cookie decode error: {}", exc)
         return None
     except Exception as exc:  # pragma: no cover
         logger.warning("unexpected session cookie error: {}", exc)
         return None
+
+
+def get_user_id_from_cookie(request: Request, settings: Settings) -> str | None:
+    """Decode and verify the session JWT — IN-PROCESS revocation check only.
+
+    Retained for callers that run in a synchronous context (notably the rate
+    limiter middleware). Async request paths should prefer
+    :func:`get_user_id_from_cookie_async` so Redis-backed revocation also
+    applies — otherwise a logged-out token still authenticates on workers
+    whose in-proc ``_REVOKED_JTIS`` set was rebuilt on restart.
+    """
+    payload = _decode_cookie_payload(request, settings)
+    if payload is None:
+        return None
+    jti = payload.get("jti")
+    if jti and _is_revoked(jti):
+        return None
+    user_id: str | None = payload.get("sub")
+    return user_id or None
+
+
+async def get_user_id_from_cookie_async(
+    request: Request, settings: Settings
+) -> str | None:
+    """Async variant — checks in-process AND Redis-backed JTI revocation.
+
+    Use this from FastAPI dependencies / async handlers so logging out on
+    one worker propagates to all workers via Redis. Failure to reach Redis
+    is non-fatal: we fall back to the in-process set so a transient Redis
+    blip doesn't 500 every authenticated request.
+    """
+    payload = _decode_cookie_payload(request, settings)
+    if payload is None:
+        return None
+    jti = payload.get("jti")
+    if jti and await _is_revoked_async(jti):
+        return None
+    user_id: str | None = payload.get("sub")
+    return user_id or None
 
 
 def revoke_session_cookie(
@@ -148,10 +200,59 @@ async def _persist_revocation(jti: str) -> None:
 
 
 def _is_revoked(jti: str) -> bool:
-    """Return True when ``jti`` has been logged-out (in-proc check only)."""
-    return jti in _REVOKED_JTIS
+    """Return True when ``jti`` has been logged-out (in-proc check only).
+
+    Sync helper for callers that can't await Redis. Also consults the
+    Redis-positive cache so a previously-confirmed revocation continues to
+    block authentication until the cache TTL expires.
+    """
+    if jti in _REVOKED_JTIS:
+        return True
+    cached_at = _REDIS_REVOKED_CACHE.get(jti)
+    if cached_at is None:
+        return False
+    if (time.monotonic() - cached_at) > _REDIS_REVOKED_TTL_S:
+        # Expire stale entry so the next async check has to re-confirm.
+        _REDIS_REVOKED_CACHE.pop(jti, None)
+        return False
+    return True
+
+
+async def _is_revoked_async(jti: str) -> bool:
+    """Check in-proc set + Redis. Falls back to in-proc on Redis errors.
+
+    Positive Redis hits are cached in-process for ``_REDIS_REVOKED_TTL_S``
+    so we don't repeat a network round-trip on every authenticated request
+    once a token is known-bad.
+    """
+    # 1. Fast path — already revoked on this worker.
+    if jti in _REVOKED_JTIS:
+        return True
+    # 2. Local positive cache (Redis-confirmed within TTL).
+    cached_at = _REDIS_REVOKED_CACHE.get(jti)
+    if cached_at is not None:
+        if (time.monotonic() - cached_at) <= _REDIS_REVOKED_TTL_S:
+            return True
+        _REDIS_REVOKED_CACHE.pop(jti, None)
+    # 3. Best-effort Redis lookup.
+    try:
+        from app.sessions.events import get_redis
+
+        redis = await get_redis()
+        if redis is None:
+            return False
+        value = await redis.get(_REVOCATION_KEY_PREFIX + jti)
+    except Exception as exc:  # pragma: no cover — telemetry only
+        logger.debug("redis revocation lookup failed for {}: {}", jti[:8], exc)
+        return False
+    if value is None:
+        return False
+    # Cache the positive result so subsequent requests skip the round-trip.
+    _REDIS_REVOKED_CACHE[jti] = time.monotonic()
+    return True
 
 
 def clear_revoked_jtis() -> None:
     """Test helper — drop the in-process revocation cache."""
     _REVOKED_JTIS.clear()
+    _REDIS_REVOKED_CACHE.clear()

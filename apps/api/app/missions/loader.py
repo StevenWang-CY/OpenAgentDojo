@@ -14,7 +14,7 @@ import yaml
 from loguru import logger
 from sqlalchemy import text
 
-from app.missions.manifest import MissionManifest
+from app.missions.manifest import MissionConfigError, MissionManifest
 
 
 @dataclass(slots=True)
@@ -89,13 +89,24 @@ class MissionLoader:
         Public surface promoted from the legacy ``_load_one`` so external
         callers don't reach into a private name (P2-B3). ``_load_one`` is
         retained as an alias for back-compat with tests.
+
+        Raises :class:`MissionConfigError` with a path-annotated message when
+        a hard mission invariant fails (e.g. visible tests declared with no
+        matching ``test_commands``) — surfacing the violation at load time
+        rather than letting it leak free points into the grading engine.
         """
         raw_bytes = manifest_path.read_bytes()
         sha = hashlib.sha256(raw_bytes).hexdigest()
         data = yaml.safe_load(raw_bytes.decode("utf-8"))
         if not isinstance(data, dict):
             raise ValueError(f"{manifest_path} did not parse to a mapping")
-        manifest = MissionManifest.model_validate(data)
+        try:
+            manifest = MissionManifest.model_validate(data)
+        except MissionConfigError as exc:
+            # Surface the offending file in the message so authors get a
+            # one-line, copy-pasteable pointer rather than a stack trace
+            # without context.
+            raise MissionConfigError(f"{manifest_path}: {exc}") from exc
         return LoadedMission(manifest=manifest, folder=manifest_path.parent, manifest_sha256=sha)
 
     # Back-compat alias for the historical private name.

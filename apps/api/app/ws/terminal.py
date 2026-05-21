@@ -176,9 +176,21 @@ async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> Non
                     # Recognised control frame but not one we act on (e.g.
                     # pong). Swallow rather than forward to the PTY.
                     continue
-                os.write(pty_fd, data)
-        except WebSocketDisconnect:
-            pass
+                # Run the PTY write off the event loop. A full PTY buffer
+                # (slow consumer in the container) would otherwise block the
+                # entire asyncio loop on ``os.write`` — every other request
+                # served by this worker would stall until the PTY drains.
+                try:
+                    await loop.run_in_executor(None, os.write, pty_fd, data)
+                except OSError as exc:
+                    # Broken pipe / closed PTY — tear the bridge down cleanly.
+                    logger.debug("pty write failed: {}", exc)
+                    break
+        except (OSError, WebSocketDisconnect) as exc:
+            # ``OSError`` covers BrokenPipeError, ConnectionResetError, etc.
+            # surfaced from ``websocket.receive`` itself when the underlying
+            # socket dies abruptly.
+            logger.debug("terminal writer task ended: {}", exc)
         finally:
             closed.set()
 

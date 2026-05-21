@@ -9,7 +9,13 @@
 //
 // Canonical source: apps/api/app/sessions/events.py + IMPLEMENTATION_PLAN.md §6.2.
 
-import type { ContextSelection, ISODateString, SandboxDriver, UUID } from "./api";
+import type {
+  ContextSelection,
+  ISODateString,
+  SandboxDriver,
+  ScoreDimension,
+  UUID,
+} from "./api";
 
 export const SupervisionEventType = {
   SessionStarted: "session.started",
@@ -103,6 +109,8 @@ export interface PatchFailedPayload {
 export interface DiffOpenedPayload {
   /** Empty string ⇒ aggregate / workspace-wide diff. */
   path: string;
+  /** Where in the UI the diff was opened from (e.g. "workspace", "report"). */
+  surface?: string;
 }
 
 export interface DiffHoveredPayload {
@@ -123,14 +131,15 @@ export interface FileRevertedPayload {
   path: string;
 }
 
-// CommandCategory is intentionally local to this payload to keep the
-// WebSocket contract decoupled from the REST `CommandBody.category`
-// enum (which carries "manual" instead of "install"). See Phase 4.A.
+// CommandCategory mirrors the REST `CommandBody.category` enum
+// (see `apps/api/app/schemas/workspace.py::CommandCategory`). The
+// "manual" bucket is what the workspace UI labels user-typed commands
+// that don't fall into the test/typecheck/lint buckets.
 export type CommandRunCategory =
   | "test"
   | "typecheck"
   | "lint"
-  | "install"
+  | "manual"
   | "other";
 
 export interface CommandRunPayload {
@@ -174,11 +183,11 @@ export interface SubmissionGradedPayload {
   /** Total score in [0, 100]. */
   score: number;
   /**
-   * Per-dimension scores, keyed by `RubricDimension`. Kept loose as
-   * `Record<string, number>` so the contract doesn't tighten ahead of
-   * the backend rubric versioning.
+   * Per-dimension scores, keyed by `RubricDimension`. Each value is the
+   * grader's per-dimension envelope (`{score, max, signals}`) so the
+   * radar chart can render the score/max ratio without a second fetch.
    */
-  breakdown: Record<string, number>;
+  breakdown: Record<string, ScoreDimension>;
   submission_id?: UUID;
   missed_failure_mode?: boolean;
 }

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useTheme } from "@/stores/themeStore";
 import {
   createReconnectingSocket,
@@ -47,6 +48,72 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
     let socket: ReconnectingSocketHandle | null = null;
     let term: TerminalInstance | null = null;
     let onResize: (() => void) | null = null;
+
+    // Buffer keystrokes + resize control frames that the user produces while
+    // the socket is in `reconnecting` / `closed`. We bound the buffer by
+    // bytes so a runaway hold-down-a-key can't pin a tab in memory; once
+    // full, we drop newest frames and surface a single toast so the user
+    // knows their typing is no longer reaching the PTY.
+    const PENDING_BUFFER_BYTES = 64 * 1024;
+    const pendingFrames: (string | Uint8Array)[] = [];
+    let pendingBytes = 0;
+    let warnedBufferFull = false;
+
+    function frameSize(frame: string | Uint8Array): number {
+      // String → UTF-8 byte length is the worst-case payload for `send`.
+      if (typeof frame === "string") {
+        // Cheap upper bound — every char is at most 4 UTF-8 bytes.
+        return frame.length * 4;
+      }
+      return frame.byteLength;
+    }
+
+    function bufferFrame(frame: string | Uint8Array): void {
+      const size = frameSize(frame);
+      if (pendingBytes + size > PENDING_BUFFER_BYTES) {
+        if (!warnedBufferFull) {
+          warnedBufferFull = true;
+          toast.warning("Buffer full, releasing keys");
+        }
+        return;
+      }
+      pendingFrames.push(frame);
+      pendingBytes += size;
+    }
+
+    function flushPending(activeSocket: ReconnectingSocketHandle): void {
+      if (pendingFrames.length === 0) return;
+      while (pendingFrames.length > 0) {
+        const next = pendingFrames.shift()!;
+        try {
+          activeSocket.send(next);
+        } catch {
+          // If a send fails mid-flush, drop it — the underlying socket will
+          // re-trigger a reconnect on its own.
+        }
+      }
+      pendingBytes = 0;
+      warnedBufferFull = false;
+    }
+
+    // Track WS status transitions so we can surface a single user-facing
+    // toast on the *first* reconnect attempt, and a confirming toast once we
+    // come back online after a drop. Initial connect/open is silent.
+    let lastStatus: ReconnectingSocketStatus = "connecting";
+    let everReconnected = false;
+
+    function handleStatusChange(next: ReconnectingSocketStatus): void {
+      if (next === lastStatus) return;
+      if (next === "reconnecting" && !everReconnected) {
+        everReconnected = true;
+        toast("Terminal reconnecting…");
+      } else if (next === "open" && everReconnected) {
+        toast.success("Terminal connected");
+        if (socket) flushPending(socket);
+      }
+      lastStatus = next;
+      setStatus(next);
+    }
 
     async function boot() {
       try {
@@ -100,7 +167,10 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
           // byte stream, so JSON frames would surface as garbage in the
           // user's shell. Reconnect-on-close still keeps the channel alive.
           heartbeatMs: 0,
-          onStatusChange: setStatus,
+          onStatusChange: handleStatusChange,
+          onOpen() {
+            if (socket) flushPending(socket);
+          },
           onMessage(ev) {
             const data = ev.data;
             if (typeof data === "string") {
@@ -127,8 +197,14 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
           },
         });
 
+        // Keystrokes that arrive while the socket is anything other than
+        // "open" are buffered FIFO and flushed on the next "open" event.
         t.onData((input: string) => {
-          socket?.send(input);
+          if (socket && socket.status() === "open") {
+            socket.send(input);
+          } else {
+            bufferFrame(input);
+          }
         });
 
         onResize = () => {
@@ -139,7 +215,11 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
             //   bytes 1-2: cols (uint16 BE)
             //   bytes 3-4: rows (uint16 BE)
             const frame = encodeResizeFrame(t.cols, t.rows);
-            socket?.send(frame);
+            if (socket && socket.status() === "open") {
+              socket.send(frame);
+            } else {
+              bufferFrame(frame);
+            }
           } catch {
             /* ignore */
           }

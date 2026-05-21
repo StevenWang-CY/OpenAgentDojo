@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, RefreshCcw, Send, WifiOff } from "lucide-react";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import {
   getSession,
   getSubmission,
   getTimeline,
+  getWsToken,
   markDiffOpened,
   submitPrompt,
 } from "@/lib/api";
@@ -60,6 +61,7 @@ type WorkspaceTab = "editor" | "diff";
  */
 export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const queryClient = useQueryClient();
   const store = useWorkspaceStore(sessionId);
 
@@ -163,11 +165,79 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   }, [events]);
 
   // ── Live events WebSocket ────────────────────────────────────────────────
-  const wsToken = sessionQuery.data?.ws_token;
+  // We mint a fresh short-lived WS token via `getWsToken` rather than relying
+  // on the one embedded in `SessionDetail` — the latter is captured at
+  // session-fetch time and would already be stale (60s TTL) for any session
+  // the user keeps open more than a minute. The query is gated on
+  // `status === "active" | "submitting"` so we don't fire it during
+  // provisioning or after a graded/abandoned terminal state.
+  const tokenQueryEnabled = status === "active" || status === "submitting";
+  const tokenQuery = useQuery({
+    queryKey: ["ws-token", sessionId],
+    queryFn: ({ signal }) => getWsToken(sessionId, signal),
+    enabled: tokenQueryEnabled,
+    // The token only lives for 60s on the server. Force a fresh mint on every
+    // mount/window-focus so a tab that comes back from background has a valid
+    // token in hand before the WS effect re-runs.
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.status === 401) return false;
+      return failureCount < 1;
+    },
+  });
+
+  // Centralised 401 handler — covers both an initial token-mint that comes
+  // back unauthorised and a later WS close-code 4401 that exhausts. Either
+  // way we punt the user back to /auth/sign-in with the current pathname so
+  // they land back here after re-authenticating.
+  const redirectToSignIn = React.useCallback(() => {
+    const next = pathname ?? `/workspace/${sessionId}`;
+    router.push(`/auth/sign-in?next=${encodeURIComponent(next)}`);
+  }, [pathname, router, sessionId]);
+
+  React.useEffect(() => {
+    if (!tokenQueryEnabled) return;
+    if (tokenQuery.error instanceof ApiError && tokenQuery.error.status === 401) {
+      redirectToSignIn();
+    }
+  }, [tokenQueryEnabled, tokenQuery.error, redirectToSignIn]);
+
+  const wsToken = tokenQuery.data?.token;
   const sessionLoaded = !!sessionQuery.data;
+
+  // Tracks the latest moment we flipped into `error` so we can keep the WS
+  // open for a short trailing window — long enough to ingest a
+  // `submission.failed` frame that the backend may emit *just after* the
+  // session row transitions. The window is cleared once the event lands or
+  // 3s elapses, whichever is first.
+  const errorIngestionWindowRef = React.useRef<number | null>(null);
+  // Authoritative "we already saw submission.failed" check used by both
+  // the trailing-WS window below and the status-branch render below.
+  const submissionFailed = React.useMemo(
+    () => events.some((e) => e.event_type === "submission.failed"),
+    [events]
+  );
+
+  React.useEffect(() => {
+    if (status === "error" && errorIngestionWindowRef.current === null) {
+      errorIngestionWindowRef.current = Date.now();
+    } else if (status !== "error" && errorIngestionWindowRef.current !== null) {
+      errorIngestionWindowRef.current = null;
+    }
+  }, [status]);
+
   React.useEffect(() => {
     if (!sessionLoaded) return;
-    if (status !== "active" && status !== "submitting") return;
+    if (!wsToken) return;
+    const errorWindowOpen =
+      status === "error" &&
+      !submissionFailed &&
+      errorIngestionWindowRef.current !== null &&
+      Date.now() - errorIngestionWindowRef.current < 3_000;
+    if (status !== "active" && status !== "submitting" && !errorWindowOpen) {
+      return;
+    }
 
     const socket = createReconnectingSocket({
       url: `/ws/sessions/${sessionId}/events`,
@@ -175,11 +245,19 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
       sessionId,
       // Resolved synchronously on every (re)connect, so reconnects pick up
       // the freshest `lastEventId` from the ref — no need for the effect
-      // to re-mount on every event.
-      resolveQueryParams: () =>
-        lastEventIdRef.current > 0
+      // to re-mount on every event. We also refetch the WS token on each
+      // reconnect to side-step the 60s TTL.
+      resolveQueryParams: () => {
+        // Best-effort refresh; the token-mint is async so any in-flight
+        // result is picked up by the next reconnect.
+        void tokenQuery.refetch();
+        return lastEventIdRef.current > 0
           ? { last_id: lastEventIdRef.current }
-          : {},
+          : {};
+      },
+      onAuthFailure: () => {
+        redirectToSignIn();
+      },
       onMessage(ev) {
         if (typeof ev.data !== "string") return;
         try {
@@ -229,10 +307,25 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
     status,
     wsToken,
     sessionLoaded,
+    submissionFailed,
     pushEvent,
     pushAgentTurn,
     queryClient,
+    tokenQuery,
+    redirectToSignIn,
   ]);
+
+  // Catch the tail of the event stream once the session reaches a terminal
+  // state. The WS is closed (or closing) by then; refetching the timeline
+  // backfills anything the live stream might have missed during the brief
+  // window before disconnect.
+  React.useEffect(() => {
+    if (status === "graded" || status === "error" || status === "abandoned") {
+      void queryClient.invalidateQueries({
+        queryKey: ["session", sessionId, "timeline"],
+      });
+    }
+  }, [status, sessionId, queryClient]);
 
   // Sync sandbox driver into the store so the topbar banner can pick it up.
   const sandboxDriverFromApi = sessionQuery.data?.sandbox_driver;
@@ -246,13 +339,9 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   //  collapses cleanly to one POST without the shell having to know.)
 
   // ── Status branches ──────────────────────────────────────────────────────
-
-  // A `submission.failed` WS event is authoritative for surfacing failures
-  // even when the polled session status hasn't flipped yet.
-  const submissionFailed = React.useMemo(
-    () => events.some((e) => e.event_type === "submission.failed"),
-    [events]
-  );
+  // (`submissionFailed` is computed above next to the WS effect so both
+  //  the trailing-window logic and the status-branch render below share
+  //  a single source of truth.)
 
   // When the session flips to `graded`, look up the submission so we can
   // redirect to /report/{submission.id}.
@@ -615,7 +704,10 @@ function synthesiseAgentTurn(event: SupervisionEvent): AgentTurn | null {
     user_prompt: "",
     selected_context: { files: [], logs: [], tests: [], extras: [] },
     agent_response: payload.response_summary,
-    proposed_actions: [],
+    // Seed the action list so `AgentChat` renders the "Apply patch" CTA in
+    // the brief window between the WS event arriving and the real `AgentTurn`
+    // landing via `submitPrompt`. The real turn dedupes by `turn_index`.
+    proposed_actions: ["apply_patch"],
     applied_patch: null,
     patch_applied_at: null,
     created_at: event.occurred_at,

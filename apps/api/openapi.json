@@ -119,6 +119,13 @@
         "properties": {
           "category": {
             "default": "other",
+            "enum": [
+              "test",
+              "typecheck",
+              "lint",
+              "manual",
+              "other"
+            ],
             "title": "Category",
             "type": "string"
           },
@@ -1169,6 +1176,7 @@
             "type": "object"
           },
           "session_id": {
+            "format": "uuid",
             "title": "Session Id",
             "type": "string"
           }
@@ -2537,16 +2545,14 @@
     },
     "/healthz/ready": {
       "get": {
-        "description": "Full readiness check with bounded per-probe timeouts.",
+        "description": "Full readiness check with bounded per-probe timeouts.\n\nReturns HTTP 200 when both the DB and Redis are reachable. When either\nfails we return the same JSON body with HTTP 503 so load balancers and\nKubernetes can de-list the pod. ``s3_ok`` is treated as best-effort and\ndoes NOT force 503 — object storage is not on the request hot-path for\nevery endpoint, and a transient S3 hiccup shouldn't take traffic away\nfrom the API.",
         "operationId": "healthz_ready_healthz_ready_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Healthz Ready Healthz Ready Get",
-                  "type": "object"
+                  "title": "Response Healthz Ready Healthz Ready Get"
                 }
               }
             },

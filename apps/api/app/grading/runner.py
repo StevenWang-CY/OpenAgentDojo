@@ -40,7 +40,7 @@ from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
 from app.sandbox.types import GradingArtifacts
-from app.sessions.events import EventEmitter
+from app.sessions.events import EventEmitter, drain_pending_publishes, drain_pending_publishes
 
 DEFAULT_BUDGET_SECONDS = 300
 PER_VALIDATOR_TIMEOUT_S = 30
@@ -160,6 +160,10 @@ class GradingRunner:
                 },
             )
             await db.commit()
+            # The route is about to re-raise — drain the queued publishes now
+            # so subscribers actually see ``submission.failed`` instead of
+            # losing it when the outer get_db dependency aborts (P0-B7).
+            await _safe_drain(db)
             raise
         except Exception as exc:
             logger.exception("[grader] session {} pipeline failed: {}", session_id, exc)
@@ -171,6 +175,7 @@ class GradingRunner:
                 {"stage": "pipeline", "detail": str(exc)[:500]},
             )
             await db.commit()
+            await _safe_drain(db)
             raise
 
     # ------------------------------------------------------------------
@@ -404,6 +409,23 @@ class GradingRunner:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _safe_drain(db: AsyncSession) -> None:
+    """Drain queued ``publish_after_commit`` events without re-raising.
+
+    The grading failure paths re-raise the original exception immediately
+    after committing the ``submission.failed`` event, so the outer ``get_db``
+    dependency will short-circuit before its own drain runs. We invoke
+    ``drain_pending_publishes`` here ourselves so subscribers reliably see
+    the failure even though the route is about to abort — but if Redis is
+    flaky we swallow the error rather than mask the original pipeline
+    exception.
+    """
+    try:
+        await drain_pending_publishes(db)
+    except Exception as exc:  # pragma: no cover — telemetry only
+        logger.warning("[grader] could not drain failure publishes: {}", exc)
 
 
 def _now_iso() -> str:

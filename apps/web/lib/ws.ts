@@ -1,5 +1,5 @@
 import { env } from "./env";
-import { getWsToken } from "./api";
+import { ApiError, getWsToken } from "./api";
 
 /**
  * Auto-reconnecting WebSocket with exponential backoff + heartbeat ping.
@@ -57,6 +57,13 @@ export interface ReconnectingSocketOptions {
   onStatusChange?: (status: ReconnectingSocketStatus) => void;
   /** Fired once after `maxAttempts` consecutive failures. */
   onAttemptsExhausted?: () => void;
+  /**
+   * Fired when a token-refresh hits 401 — i.e. the cookie session has
+   * expired. The caller should redirect to sign-in; we do *not* keep
+   * looping the WS with a stale token. Once invoked, the socket transitions
+   * to "exhausted" and no further reconnects are scheduled.
+   */
+  onAuthFailure?: () => void;
 }
 
 export interface ReconnectingSocketHandle {
@@ -125,6 +132,7 @@ export function createReconnectingSocket(
     onError,
     onStatusChange,
     onAttemptsExhausted,
+    onAuthFailure,
   } = opts;
 
   const baseUrlNoToken = urlWithoutToken(rawUrl);
@@ -232,8 +240,17 @@ export function createReconnectingSocket(
             currentToken = resp.token;
             reconnectTimer = setTimeout(connect, backoff());
           })
-          .catch(() => {
-            // If we can't mint a fresh token, retry with the existing one.
+          .catch((err: unknown) => {
+            // A 401 from the token endpoint means the user's cookie session
+            // has expired — looping with the old WS token would only burn
+            // reconnect attempts. Bail out and let the caller redirect to
+            // sign-in. Network and 5xx errors still get a backoff retry.
+            if (err instanceof ApiError && err.status === 401) {
+              exhausted = true;
+              setStatus("exhausted");
+              onAuthFailure?.();
+              return;
+            }
             reconnectTimer = setTimeout(connect, backoff());
           });
         return;

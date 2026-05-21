@@ -572,6 +572,13 @@ export interface paths {
     /**
      * Readiness probe
      * @description Full readiness check with bounded per-probe timeouts.
+     *
+     *     Returns HTTP 200 when both the DB and Redis are reachable. When either
+     *     fails we return the same JSON body with HTTP 503 so load balancers and
+     *     Kubernetes can de-list the pod. ``s3_ok`` is treated as best-effort and
+     *     does NOT force 503 — object storage is not on the request hot-path for
+     *     every endpoint, and a transient S3 hiccup shouldn't take traffic away
+     *     from the API.
      */
     get: operations['healthz_ready_healthz_ready_get'];
     put?: never;
@@ -673,8 +680,9 @@ export interface components {
       /**
        * Category
        * @default other
+       * @enum {string}
        */
-      category: string;
+      category: 'test' | 'typecheck' | 'lint' | 'manual' | 'other';
       /** Command */
       command: string;
       /**
@@ -1210,7 +1218,10 @@ export interface components {
       payload?: {
         [key: string]: unknown;
       };
-      /** Session Id */
+      /**
+       * Session Id
+       * Format: uuid
+       */
       session_id: string;
     };
     /** UnifiedDiff */
@@ -2147,9 +2158,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': unknown;
         };
       };
     };

@@ -8,6 +8,7 @@ import { Compass, LogOut, Moon, Sun, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, auth } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { useTheme } from "@/stores/themeStore";
 import { cn } from "@/lib/utils";
 
@@ -130,7 +131,13 @@ export function Header({ showCta = true }: HeaderProps) {
               <Sun className="size-4 opacity-0" />
             )}
           </Button>
-          {user ? (
+          {meQuery.isLoading ? (
+            // Reserve the user-area width while the /me request is in flight
+            // so the header doesn't reflow (and we don't briefly show a
+            // "Sign in" button to a returning user before the cookie is
+            // resolved).
+            <Skeleton className="h-8 w-24 rounded-full" />
+          ) : user ? (
             <>
               {/* Profile pill: only render when we actually have a handle so
                   we don't ship a link that loops back to /missions. The

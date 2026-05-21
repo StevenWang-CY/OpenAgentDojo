@@ -29,8 +29,8 @@ Prereqs: `pnpm@9+`, `node@20+`, `python@3.12+`, `uv`, `docker` + `docker compose
 ### Full stack via docker compose (recommended)
 
 ```bash
-cp .env.example .env       # one-time
-docker compose up          # api, web, postgres, redis, minio, mailhog, worker
+cp infra/compose/.env.compose.example .env   # one-time — container-network hostnames
+docker compose up                            # api, web, postgres, redis, minio, mailhog, worker
 ```
 
 The API container's entrypoint runs `alembic upgrade head` and the mission

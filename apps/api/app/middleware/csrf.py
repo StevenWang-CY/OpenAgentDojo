@@ -21,9 +21,15 @@ _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 # Path suffixes that are exempt from the CSRF check because the client
 # cannot yet have a CSRF cookie (or the route is not a state mutation).
+#
+# ``/api/v1/auth/csrf-refresh`` is exempt by design: the endpoint exists
+# precisely to mint a fresh CSRF token, so a request that already has a
+# valid one is a contradiction. It still requires a valid session cookie
+# via ``Depends(require_auth)``, so it isn't an unauthenticated escape hatch.
 _EXEMPT_PATHS = (
     "/api/v1/auth/magic-link",
     "/api/v1/auth/callback",
+    "/api/v1/auth/csrf-refresh",
 )
 
 

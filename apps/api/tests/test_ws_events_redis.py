@@ -90,8 +90,16 @@ async def test_ws_events_subscribes_to_redis_and_closes_on_graded(monkeypatch) -
     async def _fake_backfill(_sid, _last):
         return []
 
+    async def _fake_session_exists(_sid):
+        # F8 turned _session_exists fail-closed on DB errors. This unit test
+        # has no DB at all, so we stub it explicitly to keep the WS contract
+        # focused on the pub/sub fan-out (not the existence check, which is
+        # covered elsewhere).
+        return True
+
     monkeypatch.setattr(ws_events, "get_redis", _fake_get_redis)
     monkeypatch.setattr(ws_events, "_backfill", _fake_backfill)
+    monkeypatch.setattr(ws_events, "_session_exists", _fake_session_exists)
 
     # Stub auth so we don't need a real signing secret in this micro-test.
     monkeypatch.setattr(ws_events, "verify_ws_token", lambda *_, **__: True)

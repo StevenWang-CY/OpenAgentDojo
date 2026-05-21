@@ -11,6 +11,7 @@ GET  /me                 — top-level alias for /auth/me
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -61,14 +62,35 @@ async def post_magic_link(
     # fall back to request.base_url only when no web origin is configured.
     base_url = (settings.web_origin or str(request.base_url)).rstrip("/")
     magic_url = await create_magic_link(db, email=str(body.email), base_url=base_url)
-    delivered = await send_magic_link_email(
-        to_email=str(body.email),
-        magic_url=magic_url,
-        settings=settings,
-    )
-    if not delivered:
-        from loguru import logger as _logger
 
+    # Commit the magic-link row BEFORE we await on outbound email — otherwise
+    # a slow/wedged SMTP backend pins this DB connection (and its row-level
+    # locks) for the duration of the send timeout. The link is persistent in
+    # the DB the moment we commit, so the user can retry email delivery
+    # without losing the token.
+    await db.commit()
+
+    from loguru import logger as _logger
+
+    try:
+        delivered = await asyncio.wait_for(
+            send_magic_link_email(
+                to_email=str(body.email),
+                magic_url=magic_url,
+                settings=settings,
+            ),
+            timeout=10.0,
+        )
+    except TimeoutError:
+        # The token is already persisted; treat email-send timeout as a
+        # warning, not a request failure. The user can request a fresh link.
+        _logger.warning(
+            "[auth] magic-link email send timed out for {} — token already persisted",
+            str(body.email),
+        )
+        delivered = False
+
+    if not delivered:
         _logger.error(
             "[auth] magic-link delivery FAILED for {} — no backend confirmed delivery",
             str(body.email),

@@ -17,6 +17,7 @@ regress in isolation.
 from __future__ import annotations
 
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -39,8 +40,31 @@ from app.sessions.service import get_session
 
 router = APIRouter(prefix="/sessions", tags=["agent"])
 
-# Module-level singleton — constructed lazily-internally, no LLM build on import.
-agent_service = AgentService()
+
+@lru_cache(maxsize=1)
+def get_agent_service() -> AgentService:
+    """Return the process-wide :class:`AgentService` instance.
+
+    Wrapped in :func:`functools.lru_cache` so FastAPI's ``Depends`` resolves
+    to the same object on every call (cheap O(1) hash lookup) without us
+    having to maintain a module-level singleton that runs at import time —
+    which would build the LLM client during ``pytest`` collection.
+
+    Tests that need to swap the LLM out use::
+
+        from app.agent.router import get_agent_service
+        get_agent_service.cache_clear()
+        # …or use FastAPI's app.dependency_overrides[get_agent_service] = ...
+    """
+    return AgentService()
+
+
+# Back-compat alias for callers that imported the old module-level singleton.
+# Resolves lazily so ``import app.agent.router`` is still side-effect-free.
+def __getattr__(name: str) -> Any:  # pragma: no cover — import shim
+    if name == "agent_service":
+        return get_agent_service()
+    raise AttributeError(name)
 
 
 # ---------------------------------------------------------------------------
@@ -71,14 +95,26 @@ class ApplyPatchBody(BaseModel):
 
 
 def _get_sandbox_handle(request: Request, session_id: uuid.UUID) -> Any:
+    """Return the active sandbox handle or raise 503.
+
+    Mirrors ``sessions/router._get_sandbox_handle`` — prefer the O(1)
+    ``handle_for`` lookup and fall back to the linear ``handles_snapshot``
+    scan for any legacy pool stub (e.g. test doubles) that doesn't implement
+    the indexed accessor.
+    """
     pool = request.app.state.sandbox_pool
-    for h in pool.handles_snapshot():
-        if h.session_id == session_id:
-            return h
-    raise HTTPException(
-        status_code=503,
-        detail="sandbox not provisioned for this session yet",
-    )
+    handle = pool.handle_for(session_id) if hasattr(pool, "handle_for") else None
+    if handle is None:
+        for h in pool.handles_snapshot():
+            if h.session_id == session_id:
+                handle = h
+                break
+    if handle is None:
+        raise HTTPException(
+            status_code=503,
+            detail="sandbox not provisioned for this session yet",
+        )
+    return handle
 
 
 def _resolve_mission_folder(mission_id: str) -> Path:
@@ -123,6 +159,7 @@ async def post_prompt(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_auth),
+    agent_service: AgentService = Depends(get_agent_service),
 ) -> AgentTurnResponse:
     session = await get_session(db, session_id)
     if session is None:
@@ -207,6 +244,7 @@ async def post_apply_patch(
     body: ApplyPatchBody | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_auth),
+    agent_service: AgentService = Depends(get_agent_service),
 ) -> PatchResult:
     session = await get_session(db, session_id)
     if session is None:

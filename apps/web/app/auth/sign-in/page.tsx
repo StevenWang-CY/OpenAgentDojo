@@ -20,6 +20,16 @@ export default function SignInPage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!email.trim() || submitting) return;
+    // RFC 5321 caps the total email length at 254 octets; rejecting before
+    // we touch the API gives the user a clearer error than waiting for a
+    // 422 from the backend, and saves a roundtrip on obviously malformed
+    // pastes (e.g. a 5KB JWT pasted by mistake).
+    if (email.trim().length > 254) {
+      const message = "Email is too long.";
+      setError(message);
+      toast.error(message);
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -82,6 +92,7 @@ export default function SignInPage() {
                   type="email"
                   autoComplete="email"
                   required
+                  maxLength={254}
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}

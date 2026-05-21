@@ -10,9 +10,9 @@ const nextConfig: NextConfig = {
   images: {
     remotePatterns: [],
   },
-  env: {
-    NEXT_PUBLIC_APP_ENV: process.env.NEXT_PUBLIC_APP_ENV ?? "development",
-  },
+  // No `env` block: Next.js already inlines every `NEXT_PUBLIC_*` variable
+  // at build time, so re-declaring NEXT_PUBLIC_APP_ENV here just freezes a
+  // stale default at config-load time and shadows the real value.
   // Monaco / xterm are heavy — keep them out of the server bundle.
   transpilePackages: ["monaco-editor"],
   eslint: {
