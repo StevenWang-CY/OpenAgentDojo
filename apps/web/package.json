@@ -37,7 +37,7 @@
     "react": "^19.0.0",
     "react-diff-view": "^3.2.0",
     "react-dom": "^19.0.0",
-    "react-markdown": "^9.0.1",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^2.1.4",
     "recharts": "^2.13.0",
     "remark-gfm": "^4.0.0",
