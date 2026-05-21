@@ -7,11 +7,11 @@ This document is a human-readable reference for the FastAPI surface defined in [
 - **Base path:** all REST routes live under `/api/v1`. The version segment is reserved for breaking changes; additive changes do not bump it.
 - **Auth:** session cookie (`arena_session`, HttpOnly, Secure, SameSite=Lax). All `POST`, `PUT`, `DELETE` require an `X-Csrf-Token` header matching the per-session token returned by `GET /me`.
 - **Content type:** request and response bodies are JSON unless otherwise stated. Timestamps are ISO-8601 UTC. UUIDs are lowercase canonical.
-- **Errors:** all error responses use the shape
+- **Errors:** plain `HTTPException` responses use FastAPI's default envelope `{ "detail": "string" }`. Structured failures raised as `ArenaError` (see `apps/api/app/main.py`) extend that envelope with a stable, machine-parsable code:
   ```json
-  { "error": { "code": "string", "message": "string", "details": { } } }
+  { "detail": "human-readable message", "code": "stable_code" }
   ```
-  `code` is stable across versions and machine-parsable; `message` is human-readable; `details` is optional.
+  Unhandled exceptions are logged server-side and surface as `{ "detail": "internal server error", "code": "internal_error" }` with HTTP 500.
 - **Pagination:** list endpoints accept `limit` (default 50, max 200) and `cursor` (opaque string). Responses include `next_cursor` (null when exhausted).
 - **Rate limits:** documented per resource below; the platform returns `429 Too Many Requests` with `Retry-After` in seconds. See [IMPLEMENTATION_PLAN.md §21](../IMPLEMENTATION_PLAN.md).
 

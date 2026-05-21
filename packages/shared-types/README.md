@@ -4,21 +4,27 @@ TypeScript types shared between the Next.js frontend and the FastAPI backend.
 
 ## Regeneration story
 
-Per IMPLEMENTATION_PLAN.md §12.3, the long-term plan is for CI to:
+Per IMPLEMENTATION_PLAN.md §12.3, the contract types are generated from the
+backend's OpenAPI schema. Since M5 the pipeline is:
 
-1. Boot the FastAPI app.
-2. Dump `/openapi.json` to `packages/shared-types/openapi.json`.
-3. Run `openapi-typescript` to regenerate `src/api.ts`.
+1. `apps/api/scripts/dump_openapi.py` boots the FastAPI app in-process and
+   writes `apps/api/openapi.json`.
+2. `pnpm --filter @arena/shared-types regen` runs `openapi-typescript` and
+   produces `src/api.gen.ts` (do not hand-edit — the file carries an
+   "AUTO-GENERATED" banner and is overwritten on every regen).
+3. The pre-commit hook and the `contracts` CI workflow both regen and fail
+   the build if `api.gen.ts` drifts from the committed copy, so the shared
+   types always match the running backend.
 
-For M0–M2, this package ships **hand-authored** types so the frontend can be
-developed and typechecked without the backend running. Every file under
-`src/` carries a `// Hand-authored until CI regenerates from openapi.json`
-banner so the boundary is obvious once codegen lands.
+`src/api.ts` is a small hand-curated re-export surface on top of `api.gen.ts`
+that exposes the generated `components` map as named types and patches the
+few shapes the backend doesn't yet expose via Pydantic response models
+(notably `/me` and the JSONB fields of `SubmissionRead`).
 
-When the backend exists and the codegen step is wired into CI, replace
-`src/api.ts` with the generated output and keep `src/events.ts` +
-`src/mission.ts` as hand-authored extensions (event payloads and mission
-manifest shapes that are not exposed verbatim over the REST API).
+`src/events.ts` and `src/mission.ts` remain hand-authored — the supervision
+event payloads are serialised by the backend as untyped `dict`, and the
+mission manifest fields exposed to the UI are a frontend-only subset of the
+backend manifest, so neither shape can be derived mechanically from OpenAPI.
 
 ## Consumers
 

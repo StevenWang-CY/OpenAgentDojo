@@ -90,7 +90,7 @@ cd apps/api && uv run pytest
 
 ## Project status
 
-This repo is currently building toward MVP. Milestones M0–M2 (bootstrap, data layer, sandbox MVP) are landing first. See [IMPLEMENTATION_PLAN.md §17](IMPLEMENTATION_PLAN.md) for the milestone roadmap.
+MVP complete — milestones M0–M8 (bootstrap, data layer, sandbox, workspace UI, agent service, grading engine, mission content, public profile/landing, hardening) have all shipped. The platform now provisions sandboxes, runs the deterministic agent, grades the 100-point supervision rubric, and renders public profiles. See [IMPLEMENTATION_PLAN.md §17](IMPLEMENTATION_PLAN.md) for the milestone breakdown.
 
 ## Security
 

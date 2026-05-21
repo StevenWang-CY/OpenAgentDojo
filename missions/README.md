@@ -54,12 +54,12 @@ Run `pnpm validate:missions` before pushing.
 | # | Folder | Status | Repo pack |
 |---|---|---|---|
 | 01 | `01-auth-cookie-expiration` | shipped | `fullstack-auth-demo` |
-| 02 | `02-agent-edits-wrong-file` | planned | `fullstack-auth-demo` |
-| 03 | `03-missing-regression-test` | planned | `fullstack-auth-demo` |
-| 04 | `04-overfitted-test-fix` | planned | `data-api-demo` |
-| 05 | `05-security-validation-removed` | planned | `fullstack-auth-demo` |
-| 06 | `06-excessive-rewrite` | planned | `fullstack-auth-demo` |
-| 07 | `07-dependency-misuse` | planned | `data-api-demo` |
-| 08 | `08-async-race-condition` | planned | `data-api-demo` |
-| 09 | `09-api-contract-drift` | planned | `fullstack-auth-demo` |
-| 10 | `10-typecheck-ignored` | planned | `fullstack-auth-demo` |
+| 02 | `02-agent-wrong-file` | shipped | `fullstack-auth-demo` |
+| 03 | `03-missing-regression-test` | shipped | `fullstack-auth-demo` |
+| 04 | `04-overfitted-test-fix` | shipped | `data-api-demo` |
+| 05 | `05-security-validation-removed` | shipped | `fullstack-auth-demo` |
+| 06 | `06-excessive-rewrite` | shipped | `fullstack-auth-demo` |
+| 07 | `07-dependency-misuse` | shipped | `data-api-demo` |
+| 08 | `08-async-race-condition` | shipped | `data-api-demo` |
+| 09 | `09-api-contract-drift` | shipped | `fullstack-auth-demo` |
+| 10 | `10-typecheck-ignored` | shipped | `fullstack-auth-demo` |

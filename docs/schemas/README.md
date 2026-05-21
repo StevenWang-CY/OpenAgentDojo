@@ -30,7 +30,7 @@ The CLI is wired into `pnpm validate:missions` and runs on every PR.
 
 ## How the frontend consumes them
 
-For now, the frontend imports hand-written TypeScript types from `packages/shared-types/`. Once CI is fully wired (M5), `openapi-typescript` regenerates these from FastAPI's `/openapi.json`. The JSON Schemas above are the spec; the OpenAPI is the runtime contract.
+The frontend imports TypeScript types from `packages/shared-types/`. As of M5, `openapi-typescript` regenerates `src/api.gen.ts` from FastAPI's `/openapi.json` (see [`packages/shared-types/README.md`](../../packages/shared-types/README.md) and the `contracts` CI workflow). The JSON Schemas above are the spec; the OpenAPI is the runtime contract.
 
 ## Editing
 
