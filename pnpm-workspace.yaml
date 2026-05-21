@@ -1,0 +1,8 @@
+packages:
+  - "apps/web"
+  - "packages/*"
+  - "missions/_shared/repos/fullstack-auth-demo"
+  - "missions/_shared/repos/fullstack-auth-demo/backend"
+  - "missions/_shared/repos/fullstack-auth-demo/frontend"
+  - "missions/_shared/repos/data-api-demo"
+  - "missions/_shared/repos/data-api-demo/frontend"

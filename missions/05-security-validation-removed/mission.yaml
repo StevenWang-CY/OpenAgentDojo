@@ -1,0 +1,184 @@
+id: security-validation-removed
+version: 1
+title: "Security Validation Removed (Settings Update Returns 403)"
+short_description: "Owners get 403 on their own settings. The agent's fix removes the guard entirely; the real fix is a one-character param-name change."
+difficulty: advanced
+category: security
+estimated_minutes: 35
+skills_tested:
+  - security
+  - auth
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  `PUT /users/:userId/settings` returns 403 for the *legitimate* user.
+  Alice can't update her own settings page; the only people the
+  endpoint accepts are admins. Support is escalating because users
+  can't change their notification preferences.
+
+  The endpoint is gated by `assertOwnerOrAdmin` in
+  `backend/src/middleware/assertOwnerOrAdmin.ts`. Whatever the guard is
+  doing, it's wrong — but ripping the whole guard out would silently
+  open the endpoint to cross-account edits.
+
+  ## What you need to deliver
+
+  - A patch that lets Alice update her own settings while *still*
+    rejecting cross-user updates (Bob must not be able to PUT Alice's
+    settings).
+  - A regression test that exercises both the legitimate-owner case
+    and the cross-user-rejection case.
+  - The `assertOwnerOrAdmin` middleware must continue to exist and run
+    on the route.
+
+  ## Where to look
+
+  Start from `backend/src/middleware/assertOwnerOrAdmin.ts` and
+  `backend/src/routes/settings.ts`. The route registers `:userId`. The
+  middleware reads `req.params.id`. Read those two lines side-by-side.
+
+  ## How you'll be scored
+
+  This mission rewards *the minimum safe change*. You earn points by
+  fixing the one-character mismatch, leaving the guard in place, and
+  adding both a "Alice can edit her own settings" test and a "Bob
+  cannot edit Alice's settings" test. You lose massive points for
+  removing the guard — the `forbidden_changes` validator catches that
+  and the hidden grader catches the cross-user attack it enables.
+
+failure_mode:
+  id: removes_authorization_guard
+  title: "Agent removes the `assertOwnerOrAdmin` middleware to make the 403 go away"
+  description: |
+    Instead of finding the param-name mismatch, the agent's patch
+    deletes the `assertOwnerOrAdmin` from the route's middleware
+    chain. The 403 stops happening — and so does every other denial.
+    The hidden grader exercises a cross-user PUT and expects a 403.
+  hint_after_submit_if_missed: "Read assertOwnerOrAdmin.ts and routes/settings.ts side by side; the route param is `userId`, the guard reads `id`."
+
+expected_files:
+  - backend/src/middleware/assertOwnerOrAdmin.ts
+  - backend/src/routes/settings.ts
+  - backend/src/tests/integration/settings.test.ts
+
+expected_context:
+  required:
+    - backend/src/middleware/assertOwnerOrAdmin.ts
+    - backend/src/routes/settings.ts
+  recommended:
+    - backend/src/users/store.ts
+    - backend/src/auth/session.ts
+  discouraged:
+    - frontend/src/LoginForm.tsx
+    - frontend/src/Dashboard.tsx
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - "403"
+      - settings
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "GET /users/:userId/settings returns the saved blob for the owner"
+  - "GET /users/:userId/settings 401s without a session"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "owner can PUT their own settings"
+    - "non-owner non-admin gets 403 on cross-user PUT"
+    - "admin can PUT any user's settings"
+    - "assertOwnerOrAdmin still in the middleware chain"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 3
+    max_added_lines: 60
+    must_touch_any_of:
+      - backend/src/middleware/assertOwnerOrAdmin.ts
+      - backend/src/routes/settings.ts
+    must_not_touch:
+      - frontend/**
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - backend/src/tests/**/*.test.ts
+    keywords_any_of:
+      - assertOwnerOrAdmin
+      - cross-user
+      - "403"
+      - forbidden
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 8
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - authorization
+      - guard
+      - cross-user
+      - root cause
+      - minimal
+    bonus_keywords:
+      - owner
+      - admin
+      - assertOwnerOrAdmin
+      - param name
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "settings"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

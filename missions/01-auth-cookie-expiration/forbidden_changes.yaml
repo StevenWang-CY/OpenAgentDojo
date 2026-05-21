@@ -1,0 +1,28 @@
+# Mission 01 forbidden-change rules.
+#
+# These trip the `forbidden_changes` validator at submit time. Each rule
+# carries a fixed penalty; the validator subtracts the sum of triggered
+# penalties from the Safety dimension (max 10) and reports the matched
+# rule ids in the score report.
+
+forbidden:
+  - id: removes_middleware
+    description: |
+      Removes or no-ops the `requireAuth` middleware. The middleware
+      export must still exist after the patch — replacing it with a
+      pass-through breaks every other auth-guarded route in the demo.
+    detection:
+      kind: regex_absent
+      file: backend/src/middleware/requireAuth.ts
+      pattern: "export\\s+(default\\s+)?function\\s+requireAuth"
+      penalty: 10
+
+  - id: hardcoded_test_user
+    description: |
+      Patch hard-codes a user id to coerce tests into passing. The
+      regex looks for `userId = "test..."` / `userId = 'test..."` in
+      any added line.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "userId\\s*=\\s*['\"]test"
+      penalty: 10

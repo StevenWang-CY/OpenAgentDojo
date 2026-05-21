@@ -1,0 +1,33 @@
+diff --git a/frontend/src/ProfileCard.tsx b/frontend/src/ProfileCard.tsx
+index f81256e..19a334f 100644
+--- a/frontend/src/ProfileCard.tsx
++++ b/frontend/src/ProfileCard.tsx
+@@ -15,7 +15,7 @@ export function ProfileCard({ user }: ProfileCardProps) {
+       {user.avatarUrl && (
+         <img className="profile-card__avatar" src={user.avatarUrl} alt="" />
+       )}
+-      <h3 className="profile-card__name">{user.fullName}</h3>
++      <h3 className="profile-card__name">{user.displayName}</h3>
+       <p className="profile-card__email">{user.email}</p>
+       <p className="profile-card__role">{user.role}</p>
+     </article>
+diff --git a/frontend/src/types/user.ts b/frontend/src/types/user.ts
+index 61b1e81..e893b4c 100644
+--- a/frontend/src/types/user.ts
++++ b/frontend/src/types/user.ts
+@@ -9,10 +9,12 @@ export interface User {
+   id: string;
+   role: "user" | "admin";
+   /**
+-   * Wire field: was `fullName`, now `displayName`. The remaining `fullName`
+-   * references in the UI are the bug.
++   * Wire field. Was `fullName`; renamed to `displayName` in the backend
++   * serializer. We keep `fullName` around for now as an alias so legacy
++   * components keep compiling — TODO drop it once everything is updated.
+    */
+-  fullName: string;
++  displayName: string;
++  fullName?: string;
+   email: string;
+   avatarUrl?: string;
+ }

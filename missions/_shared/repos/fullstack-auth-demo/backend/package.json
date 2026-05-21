@@ -1,0 +1,35 @@
+{
+  "name": "@demo/backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test:unit": "vitest run src/tests/unit",
+    "test:integration": "vitest run src/tests/integration",
+    "test:hidden": "vitest run src/tests/hidden",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "cookie": "0.6.0",
+    "cookie-parser": "1.4.6",
+    "express": "4.21.0"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "1.4.7",
+    "@types/express": "4.17.21",
+    "@types/node": "20.16.10",
+    "@types/supertest": "6.0.2",
+    "@typescript-eslint/eslint-plugin": "8.8.0",
+    "@typescript-eslint/parser": "8.8.0",
+    "eslint": "9.11.1",
+    "supertest": "7.0.0",
+    "tsx": "4.19.1",
+    "typescript": "5.6.3",
+    "vitest": "2.1.2"
+  }
+}

@@ -1,0 +1,51 @@
+name: determinism
+
+# Nightly regression guard for the grading engine. The contract is documented
+# in IMPLEMENTATION_PLAN.md §11 and apps/api/scripts/replay_determinism.py:
+# byte-identical inputs to ``compute_score`` must produce byte-identical
+# ``ScoreReport`` outputs across runs and across interpreter restarts.
+#
+# This job runs the script against a fixture mission (no DB / sandbox needed),
+# replaying the ``ideal`` envelope five times. Any drift fails the job and
+# files a noisy alert on the workflow run.
+
+on:
+  schedule:
+    # 06:00 UTC nightly. Pick the off-peak window so a flake doesn't page
+    # anyone working hours; this is a quality signal, not a paging signal.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  fixture-replay:
+    name: replay fixture mission 5x
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+
+      - name: Sync deps
+        run: uv sync --extra dev
+
+      - name: Replay determinism (fixture mode, 5 runs)
+        # Pinning --runs explicitly so a future "make it 50" experiment in the
+        # script's default does not silently turn this into a 50× workflow.
+        run: uv run python scripts/replay_determinism.py --runs 5

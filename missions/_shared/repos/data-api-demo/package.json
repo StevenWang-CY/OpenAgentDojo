@@ -1,0 +1,19 @@
+{
+  "name": "data-api-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frozen base repo pack for AgentSupervisor Arena Python data-API scenarios (missions 04, 07, 08).",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "install:py": "cd backend && uv sync --frozen --extra dev",
+    "test:unit": "cd backend && uv run --frozen pytest tests/unit -q",
+    "test:integration": "cd backend && uv run --frozen pytest tests/integration -q",
+    "test:hidden": "cd backend && uv run --frozen pytest tests/hidden -q",
+    "typecheck": "cd backend && uv run --frozen mypy app",
+    "lint": "cd backend && uv run --frozen ruff check app tests"
+  }
+}

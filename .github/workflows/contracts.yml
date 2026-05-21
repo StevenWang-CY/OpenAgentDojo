@@ -1,0 +1,85 @@
+name: Contracts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: contracts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20.18.0"
+  PNPM_VERSION: "9.12.0"
+
+jobs:
+  # -------------------------------------------------------------------------
+  # api-contracts — regenerate openapi.json + shared-types/api.gen.ts and
+  # fail the build if either file is stale relative to the source schemas.
+  # -------------------------------------------------------------------------
+  api-contracts:
+    name: api contracts (no drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+
+      - name: Sync python deps
+        working-directory: apps/api
+        run: uv sync --extra dev
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install node deps
+        # Frozen lockfile — drift between pnpm-lock.yaml and package.json
+        # fails this step instead of being silently fixed up.
+        run: pnpm install --frozen-lockfile=true
+
+      - name: Dump openapi.json
+        run: uv --project apps/api run python apps/api/scripts/dump_openapi.py
+
+      - name: Regenerate shared-types/api.gen.ts
+        run: pnpm --filter @arena/shared-types regen
+
+      - name: Assert no drift
+        run: |
+          git diff --exit-code apps/api/openapi.json packages/shared-types/src/api.gen.ts \
+            || (
+              echo "::error::OpenAPI / shared-types drift detected. Run:"
+              echo "  uv --project apps/api run python apps/api/scripts/dump_openapi.py"
+              echo "  pnpm --filter @arena/shared-types regen"
+              echo "and commit the result."
+              exit 1
+            )
+
+      - name: shared-types typecheck
+        run: pnpm --filter @arena/shared-types typecheck
+
+      - name: web typecheck (catches contract-shape regressions in call sites)
+        run: pnpm --filter @arena/web typecheck
+
+      - name: contract tests (msw)
+        run: pnpm --filter @arena/web exec vitest run __tests__/contract

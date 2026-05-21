@@ -1,0 +1,27 @@
+"""SQLAlchemy ORM models — re-export so Alembic autogenerate sees them all."""
+
+from app.models.agent_turn import AgentTurn
+from app.models.badge import Badge
+from app.models.command_run import CommandRun
+from app.models.file_change import FileChange
+from app.models.magic_link_token import MagicLinkToken
+from app.models.mission import Mission
+from app.models.session import SessionRow
+from app.models.submission import Submission
+from app.models.supervision_event import SupervisionEvent
+from app.models.user import User
+from app.models.user_badge import UserBadge
+
+__all__ = [
+    "AgentTurn",
+    "Badge",
+    "CommandRun",
+    "FileChange",
+    "MagicLinkToken",
+    "Mission",
+    "SessionRow",
+    "Submission",
+    "SupervisionEvent",
+    "User",
+    "UserBadge",
+]

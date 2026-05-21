@@ -1,0 +1,245 @@
+"""Browser ↔ container PTY bridge.
+
+For the docker driver this attaches to a TTY exec inside the container; for
+the local driver we proxy a real pty + subprocess. Auth uses the HMAC token
+issued by :mod:`app.ws.auth`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import fcntl
+import json
+import os
+import struct
+import termios
+import time
+import uuid
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
+from loguru import logger
+
+from app.ws.auth import verify_ws_token
+
+router = APIRouter(tags=["ws"])
+
+# Frame size for PTY reads.
+_PTY_CHUNK = 4096
+
+# Binary control-frame magic byte for terminal resize. Coordinates with the
+# 4.5 frontend: ``[0x01, cols_hi, cols_lo, rows_hi, rows_lo]`` (5 bytes total).
+_RESIZE_FRAME_PREFIX = 0x01
+_RESIZE_FRAME_LEN = 5
+
+
+def _is_control_message(data: bytes) -> dict | None:
+    """Return the parsed control-frame JSON dict, or None if ``data`` is shell input.
+
+    The FE sends a ``{"type":"ping"}`` keep-alive every ~20s. Without this
+    decoder the bytes would land on the PTY and corrupt the shell prompt.
+    Only short, JSON-shaped frames are considered — anything that doesn't
+    parse cleanly as a dict is forwarded to the shell verbatim.
+    """
+    if not data or len(data) > 256 or data[:1] not in (b"{", b" ", b"\t"):
+        return None
+    try:
+        text = data.decode("utf-8")
+        parsed = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if isinstance(parsed, dict) and isinstance(parsed.get("type"), str):
+        return parsed
+    return None
+
+
+def _apply_resize(pty_fd: int, data: bytes) -> bool:
+    """Try to interpret ``data`` as a resize control frame.
+
+    Returns True if the frame was consumed (ioctl applied or attempted).
+    Returns False if the data is regular PTY input.
+    """
+    if len(data) != _RESIZE_FRAME_LEN or data[0] != _RESIZE_FRAME_PREFIX:
+        return False
+    try:
+        cols = struct.unpack(">H", data[1:3])[0]
+        rows = struct.unpack(">H", data[3:5])[0]
+    except struct.error:
+        return False
+    if cols == 0 or rows == 0:
+        # Treat zeros as a noop rather than blowing away the window size.
+        return True
+    try:
+        fcntl.ioctl(pty_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    except OSError as exc:
+        logger.debug("resize ioctl failed: {}", exc)
+    return True
+
+
+@router.websocket("/ws/sessions/{session_id}/terminal")
+async def terminal_ws(
+    websocket: WebSocket,
+    session_id: uuid.UUID,
+    token: str = Query(""),
+):
+    sid_str = str(session_id)
+    if not verify_ws_token(token, sid_str):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="bad token")
+        return
+
+    await websocket.accept()
+    pool = getattr(websocket.app.state, "sandbox_pool", None)
+
+    # Provisioning is asynchronous — the terminal can connect a beat before the
+    # handle lands on the pool. Poll briefly so the UI shows "Connecting…" once
+    # rather than "no_sandbox" + retry.
+    handle = None
+    if pool is not None:
+        for _ in range(30):  # ~6s @ 200ms
+            for h in pool.handles_snapshot():
+                if h.session_id == session_id:
+                    handle = h
+                    break
+            if handle is not None:
+                break
+            await asyncio.sleep(0.2)
+
+    if handle is None or pool is None:
+        await websocket.send_json(
+            {"type": "error", "code": "no_sandbox", "detail": "session has no sandbox"}
+        )
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        return
+
+    try:
+        attach = await pool.driver.attach_shell(handle)
+    except Exception as exc:
+        logger.warning("attach_shell failed for {}: {}", session_id, exc)
+        await websocket.send_json({"type": "error", "code": "attach_failed", "detail": str(exc)})
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        return
+
+    # Local driver returns (pty_fd, proc, ptyid); docker returns (exec_id, socket).
+    if pool.driver.name == "local":
+        await _bridge_local_pty(websocket, attach, pool.driver, handle)
+    else:
+        await _bridge_docker_socket(websocket, attach)
+
+
+async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> None:
+    pty_fd, proc, ptyid = attach
+    loop = asyncio.get_running_loop()
+    closed = asyncio.Event()
+
+    async def reader_task() -> None:
+        try:
+            while not closed.is_set():
+                data = await loop.run_in_executor(None, _read_fd, pty_fd, _PTY_CHUNK)
+                if not data:
+                    break
+                await websocket.send_bytes(data)
+        except (OSError, WebSocketDisconnect):
+            pass
+        finally:
+            closed.set()
+
+    async def writer_task() -> None:
+        try:
+            while not closed.is_set():
+                msg = await websocket.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    break
+                data = msg.get("bytes") or (msg.get("text") or "").encode("utf-8")
+                if not data:
+                    continue
+                # First, try to interpret the bytes as a resize control frame.
+                if _apply_resize(pty_fd, data):
+                    continue
+                # JSON keep-alive ping from the FE — respond with pong and
+                # never forward to the PTY (would corrupt the shell prompt).
+                ctrl = _is_control_message(data)
+                if ctrl is not None and ctrl.get("type") == "ping":
+                    try:
+                        await websocket.send_json({"type": "pong", "ts": int(time.time())})
+                    except Exception:  # pragma: no cover — best-effort
+                        pass
+                    continue
+                if ctrl is not None:
+                    # Recognised control frame but not one we act on (e.g.
+                    # pong). Swallow rather than forward to the PTY.
+                    continue
+                os.write(pty_fd, data)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            closed.set()
+
+    await asyncio.gather(reader_task(), writer_task(), return_exceptions=True)
+
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        pass
+    # Close only this tab's PTY; sibling tabs on the same handle stay alive.
+    try:
+        driver.close_pty(handle, ptyid)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("close_pty failed: {}", exc)
+
+
+async def _bridge_docker_socket(websocket: WebSocket, attach) -> None:
+    _exec_id, sock = attach
+    loop = asyncio.get_running_loop()
+    closed = asyncio.Event()
+
+    raw = getattr(sock, "_sock", None) or sock
+
+    async def reader_task() -> None:
+        try:
+            while not closed.is_set():
+                data = await loop.run_in_executor(None, raw.recv, _PTY_CHUNK)
+                if not data:
+                    break
+                await websocket.send_bytes(data)
+        except (OSError, WebSocketDisconnect):
+            pass
+        finally:
+            closed.set()
+
+    async def writer_task() -> None:
+        try:
+            while not closed.is_set():
+                msg = await websocket.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    break
+                data = msg.get("bytes") or (msg.get("text") or "").encode("utf-8")
+                if not data:
+                    continue
+                # JSON keep-alive ping from the FE — respond with pong and
+                # don't forward to the docker exec socket.
+                ctrl = _is_control_message(data)
+                if ctrl is not None and ctrl.get("type") == "ping":
+                    try:
+                        await websocket.send_json({"type": "pong", "ts": int(time.time())})
+                    except Exception:  # pragma: no cover — best-effort
+                        pass
+                    continue
+                if ctrl is not None:
+                    continue
+                await loop.run_in_executor(None, raw.send, data)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            closed.set()
+
+    await asyncio.gather(reader_task(), writer_task(), return_exceptions=True)
+    try:
+        raw.close()
+    except OSError:
+        pass
+
+
+def _read_fd(fd: int, n: int) -> bytes:
+    try:
+        return os.read(fd, n)
+    except OSError:
+        return b""

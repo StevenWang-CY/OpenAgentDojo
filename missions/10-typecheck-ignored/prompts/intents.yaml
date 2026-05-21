@@ -1,0 +1,41 @@
+intents:
+  fix:
+    keywords:
+      - fix
+      - implement
+      - add
+      - avatar
+      - debug
+      - investigate
+
+  test:
+    keywords:
+      - add a test
+      - regression test
+      - cover this
+      - lock this down
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+      - no any
+      - narrow
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+      - strict
+
+  unknown: {}

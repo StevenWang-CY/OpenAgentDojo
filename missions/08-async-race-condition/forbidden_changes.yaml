@@ -1,0 +1,33 @@
+# Mission 08 forbidden-change rules.
+
+forbidden:
+  - id: introduces_asyncio_lock
+    description: |
+      Patch reaches for an `asyncio.Lock` (or `threading.Lock`) to
+      "fix" concurrency. Application-level locks do not survive
+      across processes or restarts; the only correct guard is at the
+      database (UPDATE … WHERE status='pending' + rowcount inspection).
+    detection:
+      kind: regex_present_in_diff
+      pattern: "asyncio\\.Lock\\(\\)|threading\\.Lock\\(\\)"
+      penalty: 6
+
+  - id: removes_claim_job
+    description: |
+      Removes or no-ops the `claim_job` function. The mission depends
+      on it being the single atomic-claim entrypoint.
+    detection:
+      kind: regex_absent
+      file: backend/app/jobs.py
+      pattern: "def\\s+claim_job"
+      penalty: 10
+
+  - id: hardcoded_sleep_loop
+    description: |
+      Patch adds an `await asyncio.sleep` loop to "wait until claimed".
+      Polling is not a concurrency primitive; the underlying race still
+      exists.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "await\\s+asyncio\\.sleep"
+      penalty: 4

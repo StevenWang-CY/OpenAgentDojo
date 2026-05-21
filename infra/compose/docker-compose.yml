@@ -1,0 +1,228 @@
+# ---------------------------------------------------------------------------
+# AgentSupervisor Arena — local development stack.
+#
+# `docker compose up` from this directory brings the whole platform online
+# with no manual steps beyond `cp .env.example .env` at the repo root.
+#
+# Services:
+#   postgres   — primary DB (citext + pgcrypto preloaded via init-db.sql)
+#   redis      — RQ broker + session cache
+#   minio      — S3-compatible object store for diff/log artifacts
+#   minio-bucket-init — one-shot job that creates the `arena-artifacts` bucket
+#   mailhog    — captures dev magic-link emails (UI on :8025)
+#   api        — FastAPI backend (uvicorn)
+#   worker     — RQ worker that drives sandbox provisioning
+#   web        — Next.js 15 frontend
+#
+# Healthchecks are wired across the dependency graph so dependents start
+# only when prerequisites are actually ready.
+#
+# The `worker` service mounts /var/run/docker.sock so it can spawn per-session
+# sandbox containers on the host docker daemon. This is privileged-equivalent;
+# keep it on this single service only.
+# ---------------------------------------------------------------------------
+
+name: agentarena
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: agentarena-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: arena
+      POSTGRES_USER: arena
+      POSTGRES_PASSWORD: arena
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - arena-pg:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arena -d arena"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: agentarena-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - arena-redis:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    container_name: agentarena-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: arena-minio
+      MINIO_ROOT_PASSWORD: arena-minio-secret
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - arena-minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-bucket-init:
+    image: minio/mc:latest
+    container_name: agentarena-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set arena http://minio:9000 arena-minio arena-minio-secret &&
+        (mc mb --ignore-existing arena/arena-artifacts) &&
+        mc anonymous set download arena/arena-artifacts &&
+        echo 'minio bucket arena-artifacts ready'
+      "
+    restart: "no"
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: agentarena-mailhog
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1025:1025"   # SMTP
+      - "127.0.0.1:8025:8025"   # web UI
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8025/api/v2/messages"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+    image: agentarena/api:dev
+    container_name: agentarena-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://arena:arena@postgres:5432/arena
+      SYNC_DATABASE_URL: postgresql://arena:arena@postgres:5432/arena
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: arena-minio
+      S3_SECRET_ACCESS_KEY: arena-minio-secret
+      S3_BUCKET: arena-artifacts
+      S3_REGION: us-east-1
+      EMAIL_FROM: hello@arena.local
+      MISSIONS_ROOT: /missions
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      # Optional LLM creds — empty defaults are fine; the API logs
+      # `provider=disabled` when none are set.
+      ANTHROPIC_PROVIDER: ${ANTHROPIC_PROVIDER:-}
+      AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Hot-reload friendly: live app source + read-only mission content.
+      - ../../apps/api/app:/app/app
+      - ../../missions:/missions:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/sandbox-worker.Dockerfile
+    image: agentarena/sandbox-worker:dev
+    container_name: agentarena-worker
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://arena:arena@postgres:5432/arena
+      SYNC_DATABASE_URL: postgresql://arena:arena@postgres:5432/arena
+      REDIS_URL: redis://redis:6379/0
+      SANDBOX_DRIVER: docker
+      MISSIONS_ROOT: /missions
+      ANTHROPIC_PROVIDER: ${ANTHROPIC_PROVIDER:-}
+      AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    # The Dockerfile drops to USER arena for rootless prod. In dev compose we
+    # bind-mount the host's /var/run/docker.sock which is root:docker on the
+    # host — override to root inside the container so the socket is readable.
+    # Prod runs rootless Docker and removes this override.
+    user: "0:0"
+    volumes:
+      # Required: lets the worker drive the host's docker daemon to spawn
+      # per-session sandbox containers. Read-only mount keeps the worker
+      # from being able to reconfigure the daemon.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../../missions:/missions:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Use $$ to defer expansion to the in-container shell — compose interpolation
+    # would otherwise blank the variable at config-render time.
+    # NOTE: queue name MUST match Queue("provision", ...) in
+    # apps/api/app/workers/queue.py — coordinated by tests/test_queue_name.py.
+    command: ["sh", "-c", "rq worker --url $${REDIS_URL} provision"]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/web.Dockerfile
+    image: agentarena/web:dev
+    container_name: agentarena-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_BASE_URL: ws://localhost:8000
+      NEXT_PUBLIC_APP_ENV: development
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+
+volumes:
+  arena-pg:
+  arena-redis:
+  arena-minio:

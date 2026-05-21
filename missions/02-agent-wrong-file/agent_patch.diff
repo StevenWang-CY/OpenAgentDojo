@@ -1,0 +1,23 @@
+diff --git a/frontend/src/ProfileCard.tsx b/frontend/src/ProfileCard.tsx
+--- a/frontend/src/ProfileCard.tsx
++++ b/frontend/src/ProfileCard.tsx
+@@ -13,7 +13,17 @@ export function ProfileCard({ user }: ProfileCardProps) {
+     <article aria-label="Profile card" className="profile-card">
+       {user.avatarUrl && (
+         <img className="profile-card__avatar" src={user.avatarUrl} alt="" />
+       )}
+-      <h3 className="profile-card__name">{user.fullName}</h3>
++      <h3
++        className="profile-card__name"
++        style={{
++          overflow: "hidden",
++          textOverflow: "ellipsis",
++          whiteSpace: "nowrap",
++          maxWidth: "16ch",
++        }}
++      >
++        {user.fullName}
++      </h3>
+       <p className="profile-card__email">{user.email}</p>
+       <p className="profile-card__role">{user.role}</p>
+     </article>

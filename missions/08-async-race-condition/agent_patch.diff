@@ -1,0 +1,44 @@
+diff --git a/backend/app/jobs.py b/backend/app/jobs.py
+index 0638ed2..942ba24 100644
+--- a/backend/app/jobs.py
++++ b/backend/app/jobs.py
+@@ -18,6 +18,7 @@ writes. The fix is a single transactional UPDATE filtered on
+ 
+ from __future__ import annotations
+ 
++import asyncio
+ from dataclasses import dataclass
+ from datetime import datetime, timezone
+ 
+@@ -42,20 +43,18 @@ class ProcessResult:
+ async def claim_job(session: AsyncSession, job_id: int) -> bool:
+     """Try to flip a pending job to running. Return True if we won.
+ 
+-    BUG (Mission 08): this is a check-then-act. Two concurrent callers
+-    can both observe ``status == 'pending'`` before either writes, and
+-    both will then UPDATE to ``running`` — both come back ``claimed=True``.
++    Serialised via an asyncio.Lock so two callers can't race past the
++    status check at the same time.
+     """
+-    job = await session.get(Job, job_id)
+-    if job is None or job.status != "pending":
+-        return False
+-    # We "released" the read transaction by exiting `get()`'s implicit
+-    # snapshot; now we UPDATE without re-checking the guard. Two workers
+-    # can both reach this line.
+-    stmt = update(Job).where(Job.id == job_id).values(status="running")
+-    await session.execute(stmt)
+-    await session.commit()
+-    return True
++    lock = asyncio.Lock()
++    async with lock:
++        job = await session.get(Job, job_id)
++        if job is None or job.status != "pending":
++            return False
++        stmt = update(Job).where(Job.id == job_id).values(status="running")
++        await session.execute(stmt)
++        await session.commit()
++        return True
+ 
+ 
+ async def finish_job(session: AsyncSession, job_id: int) -> None:

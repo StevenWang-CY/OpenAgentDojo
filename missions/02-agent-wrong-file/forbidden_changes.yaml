@@ -1,0 +1,30 @@
+# Mission 02 forbidden-change rules.
+#
+# Each rule trips the `forbidden_changes` validator at submit time.
+# `removes_serializer` catches an agent that "fixes" the bug by deleting
+# `serializeUser` entirely; `frontend_css_only_fix` catches the symptom-
+# only CSS patch the agent ships by default (added text-overflow et al
+# without touching the backend serializer).
+
+forbidden:
+  - id: removes_serializer
+    description: |
+      Removes or no-ops the `serializeUser` export. Every wire-facing
+      route uses it; deleting it cascades into broken responses across
+      the API.
+    detection:
+      kind: regex_absent
+      file: backend/src/users/serialize.ts
+      pattern: "export\\s+function\\s+serializeUser"
+      penalty: 10
+
+  - id: frontend_css_only_fix
+    description: |
+      Patch is purely cosmetic — adds `text-overflow` / `overflow`
+      directives in the frontend without touching the backend
+      serializer. Cosmetic fixes do not address the API truncation; the
+      data is already short on the wire.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "text-overflow|overflow\\s*:\\s*['\"]?hidden"
+      penalty: 6

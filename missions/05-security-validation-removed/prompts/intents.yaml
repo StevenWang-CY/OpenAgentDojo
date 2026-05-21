@@ -1,0 +1,45 @@
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - "403"
+      - settings
+      - debug
+      - investigate
+      - resolve
+
+  test:
+    keywords:
+      - add a test
+      - regression test
+      - cross-user
+      - cover this
+      - lock this down
+      - test for
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+      - don't remove
+      - put the guard back
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+      - keep the guard
+      - param name
+
+  unknown: {}

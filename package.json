@@ -1,0 +1,27 @@
+{
+  "name": "agentsupervisor-arena",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentSupervisor Arena — browser-based simulator for supervising deliberately-flawed coding agents.",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @arena/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:missions": "cd apps/api && uv run python3 -m pytest tests/missions -v",
+    "validate:missions": "cd apps/api && uv run python3 scripts/validate_missions.py",
+    "compose:up": "docker compose -f infra/compose/docker-compose.yml up -d",
+    "compose:down": "docker compose -f infra/compose/docker-compose.yml down",
+    "compose:logs": "docker compose -f infra/compose/docker-compose.yml logs -f"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}

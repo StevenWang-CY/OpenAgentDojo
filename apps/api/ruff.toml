@@ -1,0 +1,51 @@
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions", ".venv"]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "ASYNC",
+    "S",    # flake8-bandit (security)
+    "PL",   # pylint
+    "RUF",
+]
+ignore = [
+    "E501",   # handled by formatter
+    "S101",   # asserts ok in tests
+    "S104",   # binding to all interfaces — intentional for dev
+    "S603",   # subprocess use is intentional in sandbox/local
+    "S607",   # partial executable path — local sandbox uses 'git' etc.
+    "PLR0913", # too many arguments — common in FastAPI
+    "PLR2004", # magic value used in comparison — too noisy
+    "B008",   # FastAPI Depends() in defaults is the idiomatic pattern
+    "N818",   # exception name suffix — we follow stdlib style
+    "PLC0415", # lazy/inside-function imports are intentional (optional deps, circular import avoidance)
+    "S108",   # hardcoded /tmp paths — sandbox driver intentionally uses tempdirs
+    "S110",   # try/except/pass blocks for cleanup paths
+    "RUF006", # background tasks are not awaited by design (asyncio.create_task fire-and-forget)
+    "PLR0911", # multiple early returns are clearer than nested branches
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["S", "PLR", "B017", "RUF012", "N806", "RUF059"]
+"alembic/**/*.py" = ["S", "N"]
+"app/missions/loader.py" = ["S324"]  # sha256 is fine for non-crypto hashing
+# Scoring rubric helpers are intentionally one-shot dispatch functions with many branches.
+"app/grading/score.py" = ["PLR0912", "PLR0915"]
+# CLI script: relaxed naming + sync FS in async + path-imports OK.
+"scripts/**/*.py" = ["S", "N", "ASYNC240", "RUF059", "E402"]
+
+[lint.isort]
+known-first-party = ["app"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

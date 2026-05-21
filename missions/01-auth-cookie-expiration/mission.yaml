@@ -1,0 +1,183 @@
+id: auth-cookie-expiration
+version: 1
+title: "Expired Session Cookie Still Grants Access"
+short_description: "Users with expired session cookies can still access protected routes."
+difficulty: intermediate
+category: auth
+estimated_minutes: 35
+skills_tested:
+  - auth
+  - security
+  - test-writing
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  Customers are reporting that they stay logged in long after their session
+  should have expired. The auth team rolled out a 1-hour session TTL last
+  week, but a QA pass shows that requests with cookies whose `exp` field is
+  hours (or days) in the past still get a 200 from `GET /dashboard`.
+
+  ## What you need to deliver
+
+  - A patch that makes `requireAuth` enforce session expiration in
+    addition to its existing presence check.
+  - The `/login/refresh` endpoint must reject expired sessions with
+    `401` + `{ status: "expired" }` instead of silently minting a new
+    cookie.
+  - A regression test that locks the behavior down. The hidden grader
+    will exercise expired cookies, tampered cookies, and refresh; you
+    won't see those tests until you submit.
+
+  ## Where to look
+
+  Start from `backend/src/auth/session.ts` — there's a `Session.isValid()`
+  helper that nothing currently calls. `backend/src/middleware/requireAuth.ts`
+  is the gatekeeper for `GET /dashboard`. `docs/auth.md` documents the
+  contract you should be enforcing.
+
+  ## How you'll be scored
+
+  This mission rewards process. You earn points by selecting the right
+  context up front, running the auth test suite before *and* after the
+  agent's patch, reading the diff before accepting it, and writing a
+  regression test that mentions expiration. You lose points for letting
+  unrelated frontend files into your change set.
+
+failure_mode:
+  id: checks_presence_not_expiration
+  title: "Agent validates cookie existence but not expiration"
+  description: |
+    The agent's patch adds a redundant `raw.length === 0` guard but
+    never calls `session.isValid()`. Visible tests still pass — they
+    only exercise the missing-cookie and valid-cookie paths — but any
+    request with an expired cookie still sails through.
+  hint_after_submit_if_missed: "Look at session.ts — `isValid()` is never called from anywhere in the diff."
+
+expected_files:
+  - backend/src/auth/session.ts
+  - backend/src/middleware/requireAuth.ts
+  - backend/src/routes/login.ts
+  - backend/src/tests/integration/auth.test.ts
+
+expected_context:
+  required:
+    - backend/src/middleware/requireAuth.ts
+    - backend/src/auth/session.ts
+  recommended:
+    - backend/src/tests/integration/auth.test.ts
+    - backend/src/routes/login.ts
+    - docs/auth.md
+  discouraged:
+    - frontend/src/LoginForm.tsx
+    - frontend/src/Dashboard.tsx
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "valid session can access dashboard"
+  - "missing session redirects to login"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "expired session redirects to login"
+    - "tampered session is rejected"
+    - "valid session remains valid"
+    - "session refresh respects expiration"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 4
+    max_added_lines: 120
+    must_touch_any_of:
+      - backend/src/auth/session.ts
+      - backend/src/middleware/requireAuth.ts
+      - backend/src/routes/login.ts
+    must_not_touch:
+      - frontend/**
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - backend/src/tests/**/*.test.ts
+    keywords_any_of:
+      - expired
+      - expiration
+      - ttl
+      - isValid
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 18
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - reproduce
+      - root cause
+      - regression test
+      - minimal
+      - expiration
+    bonus_keywords:
+      - security
+      - edge case
+      - hidden
+      - isValid
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "auth"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

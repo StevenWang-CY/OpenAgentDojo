@@ -1,0 +1,214 @@
+"use client";
+
+import * as React from "react";
+import Link from "next/link";
+import { AlertTriangle, ChevronDown, ChevronLeft, Gauge } from "lucide-react";
+import type { Difficulty, SupervisionEvent } from "@arena/shared-types";
+import { Badge } from "@/components/ui/Badge";
+import { DifficultyBadge } from "@/components/catalog/DifficultyBadge";
+import { ScorePreview } from "./ScorePreview";
+import { SubmitDialog } from "./SubmitDialog";
+import { cn } from "@/lib/utils";
+
+/**
+ * Detect macOS so we can render `⌘⏎` vs. `Ctrl+⏎` for keyboard hints.
+ * SSR-safe: defaults to `false` until hydration runs the effect.
+ */
+function useIsMac(): boolean {
+  const [isMac, setIsMac] = React.useState(false);
+  React.useEffect(() => {
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    setIsMac(/Mac|iPhone|iPad|iPod/i.test(ua));
+  }, []);
+  return isMac;
+}
+
+interface WorkspaceTopBarProps {
+  sessionId: string;
+  missionTitle: string;
+  missionId: string;
+  difficulty: Difficulty;
+  sandboxDriver: "docker" | "local" | "unknown";
+  events: SupervisionEvent[];
+  /** Required-context paths (from mission.expected_context_required). */
+  expectedRequiredContext: string[];
+  /** Files the user has currently marked as context. */
+  selectedContext: string[];
+  /** Optional list of changed paths in the current diff. */
+  diffChangedFiles?: string[];
+  onSubmitted?(submissionId: string): void;
+}
+
+/**
+ * Workspace top bar. Always shows a compact "Process signals" pill — a single
+ * "X/Y signals" tally that expands an inline panel with the full
+ * `ScorePreview` so the user never has to dig for the process score.
+ */
+export function WorkspaceTopBar({
+  sessionId,
+  missionTitle,
+  missionId,
+  difficulty,
+  sandboxDriver,
+  events,
+  expectedRequiredContext,
+  selectedContext,
+  diffChangedFiles,
+  onSubmitted,
+}: WorkspaceTopBarProps) {
+  const [open, setOpen] = React.useState(false);
+  const isMac = useIsMac();
+  const submitTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const summary = React.useMemo(
+    () => summarisePillSignals(expectedRequiredContext, selectedContext, events),
+    [expectedRequiredContext, selectedContext, events]
+  );
+
+  // Global ⌘⏎ / Ctrl+⏎ to open the submit dialog. Ignored when focus is on a
+  // text input/textarea so AgentChat keeps its own send shortcut intact.
+  React.useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Enter") return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "TEXTAREA" ||
+          target.tagName === "INPUT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      submitTriggerRef.current?.click();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <div className="sticky top-0 z-30 flex flex-col gap-2 border-b border-[var(--color-border)] bg-[oklch(from_var(--color-surface)_l_c_h/0.85)] px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-[oklch(from_var(--color-surface)_l_c_h/0.7)]">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <Link
+            href="/missions"
+            className="inline-flex items-center gap-1 text-xs text-[var(--color-muted-foreground)] transition-colors duration-150 ease-macos hover:text-[var(--color-foreground)]"
+          >
+            <ChevronLeft className="size-3.5" aria-hidden />
+            Missions
+          </Link>
+          <span aria-hidden className="text-[var(--color-muted-foreground)]">
+            ·
+          </span>
+          <h1 className="truncate text-sm font-semibold tracking-tight">
+            {missionTitle}
+          </h1>
+          <DifficultyBadge difficulty={difficulty} />
+          <Badge tone="outline" className="font-mono text-[10px] tracking-normal">
+            {missionId}
+          </Badge>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setOpen((prev) => !prev)}
+            aria-expanded={open}
+            aria-controls="process-signals-panel"
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-xs",
+              "transition-[background-color,box-shadow] duration-150 ease-macos hover:bg-[var(--color-muted)]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]",
+              open && "bg-[var(--color-muted)] shadow-soft"
+            )}
+            data-testid="score-pill"
+          >
+            <Gauge className="size-3.5 text-[var(--color-primary)]" aria-hidden />
+            <span className="font-mono">
+              {summary.hit}/{summary.total}
+            </span>
+            <span className="text-[var(--color-muted-foreground)]">signals</span>
+            <ChevronDown
+              className={cn(
+                "size-3 text-[var(--color-muted-foreground)] transition-transform duration-180 ease-macos",
+                open && "rotate-180"
+              )}
+              aria-hidden
+            />
+          </button>
+          <SubmitDialog
+            sessionId={sessionId}
+            events={events}
+            onSubmitted={onSubmitted}
+            triggerRef={submitTriggerRef}
+            showShortcutHint
+            isMac={isMac}
+          />
+        </div>
+      </div>
+
+      {sandboxDriver === "local" ? (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-md border border-[oklch(from_var(--color-warning)_l_c_h/0.4)] bg-[oklch(from_var(--color-warning)_l_c_h/0.12)] px-3 py-1.5 text-[11px] text-[var(--color-foreground)]"
+        >
+          <AlertTriangle
+            className="mt-0.5 size-3.5 shrink-0 text-[var(--color-warning)]"
+            aria-hidden
+          />
+          <p>
+            <strong>Local sandbox driver in use.</strong> No isolation — commands
+            execute directly on the host. This mode is for laptops without
+            Docker; never enable in production.
+          </p>
+        </div>
+      ) : null}
+
+      {open ? (
+        <div
+          id="process-signals-panel"
+          className="absolute right-4 top-full z-30 mt-2 w-[360px] origin-top-right rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-elevated"
+          style={{ animation: "fadeSlideIn 180ms var(--ease-macos, cubic-bezier(0.32, 0.72, 0, 1))" }}
+        >
+          <ScorePreview
+            expectedRequiredContext={expectedRequiredContext}
+            selectedContext={selectedContext}
+            events={events}
+            changedFiles={diffChangedFiles}
+            className="border-none shadow-none"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Compact "ok signals / total" tally for the always-visible pill. */
+function summarisePillSignals(
+  expectedRequiredContext: string[],
+  selectedContext: string[],
+  events: SupervisionEvent[]
+): { hit: number; total: number } {
+  // Mirrors ScorePreview's 4 process signals.
+  const selected = new Set(selectedContext);
+  const requiredHit =
+    expectedRequiredContext.length === 0 ||
+    expectedRequiredContext.every((p) => selected.has(p));
+  const ranVerification = events.some(
+    (e) =>
+      e.event_type === "command.run" &&
+      (e.payload.category === "test" ||
+        e.payload.category === "typecheck" ||
+        e.payload.category === "lint")
+  );
+  const hasDiff = events.some((e) => e.event_type === "patch.applied");
+  const diffOpened = events.some((e) => e.event_type === "diff.opened");
+
+  const hit =
+    Number(requiredHit) +
+    Number(ranVerification) +
+    Number(hasDiff) +
+    Number(diffOpened);
+
+  return { hit, total: 4 };
+}

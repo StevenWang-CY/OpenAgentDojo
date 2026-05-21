@@ -1,0 +1,7 @@
+pnpm-lock.yaml
+.next/
+dist/
+build/
+node_modules/
+*.diff
+missions/_shared/repos/

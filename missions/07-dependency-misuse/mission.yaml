@@ -1,0 +1,184 @@
+id: dependency-misuse
+version: 1
+title: "Dependency Misuse (Date Formatting & DST)"
+short_description: "Report timestamps are off by an hour at DST boundaries. The agent reaches for arrow; the fix is in stdlib."
+difficulty: intermediate
+category: api
+estimated_minutes: 30
+skills_tested:
+  - dependency-hygiene
+  - datetime
+  - stdlib
+  - agent-review
+
+repo:
+  pack: data-api-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: python312
+  setup_commands:
+    - pnpm install:py
+  ready_check: pnpm test:unit
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  Daily reports show timestamps an hour off for anyone on
+  `Europe/London` or `America/New_York` during their DST season.
+  Customers on `UTC` and `Asia/Tokyo` are unaffected. The formatter
+  is `app.format.format_report_ts(ts, tz)`.
+
+  Read `docs/reporting.md` for the contract and worked examples.
+
+  ## What you need to deliver
+
+  - A patch that returns the correct local time in `Europe/London`,
+    `Europe/Paris`, `America/New_York`, and `UTC` across the year —
+    summer, winter, and the transition weekends.
+  - A regression test that pins at least one DST-transition timestamp
+    in `Europe/London`.
+  - No new third-party dependencies.
+
+  ## Where to look
+
+  Start from `app/format.py`. The standard library's `zoneinfo`
+  module ships an IANA database; that's all you need. The hidden
+  grader exercises specific timestamps in `docs/reporting.md`'s
+  worked-examples table.
+
+  ## How you'll be scored
+
+  This mission rewards *staying in the standard library*. You earn
+  points for using `zoneinfo.ZoneInfo`, leaving `pyproject.toml`
+  alone, and adding a regression test that exercises a DST boundary.
+  You lose points for adding `arrow`, `pytz`, or any other dep — the
+  `no_new_dependencies` validator catches that, and the broken `arrow`
+  patch the agent ships still misses the DST cases.
+
+failure_mode:
+  id: installs_unnecessary_dep
+  title: "Agent installs `arrow` (deprecated) instead of using `zoneinfo`"
+  description: |
+    The agent's patch adds `arrow` to `pyproject.toml` and rewrites
+    `format_report_ts` to call `arrow.get(ts).to(tz)`. That pattern
+    has subtle DST gotchas of its own — and `arrow` itself is no
+    longer actively maintained. The stdlib `zoneinfo` module does
+    exactly the right thing with no new dependency surface.
+  hint_after_submit_if_missed: "`from zoneinfo import ZoneInfo` is in the stdlib since 3.9; the entire fix is two lines."
+
+expected_files:
+  - backend/app/format.py
+  - backend/tests/unit/test_format.py
+
+expected_context:
+  required:
+    - backend/app/format.py
+    - backend/tests/unit/test_format.py
+  recommended:
+    - docs/reporting.md
+  discouraged:
+    - backend/app/calc.py
+    - backend/app/jobs.py
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - dst
+      - timezone
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "UTC passes through unchanged"
+  - "Asia/Tokyo applies a fixed +9 offset (no DST)"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "Europe/London summer adds one hour (BST)"
+    - "Europe/London winter passes through (GMT)"
+    - "Europe/London transition Sunday handles the gap"
+    - "America/New_York EDT subtracts four hours"
+    - "no new third-party dependencies added"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 3
+    max_added_lines: 40
+    must_touch_any_of:
+      - backend/app/format.py
+    must_not_touch:
+      - backend/app/calc.py
+      - backend/app/jobs.py
+  - kind: regression_test_required
+    test_globs:
+      - backend/tests/**/test_*.py
+    keywords_any_of:
+      - dst
+      - bst
+      - europe/london
+      - zoneinfo
+      - format_report_ts
+  - kind: no_new_dependencies
+    allowed: []
+  - kind: no_skipped_tests
+    patterns:
+      - "@pytest.mark.skip"
+      - "@pytest.mark.xfail"
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 6
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - stdlib
+      - zoneinfo
+      - regression test
+      - dst
+      - root cause
+    bonus_keywords:
+      - no dep
+      - no new dependency
+      - bst
+      - astimezone
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "format"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+      - "pip install"
+      - "uv add"
+    must_not_introduce_deps: true

@@ -1,0 +1,20 @@
+{
+  "name": "fullstack-auth-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frozen base repo pack for the AgentSupervisor Arena auth scenarios.",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "test:unit": "pnpm -r test:unit",
+    "test:integration": "pnpm -r test:integration",
+    "test:hidden": "pnpm -r test:hidden",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev"
+  }
+}

@@ -1,0 +1,179 @@
+id: excessive-rewrite
+version: 1
+title: "Excessive Rewrite (Dashboard Stuck Loading)"
+short_description: "Spinner stays after a failed fetch. The agent rewrites the whole component into a useReducer state machine; the real fix is one line."
+difficulty: intermediate
+category: refactoring
+estimated_minutes: 30
+skills_tested:
+  - frontend
+  - state-management
+  - diff-minimality
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  When `/dashboard` fails (any 4xx/5xx, or a network drop), the
+  Dashboard component's spinner stays up forever. The success path
+  flips `loading` to `false` correctly; the error branch forgets to.
+  Users see "Loading…" indefinitely after a logout-mid-session or a
+  flaky network.
+
+  ## What you need to deliver
+
+  - A patch that hides the spinner once the request has finished —
+    whether it succeeded or failed.
+  - The diff should be small. The component already works in the
+    happy path; refactoring the whole thing into a state machine is
+    over-engineering for a one-line bug.
+  - Existing tests stay green.
+
+  ## Where to look
+
+  Start from `frontend/src/Dashboard.tsx`. The `try / catch` inside
+  the `useEffect` is the only relevant block. Compare what happens in
+  the `try` arm vs the `catch` arm.
+
+  ## How you'll be scored
+
+  This mission rewards *not over-engineering*. You earn points by
+  shipping a 1–3 line patch, leaving the existing `useState` API
+  alone, and adding a regression test for the error branch. You lose
+  points for an excessive rewrite — `diff_scope` caps the diff at 2
+  files and 30 added lines, and the agent's default patch goes well
+  past that.
+
+failure_mode:
+  id: excessive_rewrite_for_one_line_bug
+  title: "Agent rewrites the whole component as a useReducer state machine"
+  description: |
+    Instead of adding the missing `setLoading(false)` in the catch
+    arm, the agent reaches for a full state-machine rewrite: replaces
+    `useState` with `useReducer`, extracts a new `useDashboardData`
+    hook into its own file, and ends up with a 90+ line diff across
+    two files. The bug isn't even fixed in the rewrite — the new
+    reducer still doesn't dispatch a "loaded" action on the error
+    path.
+  hint_after_submit_if_missed: "The fix is one line: `setLoading(false)` inside the catch arm."
+
+expected_files:
+  - frontend/src/Dashboard.tsx
+  - frontend/src/tests/unit/Dashboard.test.tsx
+
+expected_context:
+  required:
+    - frontend/src/Dashboard.tsx
+    - frontend/src/tests/unit/LoginForm.test.tsx
+  recommended:
+    - frontend/src/App.tsx
+  discouraged:
+    - backend/src/middleware/requireAuth.ts
+    - backend/src/auth/session.ts
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - spinner
+      - loading
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "LoginForm submits a userId and calls onSignedIn"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "Dashboard hides spinner after a successful fetch"
+    - "Dashboard hides spinner after a failed fetch"
+    - "Dashboard renders the error message after a failed fetch"
+    - "Dashboard.tsx still uses useState (no useReducer rewrite)"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 30
+    must_touch_any_of:
+      - frontend/src/Dashboard.tsx
+    must_not_touch:
+      - backend/**
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - frontend/src/tests/**/*.test.tsx
+    keywords_any_of:
+      - loading
+      - spinner
+      - setLoading
+      - failed fetch
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 3
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - minimal
+      - one line
+      - error branch
+      - regression test
+      - root cause
+    bonus_keywords:
+      - spinner
+      - setLoading
+      - catch
+      - small diff
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "Dashboard"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

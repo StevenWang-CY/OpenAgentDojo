@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# Developer override sample — copy to `docker-compose.override.yml` to use.
+#
+#   cp infra/compose/docker-compose.override.yml.example \
+#      infra/compose/docker-compose.override.yml
+#
+# Compose merges this file on top of docker-compose.yml automatically. Use it
+# for laptop-specific tweaks: hot-reload, exposed ports, extra logging.
+# This file is gitignored.
+# ---------------------------------------------------------------------------
+
+services:
+  postgres:
+    # Expose Postgres on the host so you can connect via psql or a GUI.
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  api:
+    # Run uvicorn with --reload for hot-reload during local development.
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/app
+    environment:
+      LOG_LEVEL: DEBUG
+
+  worker:
+    environment:
+      LOG_LEVEL: DEBUG
+
+  web:
+    # In dev, prefer running `pnpm --filter @arena/web dev` on the host so you
+    # get HMR. The block below stays as a sample of how to mount source if you
+    # want it inside the container instead.
+    # build: null
+    # image: node:20.18-alpine
+    # working_dir: /repo/apps/web
+    # command: ["pnpm", "dev"]
+    # volumes:
+    #   - ../../apps/web:/repo/apps/web
+    #   - ../../packages:/repo/packages
+    environment:
+      NEXT_PUBLIC_APP_ENV: development

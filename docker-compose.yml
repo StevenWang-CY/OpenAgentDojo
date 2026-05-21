@@ -1,0 +1,13 @@
+# ---------------------------------------------------------------------------
+# Root convenience compose file.
+#
+# Lets you run `docker compose up` from the repo root without needing to
+# remember the `-f infra/compose/docker-compose.yml` flag. Uses the
+# Docker Compose 2.20+ `include` directive — upgrade compose if you see
+# a parse error about `include`.
+#
+# The real service definitions live in infra/compose/docker-compose.yml.
+# ---------------------------------------------------------------------------
+
+include:
+  - path: infra/compose/docker-compose.yml

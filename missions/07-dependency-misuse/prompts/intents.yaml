@@ -1,0 +1,44 @@
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - dst
+      - timezone
+      - debug
+      - investigate
+      - the bug
+
+  test:
+    keywords:
+      - add a test
+      - regression test
+      - dst boundary
+      - cover this
+      - lock this down
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+      - no new deps
+      - stdlib
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+      - no dep
+      - no new dependency
+
+  unknown: {}

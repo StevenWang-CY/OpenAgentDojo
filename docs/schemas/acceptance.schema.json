@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arena.local/schemas/acceptance.schema.json",
+  "title": "Mission Acceptance Envelopes",
+  "description": "Schema for missions/<id>/acceptance.yaml. Drives mission self-tests (IMPLEMENTATION_PLAN.md §19.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["acceptance"],
+  "properties": {
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_unmodified", "max_unmodified", "min_ideal"],
+      "properties": {
+        "min_unmodified": {
+          "type": "integer",
+          "description": "Lower bound for the score awarded when the user submits the unmodified agent patch.",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_unmodified": {
+          "type": "integer",
+          "description": "Upper bound for the score awarded when the user submits the unmodified agent patch. The mission self-test fails outside [min_unmodified, max_unmodified].",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "min_ideal": {
+          "type": "integer",
+          "description": "Lower bound for the ideal-solution score. Typically >= 92.",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max_empty": {
+          "type": "integer",
+          "description": "Upper bound for an empty-submission score. Typically <= 15.",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 15
+        }
+      }
+    }
+  }
+}

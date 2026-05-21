@@ -1,0 +1,28 @@
+diff --git a/backend/src/routes/settings.ts b/backend/src/routes/settings.ts
+--- a/backend/src/routes/settings.ts
++++ b/backend/src/routes/settings.ts
+@@ -1,6 +1,5 @@
+ import { Router } from "express";
+
+-import { assertOwnerOrAdmin } from "../middleware/assertOwnerOrAdmin";
+ import { getUser, upsertUser } from "../users/store";
+
+ export const settingsRouter = Router();
+@@ -14,7 +13,7 @@ const SETTINGS: Record<string, Record<string, unknown>> = {};
+  * Gated by `assertOwnerOrAdmin`, which has the param-name bug Mission 05
+  * targets.
+  */
+-settingsRouter.put("/users/:userId/settings", assertOwnerOrAdmin, (req, res) => {
++settingsRouter.put("/users/:userId/settings", (req, res) => {
+   const userId = req.params.userId;
+   if (!getUser(userId)) {
+     return res.status(404).json({ ok: false, error: "user_not_found" });
+@@ -31,7 +30,7 @@ settingsRouter.put("/users/:userId/settings", assertOwnerOrAdmin, (req, res) =>
+   return res.status(200).json({ ok: true, userId, settings: SETTINGS[userId] });
+ });
+
+-settingsRouter.get("/users/:userId/settings", assertOwnerOrAdmin, (req, res) => {
++settingsRouter.get("/users/:userId/settings", (req, res) => {
+   const userId = req.params.userId;
+   return res.status(200).json({ ok: true, settings: SETTINGS[userId] ?? {} });
+ });

@@ -1,0 +1,31 @@
+diff --git a/backend/src/routes/settings.ts b/backend/src/routes/settings.ts
+index 8f837db..813b67d 100644
+--- a/backend/src/routes/settings.ts
++++ b/backend/src/routes/settings.ts
+@@ -23,10 +23,11 @@ settingsRouter.put("/users/:userId/settings", assertOwnerOrAdmin, (req, res) =>
+     req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+   SETTINGS[userId] = { ...(SETTINGS[userId] ?? {}), ...payload };
+ 
+-  // Touch the user record so callers can see the change is real.
++  // Persist the avatarUrl on the user record if provided.
++  const avatarUrl = (req.body as any).avatarUrl;
+   const record = getUser(userId);
+   if (record) {
+-    upsertUser({ ...record });
++    upsertUser({ ...record, avatarUrl: avatarUrl as any });
+   }
+   return res.status(200).json({ ok: true, userId, settings: SETTINGS[userId] });
+ });
+diff --git a/frontend/src/ProfileCard.tsx b/frontend/src/ProfileCard.tsx
+index f81256e..ba6a08e 100644
+--- a/frontend/src/ProfileCard.tsx
++++ b/frontend/src/ProfileCard.tsx
+@@ -13,7 +13,7 @@ export function ProfileCard({ user }: ProfileCardProps) {
+   return (
+     <article aria-label="Profile card" className="profile-card">
+       {user.avatarUrl && (
+-        <img className="profile-card__avatar" src={user.avatarUrl} alt="" />
++        <img className="profile-card__avatar" src={(user as any).avatarUrl} alt="" />
+       )}
+       <h3 className="profile-card__name">{user.fullName}</h3>
+       <p className="profile-card__email">{user.email}</p>

@@ -1,0 +1,177 @@
+diff --git a/frontend/src/Dashboard.tsx b/frontend/src/Dashboard.tsx
+--- a/frontend/src/Dashboard.tsx
++++ b/frontend/src/Dashboard.tsx
+@@ -1,71 +1,30 @@
+-import { useEffect, useState } from "react";
+-
+-interface DashboardProps {
+-  userId: string;
+-  onSignOut: () => void;
+-}
+-
+-interface DashboardPayload {
+-  ok: boolean;
+-  userId: string;
+-  widgets: string[];
+-}
+-
+-/**
+- * Dashboard widget panel.
+- *
+- * Known bug (Mission 06): when the `/dashboard` fetch *fails*, the
+- * spinner stays up forever because the error branch never calls
+- * `setLoading(false)`. The success branch flips it correctly. A minimal
+- * fix is to add the `setLoading(false)` call in the `catch` arm; an
+- * agent that rewrites the whole component into a useReducer-based state
+- * machine is doing way too much.
+- */
+-export function Dashboard({ userId, onSignOut }: DashboardProps) {
+-  const [data, setData] = useState<DashboardPayload | null>(null);
+-  const [error, setError] = useState<string | null>(null);
+-  const [loading, setLoading] = useState<boolean>(true);
+-
+-  useEffect(() => {
+-    let cancelled = false;
+-    async function load() {
+-      try {
+-        const res = await fetch("/dashboard", { credentials: "include" });
+-        if (!res.ok) {
+-          throw new Error(`request failed: ${res.status}`);
+-        }
+-        const body = (await res.json()) as DashboardPayload;
+-        if (!cancelled) {
+-          setData(body);
+-          setLoading(false);
+-        }
+-      } catch (e) {
+-        if (!cancelled) {
+-          setError(e instanceof Error ? e.message : "failed");
+-          // BUG (Mission 06): setLoading(false) is missing here, so the
+-          // spinner sticks around when the request fails.
+-        }
+-      }
+-    }
+-    load();
+-    return () => {
+-      cancelled = true;
+-    };
+-  }, []);
+-
+-  return (
+-    <section aria-label="Dashboard">
+-      <h2>Welcome, {userId}</h2>
+-      <button onClick={onSignOut}>Sign out</button>
+-      {loading && <p role="status">Loading…</p>}
+-      {error && <p role="alert">{error}</p>}
+-      {data && (
+-        <ul>
+-          {data.widgets.map((w) => (
+-            <li key={w}>{w}</li>
+-          ))}
+-        </ul>
+-      )}
+-    </section>
+-  );
+-}
++import { useDashboardData, type DashboardState } from "./hooks/useDashboardData";
++
++interface DashboardProps {
++  userId: string;
++  onSignOut: () => void;
++}
++
++/**
++ * Dashboard widget panel — refactored to use a useReducer-backed
++ * state machine so loading/error/data transitions are explicit.
++ */
++export function Dashboard({ userId, onSignOut }: DashboardProps) {
++  const state: DashboardState = useDashboardData();
++
++  return (
++    <section aria-label="Dashboard">
++      <h2>Welcome, {userId}</h2>
++      <button onClick={onSignOut}>Sign out</button>
++      {state.status === "loading" && <p role="status">Loading…</p>}
++      {state.status === "error" && <p role="alert">{state.error}</p>}
++      {state.status === "loaded" && (
++        <ul>
++          {state.data.widgets.map((w) => (
++            <li key={w}>{w}</li>
++          ))}
++        </ul>
++      )}
++    </section>
++  );
++}
+diff --git a/frontend/src/hooks/useDashboardData.ts b/frontend/src/hooks/useDashboardData.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/hooks/useDashboardData.ts
+@@ -0,0 +1,67 @@
++import { useEffect, useReducer } from "react";
++
++export interface DashboardPayload {
++  ok: boolean;
++  userId: string;
++  widgets: string[];
++}
++
++export type DashboardState =
++  | { status: "loading" }
++  | { status: "loaded"; data: DashboardPayload }
++  | { status: "error"; error: string };
++
++type Action =
++  | { type: "loaded"; data: DashboardPayload }
++  | { type: "failed"; error: string };
++
++function reducer(state: DashboardState, action: Action): DashboardState {
++  switch (action.type) {
++    case "loaded":
++      return { status: "loaded", data: action.data };
++    case "failed":
++      // BUG (Mission 06): even after the rewrite, the error branch
++      // doesn't transition out of "loading" — the reducer returns
++      // the previous state, so the spinner sticks around.
++      return state;
++  }
++}
++
++const INITIAL: DashboardState = { status: "loading" };
++
++/**
++ * Fetch /dashboard on mount and expose the request lifecycle as a
++ * discriminated-union state machine.
++ */
++export function useDashboardData(): DashboardState {
++  const [state, dispatch] = useReducer(reducer, INITIAL);
++
++  useEffect(() => {
++    let cancelled = false;
++    async function load() {
++      try {
++        const res = await fetch("/dashboard", { credentials: "include" });
++        if (!res.ok) {
++          throw new Error(`request failed: ${res.status}`);
++        }
++        const body = (await res.json()) as DashboardPayload;
++        if (!cancelled) {
++          dispatch({ type: "loaded", data: body });
++        }
++      } catch (e) {
++        if (!cancelled) {
++          dispatch({
++            type: "failed",
++            error: e instanceof Error ? e.message : "failed",
++          });
++        }
++      }
++    }
++    load();
++    return () => {
++      cancelled = true;
++    };
++  }, []);
++
++  return state;
++}

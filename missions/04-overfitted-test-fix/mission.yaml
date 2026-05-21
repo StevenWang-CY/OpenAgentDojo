@@ -1,0 +1,185 @@
+id: overfitted-test-fix
+version: 1
+title: "Overfitted Test Fix (Price Calculation)"
+short_description: "Volume-discount calc is off by one. The agent hardcodes the failing case; the hidden grid catches it."
+difficulty: beginner
+category: testing
+estimated_minutes: 25
+skills_tested:
+  - test-writing
+  - pricing-logic
+  - agent-review
+
+repo:
+  pack: data-api-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: python312
+  setup_commands:
+    - pnpm install:py
+  ready_check: pnpm test:unit
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+  # Note: visible tests don't exercise qty=3; the bug ships, but the
+  # ready_check still passes because the failing scenario isn't covered
+  # by the visible suite. That's the gap the supervisor is supposed to
+  # close with a regression test.
+
+brief: |
+  ## What's broken
+
+  Sales just shipped a 10% volume discount for orders of 3 or more
+  units of the same SKU. The pricing doc is unambiguous (`qty >= 3`),
+  but customers are reporting that a 3-unit order is being charged at
+  full price. 4-unit orders apply the discount correctly.
+
+  The visible unit suite covers `qty ∈ {0, 1, 2}` (which pre-date the
+  discount) — *those* tests pass. There's no test for `qty == 3`, and
+  that's where the bug lives.
+
+  ## What you need to deliver
+
+  - A patch to `app/calc.py` that makes a 3-unit order apply the 10%
+    discount. The discount applies to the *whole* subtotal, not to the
+    marginal units above 3 — see `docs/pricing.md`.
+  - A regression test that covers `qty == 3` and at least one
+    higher-quantity case (the hidden grader will sweep `qty ∈ {3, 4, 5,
+    8, 100}` against multiple unit prices).
+  - Existing tests stay green.
+
+  ## Where to look
+
+  Start from `app/calc.py`. The off-by-one is one character. Read
+  `docs/pricing.md` for the canonical worked examples. The visible
+  tests live in `tests/unit/test_calc.py`.
+
+  ## How you'll be scored
+
+  This mission rewards *fixing the root cause* and *covering the
+  general case*. You earn points by changing the comparison operator,
+  adding a parametric regression test, and running the pricing suite
+  before submitting. You lose points for special-casing `qty == 3` or
+  shipping without a covering test.
+
+failure_mode:
+  id: overfits_visible_test_case
+  title: "Agent hardcodes `if qty == 3: return Decimal('30')` instead of fixing the comparison"
+  description: |
+    The agent reads the user's reproduction (`qty=3, unit=10 -> 30`)
+    and writes a literal-return short-circuit at the top of
+    `calculate_price`. That makes the user's exact example return the
+    right number while leaving every other quantity untouched. The
+    hidden grader sweeps a grid of `(qty, unit)` and catches it
+    immediately.
+  hint_after_submit_if_missed: "The pricing doc says `qty >= 3`. The current comparison is `qty > VOLUME_DISCOUNT_MIN_QTY`."
+
+expected_files:
+  - backend/app/calc.py
+  - backend/tests/unit/test_calc.py
+
+expected_context:
+  required:
+    - backend/app/calc.py
+    - backend/tests/unit/test_calc.py
+  recommended:
+    - docs/pricing.md
+  discouraged:
+    - backend/app/jobs.py
+    - backend/app/format.py
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - price
+      - discount
+      - debug
+      - investigate
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "calculate_price(0, 10) returns 0.00"
+  - "calculate_price(1, 10) returns 10.00 (no discount)"
+  - "calculate_price(2, 10) returns 20.00 (no discount)"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "qty=3 unit=10 returns 27.00"
+    - "qty=4 unit=10 returns 36.00"
+    - "qty=5 unit=9.99 returns 44.96"
+    - "qty=100 unit=1 returns 90.00"
+    - "qty=8 unit=12.50 returns 90.00"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 40
+    must_touch_any_of:
+      - backend/app/calc.py
+    must_not_touch:
+      - backend/app/jobs.py
+      - backend/app/format.py
+      - backend/pyproject.toml
+  - kind: regression_test_required
+    test_globs:
+      - backend/tests/**/test_*.py
+    keywords_any_of:
+      - discount
+      - qty
+      - volume
+      - calculate_price
+  - kind: no_skipped_tests
+    patterns:
+      - "@pytest.mark.skip"
+      - "@pytest.mark.xfail"
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 4
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - root cause
+      - discount
+      - regression test
+      - comparison
+      - off-by-one
+    bonus_keywords:
+      - volume
+      - general case
+      - parametric
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "calc"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

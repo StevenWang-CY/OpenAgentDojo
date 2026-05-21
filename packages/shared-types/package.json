@@ -1,0 +1,29 @@
+{
+  "name": "@arena/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript bindings for the FastAPI Pydantic schemas. The `api.gen.ts` file is regenerated from apps/api/openapi.json via openapi-typescript; everything else is a hand-curated re-export layer.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./events": "./src/events.ts",
+    "./mission": "./src/mission.ts",
+    "./api": "./src/api.ts",
+    "./api.gen": "./src/api.gen.ts"
+  },
+  "scripts": {
+    "lint": "echo 'no lint configured for @arena/shared-types'",
+    "typecheck": "tsc --noEmit",
+    "build": "echo 'shared-types is consumed as source — no build step'",
+    "test": "echo 'no tests for @arena/shared-types'",
+    "regen": "openapi-typescript ../../apps/api/openapi.json -o src/api.gen.ts && prettier --config ../../.prettierrc.json --write src/api.gen.ts",
+    "check": "node scripts/check-drift.mjs"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.4",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}

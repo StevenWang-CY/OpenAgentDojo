@@ -1,0 +1,364 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arena.local/schemas/event.schema.json",
+  "title": "Supervision Event",
+  "description": "Schema for one row in supervision_events. The payload shape is a discriminated union on event_type. Mirrors packages/shared-types/src/events.ts (the TS file is the source of truth — see Phase 4.A). See IMPLEMENTATION_PLAN.md §6.2 and ADR 0003.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id", "event_type", "payload", "occurred_at"],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "description": "Server-assigned BIGSERIAL primary key. Omitted on insert."
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Owning session UUID."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "session.started",
+        "session.errored",
+        "session.abandoned",
+        "context.selected",
+        "prompt.submitted",
+        "agent.responded",
+        "patch.proposed",
+        "patch.applied",
+        "patch.failed",
+        "diff.opened",
+        "diff.hovered",
+        "file.edited",
+        "file.reverted",
+        "command.run",
+        "test.run",
+        "validator.flag",
+        "submission.requested",
+        "submission.graded",
+        "submission.failed"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp."
+    },
+    "payload": {
+      "description": "Per-event payload. Discriminated on the sibling event_type."
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "event_type": { "const": "session.started" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mission_id"],
+          "properties": {
+            "mission_id": { "type": "string" },
+            "initial_commit": { "type": "string" },
+            "sandbox_driver": {
+              "type": "string",
+              "enum": ["docker", "local"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "session.errored" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "detail"],
+          "properties": {
+            "stage": {
+              "type": "string",
+              "enum": ["provisioning", "sandbox", "grading"]
+            },
+            "detail": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "session.abandoned" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "reason": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "context.selected" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["files"],
+          "properties": {
+            "files": { "type": "array", "items": { "type": "string" } },
+            "logs": { "type": "array", "items": { "type": "string" } },
+            "tests": { "type": "array", "items": { "type": "string" } },
+            "extras": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "prompt.submitted" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["turn_index", "text", "char_count"],
+          "properties": {
+            "turn_index": { "type": "integer", "minimum": 0 },
+            "text": { "type": "string" },
+            "char_count": { "type": "integer", "minimum": 0 },
+            "keyword_hits": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "agent.responded" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["turn_index", "response_summary"],
+          "properties": {
+            "turn_index": { "type": "integer", "minimum": 0 },
+            "response_summary": { "type": "string" },
+            "intent": {
+              "type": "string",
+              "enum": ["fix", "test", "revise", "narrow", "unknown"]
+            },
+            "llm_used": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "patch.proposed" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["turn_index", "patch_file"],
+          "properties": {
+            "turn_index": { "type": "integer", "minimum": 0 },
+            "patch_file": { "type": "string" },
+            "intent": {
+              "type": "string",
+              "enum": ["fix", "test", "revise", "narrow", "unknown"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "patch.applied" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["turn_index", "files_changed", "added", "removed"],
+          "properties": {
+            "turn_index": { "type": "integer", "minimum": 0 },
+            "files_changed": { "type": "integer", "minimum": 0 },
+            "added": { "type": "integer", "minimum": 0 },
+            "removed": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "patch.failed" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["turn_index", "error"],
+          "properties": {
+            "turn_index": { "type": "integer", "minimum": 0 },
+            "error": { "type": "string" },
+            "files_changed": { "type": "integer", "minimum": 0 },
+            "added": { "type": "integer", "minimum": 0 },
+            "removed": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "diff.opened" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Empty string ⇒ workspace-wide diff."
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "diff.hovered" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "type": "string" },
+            "line": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "file.edited" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "added", "removed"],
+          "properties": {
+            "path": { "type": "string" },
+            "added": { "type": "integer", "minimum": 0 },
+            "removed": { "type": "integer", "minimum": 0 },
+            "source": {
+              "type": "string",
+              "enum": ["human", "agent"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "file.reverted" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "command.run" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command", "category"],
+          "properties": {
+            "command": { "type": "string" },
+            "category": {
+              "type": "string",
+              "enum": ["test", "typecheck", "lint", "install", "other"]
+            },
+            "exit_code": { "type": "integer" },
+            "duration_ms": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "test.run" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["suite", "passed", "failed"],
+          "properties": {
+            "suite": { "type": "string" },
+            "passed": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 },
+            "skipped": { "type": "integer", "minimum": 0 },
+            "exit_code": { "type": "integer" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "validator.flag" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "message"],
+          "properties": {
+            "kind": { "type": "string" },
+            "message": { "type": "string" },
+            "penalty": { "type": "number" },
+            "evidence": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "submission.requested" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "started_at_iso": { "type": "string", "format": "date-time" },
+            "diff_size_bytes": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "submission.graded" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["score", "breakdown"],
+          "properties": {
+            "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "breakdown": {
+              "type": "object",
+              "description": "Per-dimension scores, keyed by RubricDimension. Values are numbers.",
+              "additionalProperties": { "type": "number" }
+            },
+            "submission_id": { "type": "string", "format": "uuid" },
+            "missed_failure_mode": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "submission.failed" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stage", "detail"],
+          "properties": {
+            "stage": { "type": "string" },
+            "detail": { "type": "string" }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+diff --git a/backend/src/middleware/requireAuth.ts b/backend/src/middleware/requireAuth.ts
+--- a/backend/src/middleware/requireAuth.ts
++++ b/backend/src/middleware/requireAuth.ts
+@@ -23,7 +23,7 @@ declare global {
+  */
+ export function requireAuth(req: Request, res: Response, next: NextFunction) {
+   const raw = req.cookies?.session;
+-  if (!raw) {
++  if (!raw || raw.length === 0) {
+     return res.redirect("/login");
+   }
+   const session = parseSessionCookie(raw);

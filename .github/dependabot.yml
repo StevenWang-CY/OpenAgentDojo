@@ -1,0 +1,62 @@
+version: 2
+
+# ---------------------------------------------------------------------------
+# Dependabot — weekly bumps across every ecosystem we use.
+# Group patch+minor bumps so reviewers don't drown in PRs.
+# ---------------------------------------------------------------------------
+
+updates:
+  # GitHub Actions in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor:
+        update-types: ["minor", "patch"]
+
+  # JavaScript / pnpm workspace root.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor:
+        update-types: ["minor", "patch"]
+
+  # JavaScript / pnpm workspace web app.
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      web-minor:
+        update-types: ["minor", "patch"]
+
+  # Python / uv-managed FastAPI backend.
+  - package-ecosystem: pip
+    directory: /apps/api
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      pip-minor:
+        update-types: ["minor", "patch"]
+
+  # Docker base images — node20, python312, api, web, sandbox-worker.
+  - package-ecosystem: docker
+    directory: /infra/docker
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      docker-minor:
+        update-types: ["minor", "patch"]

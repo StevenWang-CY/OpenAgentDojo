@@ -1,0 +1,180 @@
+id: async-race-condition
+version: 1
+title: "Async Race Condition (Queue Processing)"
+short_description: "Jobs process twice under load. The agent's fix is a check-then-act; the test catches it the first time."
+difficulty: advanced
+category: database
+estimated_minutes: 40
+skills_tested:
+  - concurrency
+  - sql
+  - test-writing
+  - agent-review
+
+repo:
+  pack: data-api-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: python312
+  setup_commands:
+    - pnpm install:py
+  ready_check: pnpm test:unit
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  Ops noticed `process_job(...)` sometimes processes the same job
+  twice under load. The shipped code uses a single transactional
+  UPDATE with a WHERE-on-status guard — it's correct. A previous PR
+  to "make the code easier to read" split the UPDATE into a SELECT +
+  branch + UPDATE, which is what's causing the duplicate-processing
+  reports.
+
+  ## What you need to deliver
+
+  - A patch to `app/jobs.py` that restores the atomic-claim contract:
+    when 20 workers race for the same `job_id`, exactly one should
+    return `ProcessResult(claimed=True)`.
+  - A regression test that uses `asyncio.gather` to fire many
+    concurrent claims at the same `job_id`.
+  - Reads of the same job after the dust settles must show
+    `status == "done"` with `processed_at` set exactly once.
+
+  ## Where to look
+
+  Start from `backend/app/jobs.py` and `docs/jobs.md`. The state
+  machine and the rationale for the single-UPDATE pattern are
+  documented there. The visible unit suite covers the single-worker
+  happy path; the hidden suite is the 20-way race.
+
+  ## How you'll be scored
+
+  This mission rewards *understanding the atomicity contract*. You
+  earn points by writing a SQL-level claim that the database can
+  enforce, by adding a `gather`-based regression test, and by
+  resisting the urge to add application-level locks. You lose points
+  for any check-then-act pattern or for shipping without a covering
+  concurrency test.
+
+failure_mode:
+  id: non_transactional_check_then_act
+  title: "Agent re-introduces a SELECT-then-UPDATE outside a transaction"
+  description: |
+    The agent's patch reads the row, branches on `status ==
+    "pending"`, then writes `status = "running"`. The transaction
+    boundary closes between the read and the write, so two workers
+    can both observe `pending` and both proceed.
+  hint_after_submit_if_missed: "Look at the UPDATE … WHERE status='pending'. That's the contract; don't split it into SELECT then UPDATE."
+
+expected_files:
+  - backend/app/jobs.py
+  - backend/tests/integration/test_jobs_concurrency.py
+
+expected_context:
+  required:
+    - backend/app/jobs.py
+    - backend/app/db.py
+  recommended:
+    - docs/jobs.md
+    - backend/tests/unit/test_jobs.py
+  discouraged:
+    - backend/app/calc.py
+    - backend/app/format.py
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - race
+      - duplicate
+      - concurrent
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "single worker claims and finishes a job"
+  - "second sequential call returns not_claimed"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "20 concurrent workers: exactly one claims the job"
+    - "row ends in status=done with processed_at set"
+    - "no use of asyncio.Lock or threading.Lock in app code"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 3
+    max_added_lines: 60
+    must_touch_any_of:
+      - backend/app/jobs.py
+    must_not_touch:
+      - backend/app/calc.py
+      - backend/app/format.py
+      - backend/pyproject.toml
+  - kind: regression_test_required
+    test_globs:
+      - backend/tests/**/test_*.py
+    keywords_any_of:
+      - gather
+      - concurrent
+      - race
+      - claim
+  - kind: no_skipped_tests
+    patterns:
+      - "@pytest.mark.skip"
+      - "@pytest.mark.xfail"
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 8
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - atomic
+      - transaction
+      - race
+      - concurrent
+      - regression test
+    bonus_keywords:
+      - rowcount
+      - update where
+      - asyncio.gather
+      - exactly once
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "jobs"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

@@ -1,0 +1,127 @@
+"use client";
+
+import * as React from "react";
+import Link from "next/link";
+import { ArrowRight, Loader2, Mail } from "lucide-react";
+import { toast } from "sonner";
+import { ApiError, auth } from "@/lib/api";
+import { Button } from "@/components/ui/Button";
+import { track } from "@/lib/telemetry";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
+import { Label } from "@/components/ui/Label";
+
+export default function SignInPage() {
+  const [email, setEmail] = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [sent, setSent] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!email.trim() || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await auth.sendMagicLink({ email: email.trim() });
+      // PII-free: we never send the email. Only that a request was made.
+      track("sign_in_requested");
+      setSent(true);
+      toast.success("Check your inbox for a sign-in link.");
+    } catch (err) {
+      // Network failures and API errors both surface here; never flip `sent`
+      // optimistically — that hides real problems the user must address.
+      const message =
+        err instanceof ApiError
+          ? err.status === 0
+            ? "Couldn't reach the API. Check your connection and try again."
+            : err.message
+          : "Failed to send magic link.";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="flex min-h-dvh items-center justify-center px-6 py-12">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <CardTitle>Sign in to Arena</CardTitle>
+          <CardDescription>
+            We&rsquo;ll email you a one-time sign-in link. No passwords.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {sent ? (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-elevated)] p-4 text-sm">
+              <Mail
+                className="size-5 text-[var(--color-primary)]"
+                aria-hidden
+              />
+              <p className="mt-2 font-medium">Check your email.</p>
+              <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+                If <span className="font-mono">{email}</span> is registered, a
+                sign-in link is on its way. The link expires in 30 minutes.
+              </p>
+              <Button
+                variant="link"
+                className="mt-3"
+                onClick={() => setSent(false)}
+              >
+                Use a different email
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="email">Email address</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={submitting}
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? "signin-error" : undefined}
+                />
+              </div>
+              {error ? (
+                <p
+                  id="signin-error"
+                  role="alert"
+                  className="rounded-md border border-[oklch(from_var(--color-danger)_l_c_h/0.5)] bg-[oklch(from_var(--color-danger)_l_c_h/0.08)] px-3 py-2 text-xs text-[var(--color-danger)]"
+                >
+                  {error}
+                </p>
+              ) : null}
+              <Button type="submit" disabled={submitting || !email.trim()}>
+                {submitting ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <ArrowRight className="size-4" aria-hidden />
+                )}
+                {submitting ? "Sending…" : "Email me a sign-in link"}
+              </Button>
+            </form>
+          )}
+        </CardContent>
+        <CardContent className="border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-muted-foreground)]">
+          By signing in you agree to use Arena&rsquo;s sandboxes responsibly.
+          <span className="block mt-2">
+            <Link
+              href="/"
+              className="underline-offset-2 hover:text-[var(--color-foreground)] hover:underline"
+            >
+              Back to landing
+            </Link>
+          </span>
+        </CardContent>
+      </Card>
+    </main>
+  );
+}

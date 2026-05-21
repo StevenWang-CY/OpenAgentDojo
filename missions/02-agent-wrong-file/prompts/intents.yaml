@@ -1,0 +1,45 @@
+# Mission 02 — intent classifier keyword sets.
+
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - truncate
+      - debug
+      - investigate
+      - the bug
+      - resolve
+
+  test:
+    keywords:
+      - add a test
+      - regression test
+      - lock this down
+      - cover this
+      - test for
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that is wrong
+      - that's wrong
+      - reconsider
+      - rethink
+      - not quite
+      - actually
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+      - backend only
+      - serializer only
+
+  unknown: {}

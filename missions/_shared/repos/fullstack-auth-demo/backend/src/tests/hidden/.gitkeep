@@ -1,0 +1,2 @@
+# Hidden tests live under each mission folder and are mounted by the grader
+# at submit time. This directory is intentionally empty in the repo pack.

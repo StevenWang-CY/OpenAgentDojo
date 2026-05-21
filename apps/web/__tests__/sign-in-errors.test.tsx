@@ -1,0 +1,71 @@
+import * as React from "react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+vi.mock("next/link", () => ({
+  __esModule: true,
+  default: ({
+    children,
+    href,
+    ...rest
+  }: {
+    children: React.ReactNode;
+    href: string;
+  } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
+const sendMagicLink = vi.fn();
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    ...actual,
+    auth: { ...actual.auth, sendMagicLink: (...args: unknown[]) => sendMagicLink(...args) },
+  };
+});
+
+import SignInPage from "@/app/auth/sign-in/page";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("sign-in error handling", () => {
+  it("does not flip to the 'check your email' success state on network failure", async () => {
+    const { ApiError } = await import("@/lib/api");
+    sendMagicLink.mockRejectedValueOnce(
+      new ApiError("Network error contacting /auth/magic-link", 0, null)
+    );
+
+    render(<SignInPage />);
+
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value: "alice@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /email me/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/couldn't reach the api/i)
+    );
+    // The success state would render this string — confirm we do not show it.
+    expect(screen.queryByText(/Check your email\./i)).not.toBeInTheDocument();
+  });
+
+  it("shows the success state on a real 204 response", async () => {
+    sendMagicLink.mockResolvedValueOnce(undefined);
+
+    render(<SignInPage />);
+
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value: "alice@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /email me/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Check your email\./i)).toBeInTheDocument()
+    );
+  });
+});

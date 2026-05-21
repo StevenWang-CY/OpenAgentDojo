@@ -1,0 +1,53 @@
+# Mission 01 — intent classifier keyword sets.
+#
+# `app/agent/intents.py` maps each incoming user prompt to one of the
+# five canonical intents below by case-insensitive keyword match. The
+# first matching intent (in file order) wins; "unknown" is the fallback.
+#
+# Keep keyword lists short and high-signal — anything generic enough to
+# match every prompt belongs in `unknown`.
+
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - address
+      - debug
+      - resolve
+      - patch
+      - the bug
+      - investigate
+
+  test:
+    keywords:
+      - add a test
+      - write a test
+      - regression test
+      - cover this
+      - lock this down
+      - test for
+      - assert
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - that is wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+
+  unknown: {}

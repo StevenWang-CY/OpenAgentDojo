@@ -1,0 +1,33 @@
+# Mission 05 forbidden-change rules.
+
+forbidden:
+  - id: removes_auth_middleware_from_route
+    description: |
+      Drops the `assertOwnerOrAdmin` middleware from the settings
+      route's middleware chain. The 403 stops happening, but so does
+      every other denial — cross-user PUTs sail through.
+    detection:
+      kind: regex_absent
+      file: backend/src/routes/settings.ts
+      pattern: "assertOwnerOrAdmin"
+      penalty: 10
+
+  - id: deletes_guard_implementation
+    description: |
+      Removes the `assertOwnerOrAdmin` export entirely. The fix must
+      leave the middleware in place; the right move is a one-character
+      change inside it (`req.params.id` -> `req.params.userId`).
+    detection:
+      kind: regex_absent
+      file: backend/src/middleware/assertOwnerOrAdmin.ts
+      pattern: "export\\s+function\\s+assertOwnerOrAdmin"
+      penalty: 10
+
+  - id: hardcoded_test_user_bypass
+    description: |
+      Patch hard-codes a user id to bypass the guard (`if (me.id ===
+      "test-...")`). Detected via a literal `me.id === "test` substring.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "me\\.id\\s*===?\\s*['\"]test"
+      penalty: 8

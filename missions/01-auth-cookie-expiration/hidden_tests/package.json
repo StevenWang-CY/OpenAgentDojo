@@ -1,0 +1,14 @@
+{
+  "name": "@mission-01/hidden-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hidden test suite for Mission 01. Mounted into the sandbox at /grader at submit time. NEVER commit alongside the repo pack.",
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "devDependencies": {
+    "supertest": "7.0.0",
+    "vitest": "2.1.2"
+  }
+}

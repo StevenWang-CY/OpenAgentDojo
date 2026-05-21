@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arena.local/schemas/forbidden_changes.schema.json",
+  "title": "Forbidden Changes",
+  "description": "Schema for missions/<id>/forbidden_changes.yaml. Declares anti-patterns the user must not introduce or accept from the agent. Consumed by the forbidden_changes validator. See IMPLEMENTATION_PLAN.md §7.3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["forbidden"],
+  "properties": {
+    "forbidden": {
+      "type": "array",
+      "description": "Ordered list of forbidden-change rules. Evaluated in declaration order.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description", "detection"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Snake-case rule identifier; appears in validator output.",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable rule description for the score report."
+          },
+          "detection": {
+            "type": "object",
+            "description": "How the rule is detected against the final diff and/or workspace.",
+            "required": ["kind", "penalty"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "regex_present_in_diff",
+                  "regex_absent",
+                  "ast_pattern",
+                  "guard_removed"
+                ]
+              },
+              "penalty": {
+                "type": "integer",
+                "description": "Points deducted from the Safety dimension when the rule triggers.",
+                "minimum": 1,
+                "maximum": 20
+              }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "kind": { "const": "regex_present_in_diff" } } },
+                "then": {
+                  "required": ["pattern"],
+                  "properties": {
+                    "pattern": {
+                      "type": "string",
+                      "description": "Regex tested against added lines of the unified diff."
+                    },
+                    "file_glob": {
+                      "type": "string",
+                      "description": "Optional glob restricting which paths are scanned."
+                    }
+                  }
+                }
+              },
+              {
+                "if": { "properties": { "kind": { "const": "regex_absent" } } },
+                "then": {
+                  "required": ["file", "pattern"],
+                  "properties": {
+                    "file": {
+                      "type": "string",
+                      "description": "File path (relative to repo root) that MUST still contain the pattern after the diff."
+                    },
+                    "pattern": {
+                      "type": "string",
+                      "description": "Regex that must be present in the post-diff file content."
+                    }
+                  }
+                }
+              },
+              {
+                "if": { "properties": { "kind": { "const": "ast_pattern" } } },
+                "then": {
+                  "required": ["file_glob", "pattern_id"],
+                  "properties": {
+                    "file_glob": { "type": "string" },
+                    "pattern_id": {
+                      "type": "string",
+                      "description": "Named AST visitor in apps/api/app/grading/validators/ast_patterns.py."
+                    }
+                  }
+                }
+              },
+              {
+                "if": { "properties": { "kind": { "const": "guard_removed" } } },
+                "then": {
+                  "required": ["file", "guard_pattern"],
+                  "properties": {
+                    "file": { "type": "string" },
+                    "guard_pattern": {
+                      "type": "string",
+                      "description": "Regex describing the guard clause that MUST NOT be removed."
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

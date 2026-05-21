@@ -1,0 +1,435 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arena.local/schemas/mission.schema.json",
+  "title": "Mission Manifest",
+  "description": "Schema for missions/<id>/mission.yaml. Mirrors the Pydantic MissionManifest model in apps/api/app/missions/manifest.py. See IMPLEMENTATION_PLAN.md §7.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "version",
+    "title",
+    "difficulty",
+    "category",
+    "estimated_minutes",
+    "skills_tested",
+    "repo",
+    "brief",
+    "failure_mode",
+    "expected_files",
+    "expected_context",
+    "agent",
+    "visible_tests",
+    "hidden_tests",
+    "validators",
+    "scoring_weights",
+    "reward_signals",
+    "expected_diff_lines_p50"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Kebab-case unique identifier; matches /^[a-z0-9-]+$/. The filesystem folder may be prefixed with NN- (e.g. 01-auth-cookie-expiration); the id field omits that prefix.",
+      "pattern": "^[a-z0-9-]+$",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "version": {
+      "type": "integer",
+      "description": "Manifest revision. Bump on any breaking change to the manifest shape or expected behavior.",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable mission title shown in the catalog and workspace.",
+      "minLength": 5,
+      "maxLength": 120
+    },
+    "short_description": {
+      "type": "string",
+      "description": "One-sentence summary used in catalog cards.",
+      "maxLength": 200
+    },
+    "difficulty": {
+      "type": "string",
+      "description": "Difficulty band; drives catalog filters and badge eligibility.",
+      "enum": ["beginner", "intermediate", "advanced"]
+    },
+    "category": {
+      "type": "string",
+      "description": "Primary category for catalog grouping.",
+      "enum": [
+        "auth",
+        "testing",
+        "security",
+        "frontend",
+        "api",
+        "database",
+        "refactoring",
+        "agent-safety",
+        "review",
+        "debugging"
+      ]
+    },
+    "estimated_minutes": {
+      "type": "integer",
+      "description": "Expected wall-clock minutes for a competent supervisor; used for catalog timing and idle-session reaper budgets.",
+      "minimum": 5,
+      "maximum": 120
+    },
+    "skills_tested": {
+      "type": "array",
+      "description": "Tags shown on the mission card and used for profile-level skill aggregation.",
+      "items": { "type": "string", "minLength": 2 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "repo": {
+      "type": "object",
+      "description": "Base repo pack the mission runs against.",
+      "additionalProperties": false,
+      "required": [
+        "pack",
+        "initial_commit",
+        "workdir",
+        "language_runtime",
+        "setup_commands",
+        "ready_check",
+        "test_commands"
+      ],
+      "properties": {
+        "pack": {
+          "type": "string",
+          "description": "Repo-pack id under missions/_shared/repos/<pack>.",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "initial_commit": {
+          "type": "string",
+          "description": "Short SHA checked out at session start. Accepts a 7-40 char hex sha or the literal 'HEAD' (used in early-bootstrap missions before a stable sha is recorded).",
+          "pattern": "^([0-9a-f]{7,40}|HEAD)$"
+        },
+        "workdir": {
+          "type": "string",
+          "description": "Path inside the container where the repo is mounted.",
+          "default": "/workspace"
+        },
+        "language_runtime": {
+          "type": "string",
+          "description": "Base image tag selector.",
+          "enum": ["node20", "python312"]
+        },
+        "setup_commands": {
+          "type": "array",
+          "description": "Commands run during provisioning before the session goes 'active'.",
+          "items": { "type": "string" },
+          "minItems": 0
+        },
+        "ready_check": {
+          "type": "string",
+          "description": "Command that must exit 0 before the session becomes 'active'."
+        },
+        "test_commands": {
+          "type": "object",
+          "description": "Per-category test commands runnable from the workspace.",
+          "additionalProperties": false,
+          "properties": {
+            "unit": { "type": "string" },
+            "integration": { "type": "string" },
+            "typecheck": { "type": "string" },
+            "lint": { "type": "string" }
+          },
+          "required": ["unit"]
+        }
+      }
+    },
+    "brief": {
+      "type": "string",
+      "description": "Markdown brief shown to the user. Includes context, expected behavior, and deliverable.",
+      "minLength": 40
+    },
+    "failure_mode": {
+      "type": "object",
+      "description": "The category of mistake the agent makes in this mission.",
+      "additionalProperties": false,
+      "required": ["id", "title", "description"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Snake-case identifier; used in events and analytics.",
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable label for the post-mission report.",
+          "minLength": 5
+        },
+        "description": {
+          "type": "string",
+          "description": "Markdown explanation of what the agent will do wrong."
+        },
+        "hint_after_submit_if_missed": {
+          "type": "string",
+          "description": "Optional pointer shown in the report when the user missed the failure mode."
+        }
+      }
+    },
+    "expected_files": {
+      "type": "array",
+      "description": "Files the user 'should' touch. Used as a soft signal in the report.",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "expected_context": {
+      "type": "object",
+      "description": "Context-selection rubric inputs. See IMPLEMENTATION_PLAN.md §11.2.5.",
+      "additionalProperties": false,
+      "required": ["required", "recommended", "discouraged"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "description": "Files the user MUST select to score full required-context credit.",
+          "items": { "type": "string" },
+          "minItems": 2
+        },
+        "recommended": {
+          "type": "array",
+          "description": "Files that strengthen context selection.",
+          "items": { "type": "string" }
+        },
+        "discouraged": {
+          "type": "array",
+          "description": "Files that subtract points if selected (red herrings).",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "description": "Configures the deterministic agent service for this mission.",
+      "additionalProperties": false,
+      "required": ["patch_file", "response_template", "applies_when", "apply_mode"],
+      "properties": {
+        "patch_file": {
+          "type": "string",
+          "description": "Path (relative to the mission folder) to the unified diff applied on the 'fix' intent."
+        },
+        "response_template": {
+          "type": "string",
+          "description": "Jinja2 template path for the agent's narration."
+        },
+        "reasoning_template": {
+          "type": "string",
+          "description": "Optional Jinja2 template for an internal 'reasoning' panel shown in the agent chat."
+        },
+        "intents_file": {
+          "type": "string",
+          "description": "Optional path (relative to the mission folder) to a YAML file declaring keyword sets for the agent intent classifier (see IMPLEMENTATION_PLAN.md §8.1)."
+        },
+        "applies_when": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Heuristics that gate auto-application of the agent patch.",
+          "properties": {
+            "prompt_min_chars": { "type": "integer", "minimum": 0 },
+            "prompt_must_contain_any": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1
+            }
+          }
+        },
+        "apply_mode": {
+          "type": "string",
+          "enum": ["on_user_confirm", "auto"],
+          "description": "Whether the patch applies automatically or requires a user click."
+        }
+      }
+    },
+    "visible_tests": {
+      "type": "array",
+      "description": "Human-readable test names visible in the workspace test panel.",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "hidden_tests": {
+      "type": "object",
+      "description": "Tests mounted only at submit time. See IMPLEMENTATION_PLAN.md §7.4.",
+      "additionalProperties": false,
+      "required": ["command", "expected_pass"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Shell command run during grading; e.g. 'pnpm test:hidden'."
+        },
+        "expected_pass": {
+          "type": "array",
+          "description": "Test names expected to pass on the ideal solution. Drives Final Correctness sub-scoring.",
+          "items": { "type": "string" },
+          "minItems": 1
+        }
+      }
+    },
+    "validators": {
+      "type": "array",
+      "description": "Structural validators per IMPLEMENTATION_PLAN.md §10.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "forbidden_changes",
+              "diff_scope",
+              "regression_test_required",
+              "no_skipped_tests",
+              "no_new_dependencies",
+              "no_secrets_exposed"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "forbidden_changes" } } },
+            "then": {
+              "required": ["rules_file"],
+              "properties": {
+                "rules_file": {
+                  "type": "string",
+                  "description": "Path to forbidden_changes.yaml relative to the mission folder."
+                }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "diff_scope" } } },
+            "then": {
+              "properties": {
+                "max_files_changed": { "type": "integer", "minimum": 0 },
+                "max_added_lines": { "type": "integer", "minimum": 0 },
+                "must_touch_any_of": { "type": "array", "items": { "type": "string" } },
+                "must_not_touch": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "regression_test_required" } } },
+            "then": {
+              "required": ["test_globs", "keywords_any_of"],
+              "properties": {
+                "test_globs": { "type": "array", "items": { "type": "string" } },
+                "keywords_any_of": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "no_skipped_tests" } } },
+            "then": {
+              "required": ["patterns"],
+              "properties": {
+                "patterns": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "scoring_weights": {
+      "type": "object",
+      "description": "Rubric weights. Constants per ADR 0006; missions MUST NOT override.",
+      "additionalProperties": false,
+      "required": [
+        "final_correctness",
+        "verification",
+        "agent_review",
+        "prompt_quality",
+        "context_selection",
+        "safety",
+        "diff_minimality"
+      ],
+      "properties": {
+        "final_correctness": { "const": 30 },
+        "verification": { "const": 20 },
+        "agent_review": { "const": 15 },
+        "prompt_quality": { "const": 10 },
+        "context_selection": { "const": 10 },
+        "safety": { "const": 10 },
+        "diff_minimality": { "const": 5 }
+      }
+    },
+    "reward_signals": {
+      "type": "object",
+      "description": "Per-mission process-scoring inputs. See IMPLEMENTATION_PLAN.md §7.1 and §11.2.",
+      "additionalProperties": false,
+      "required": ["prompt_quality", "verification", "agent_review", "safety"],
+      "properties": {
+        "prompt_quality": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["must_include_any"],
+          "properties": {
+            "must_include_any": {
+              "type": "array",
+              "description": "Keywords (case-insensitive) that earn the +2 'must-include' bonus.",
+              "items": { "type": "string" },
+              "minItems": 3
+            },
+            "bonus_keywords": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "penalty_if_under_chars": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required_categories": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["test", "typecheck", "lint", "manual", "other"]
+              },
+              "minItems": 1
+            },
+            "bonus_if_run_before_patch": { "type": "boolean" },
+            "require_targeted_test": {
+              "type": "string",
+              "description": "Substring or regex the user's test command must match for the targeted-test bonus."
+            }
+          }
+        },
+        "agent_review": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "require_diff_open": { "type": "boolean" },
+            "bonus_if_revert_or_edit_after_diff": { "type": "boolean" }
+          }
+        },
+        "safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "must_not_run_commands": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "must_not_introduce_deps": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "expected_diff_lines_p50": {
+      "type": "integer",
+      "description": "Median expected added-line count for an ideal solution. Drives Diff Minimality scoring (IMPLEMENTATION_PLAN.md §11.2.7).",
+      "minimum": 1,
+      "maximum": 500
+    }
+  }
+}

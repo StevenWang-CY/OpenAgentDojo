@@ -1,0 +1,23 @@
+# Mission 03 forbidden-change rules.
+
+forbidden:
+  - id: in_memory_idempotency_only
+    description: |
+      Patch's only deduplication is a process-local `Set<string>` or
+      `Map<string,…>`. These die with the process and miss the multi-
+      worker case. The grader allows a Set *plus* a durable guard, but
+      penalises a Set as the sole defense.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "new\\s+(Set|Map)\\s*<"
+      penalty: 6
+
+  - id: removes_post_endpoint
+    description: |
+      Removes or no-ops the `POST /api/submissions` handler. The
+      endpoint is the only insert path; deleting it breaks every caller.
+    detection:
+      kind: regex_absent
+      file: backend/src/routes/submissions.ts
+      pattern: "POST.*/api/submissions|post\\(['\"]/api/submissions"
+      penalty: 10

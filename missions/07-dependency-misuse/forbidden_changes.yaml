@@ -1,0 +1,32 @@
+# Mission 07 forbidden-change rules.
+
+forbidden:
+  - id: adds_arrow_dependency
+    description: |
+      Patch adds the `arrow` library to dependencies. `zoneinfo` in the
+      stdlib does everything this mission needs; reaching for a deprecated
+      third-party datetime library is the canonical "agent reaches for a
+      dep" failure mode.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "['\"]arrow(>=|==|~=|\\^|['\"])"
+      penalty: 8
+
+  - id: imports_arrow_module
+    description: |
+      Patch imports `arrow` in source. Even if the package were
+      pre-installed, swapping to it here for DST handling is wrong:
+      stdlib `zoneinfo` is the simpler, faster, no-new-surface path.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "^\\+\\s*import\\s+arrow\\b"
+      penalty: 4
+
+  - id: removes_format_report_ts
+    description: |
+      Removes or no-ops the `format_report_ts` export.
+    detection:
+      kind: regex_absent
+      file: backend/app/format.py
+      pattern: "def\\s+format_report_ts"
+      penalty: 10

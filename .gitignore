@@ -1,0 +1,51 @@
+# --- Secrets ---
+keys.md
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Node / pnpm ---
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.uv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Local state ---
+*.log
+*.sqlite
+*.db
+docker-compose.override.yml
+.local/
+
+# --- Generated artifacts ---
+# Generated TS types from the FastAPI OpenAPI schema (committed; CI checks drift).
+# Listed here only as a reminder of what NOT to hand-edit; the actual file is
+# `packages/shared-types/src/api.gen.ts` and is intentionally tracked so the
+# frontend builds without a regen step. See .github/workflows/contracts.yml.

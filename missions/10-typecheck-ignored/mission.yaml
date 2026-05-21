@@ -1,0 +1,178 @@
+id: typecheck-ignored
+version: 1
+title: "Typecheck Ignored (Avatar Upload)"
+short_description: "Adding `avatarUrl?: string` end-to-end. The agent's patch is fast — and full of `as any` escape hatches."
+difficulty: intermediate
+category: refactoring
+estimated_minutes: 30
+skills_tested:
+  - type-safety
+  - cross-stack-refactoring
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What you're building
+
+  Add support for an optional `avatarUrl` on the user record. The
+  field already exists on the `UserRecord` interface
+  (`backend/src/users/store.ts`); it just isn't writable through any
+  route or rendered anywhere. Wire it through:
+
+  - `PUT /users/:userId/settings` accepts `{ avatarUrl?: string }` and
+    persists it on the user record (via `upsertUser`).
+  - The settings response includes the new value.
+  - The frontend `User` type and the `ProfileCard` consume it.
+
+  The shipped code is already strictly-typed; do not erode that.
+
+  ## What you need to deliver
+
+  - End-to-end implementation with **zero `as any` casts** in the
+    diff. The hidden grader greps the patch for `as any` and fails
+    if any are present.
+  - `pnpm typecheck` must exit 0.
+  - A small integration test that PUTs an avatarUrl and asserts the
+    next GET returns it.
+
+  ## Where to look
+
+  Start from `backend/src/routes/settings.ts`, `backend/src/users/store.ts`,
+  and `frontend/src/ProfileCard.tsx`. The agent's first pass is fast
+  but cheats; treat the diff like a code review.
+
+  ## How you'll be scored
+
+  This mission rewards *type discipline*. You earn points by keeping
+  the diff cast-free, validating the body with proper narrowing, and
+  shipping a covering test. You lose points for every `as any` that
+  lands in the diff and for any pre-existing type error that survives.
+
+failure_mode:
+  id: cast_via_as_any
+  title: "Agent uses `as any` to silence TypeScript instead of narrowing"
+  description: |
+    The agent's patch casts `req.body as any` to extract `avatarUrl`,
+    casts the partial update as `as any` when passing to `upsertUser`,
+    and casts the response payload via `as any` on the frontend. Three
+    holes in the type system that ship in the diff.
+  hint_after_submit_if_missed: "Search the diff for `as any`. None of them belong in production code."
+
+expected_files:
+  - backend/src/routes/settings.ts
+  - backend/src/users/store.ts
+  - frontend/src/types/user.ts
+  - frontend/src/ProfileCard.tsx
+
+expected_context:
+  required:
+    - backend/src/routes/settings.ts
+    - backend/src/users/store.ts
+  recommended:
+    - frontend/src/ProfileCard.tsx
+    - frontend/src/types/user.ts
+  discouraged:
+    - backend/src/middleware/requireAuth.ts
+    - frontend/src/LoginForm.tsx
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - implement
+      - add
+      - avatar
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "GET /users/:userId/settings returns the saved blob for the owner"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "PUT settings can set avatarUrl and GET returns it"
+    - "patch diff contains zero `as any` casts"
+    - "pnpm typecheck exits 0 on the patched repo"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 6
+    max_added_lines: 80
+    must_touch_any_of:
+      - backend/src/routes/settings.ts
+      - backend/src/users/store.ts
+    must_not_touch:
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - backend/src/tests/**/*.test.ts
+    keywords_any_of:
+      - avatarUrl
+      - avatar
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 30
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - type
+      - narrow
+      - no any
+      - typecheck
+      - validate
+    bonus_keywords:
+      - schema
+      - parse
+      - guard
+      - strict
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "settings"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

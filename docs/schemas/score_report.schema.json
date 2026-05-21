@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arena.local/schemas/score_report.schema.json",
+  "title": "Score Report",
+  "description": "Schema for submissions.score_report (JSONB). Produced by apps/api/app/grading/score.py. See IMPLEMENTATION_PLAN.md §11.3 and ADR 0006.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["total", "dimensions", "strengths", "weaknesses", "missed_failure_mode", "badges_earned"],
+  "properties": {
+    "rubric_version": {
+      "type": "string",
+      "description": "Version of the rubric used to compute this report. Used to interpret historical reports if weights change.",
+      "default": "v1"
+    },
+    "total": {
+      "type": "integer",
+      "description": "Sum of dimension scores; in [0, 100].",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "final_correctness",
+        "verification",
+        "agent_review",
+        "prompt_quality",
+        "context_selection",
+        "safety",
+        "diff_minimality"
+      ],
+      "properties": {
+        "final_correctness": {
+          "$ref": "#/$defs/dimension",
+          "description": "Hidden + visible test outcomes. Max 30. Capped at 18 when hidden tests fail."
+        },
+        "verification": {
+          "$ref": "#/$defs/dimension",
+          "description": "Command-run discipline (tests, typecheck, lint, regression). Max 20."
+        },
+        "agent_review": {
+          "$ref": "#/$defs/dimension",
+          "description": "Diff opens, edits/reverts of agent's patch, corrective prompts. Max 15."
+        },
+        "prompt_quality": {
+          "$ref": "#/$defs/dimension",
+          "description": "Per-turn prompt analysis maxed across turns. Max 10."
+        },
+        "context_selection": {
+          "$ref": "#/$defs/dimension",
+          "description": "Set comparison against expected_context. Max 10."
+        },
+        "safety": {
+          "$ref": "#/$defs/dimension",
+          "description": "Forbidden changes avoided, banned commands not run, no new deps. Max 10."
+        },
+        "diff_minimality": {
+          "$ref": "#/$defs/dimension",
+          "description": "Lines added relative to expected_diff_lines_p50. Max 5."
+        }
+      }
+    },
+    "strengths": {
+      "type": "array",
+      "description": "Short positive observations shown in the report.",
+      "items": { "type": "string" }
+    },
+    "weaknesses": {
+      "type": "array",
+      "description": "Short improvement observations shown in the report.",
+      "items": { "type": "string" }
+    },
+    "missed_failure_mode": {
+      "type": "boolean",
+      "description": "True if the user submitted without addressing the mission's failure_mode."
+    },
+    "badges_earned": {
+      "type": "array",
+      "description": "Badge ids awarded for this submission.",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "feedback_narrative": {
+      "type": "string",
+      "description": "Optional longer-form markdown feedback for the post-mission report."
+    }
+  },
+  "$defs": {
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "max", "signals"],
+      "properties": {
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "signals": {
+          "type": "array",
+          "description": "Plain-English signals that drove the score. Surfaced in the dimension breakdown UI.",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

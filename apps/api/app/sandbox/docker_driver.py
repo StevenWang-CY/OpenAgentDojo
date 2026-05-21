@@ -1,0 +1,549 @@
+"""Docker-based sandbox driver.
+
+Each session gets its own ephemeral container, dropped to no capabilities and
+no network by default. Compatible with rootless Docker.
+
+Heavy work is done off the event loop via ``asyncio.to_thread`` so blocking
+SDK calls do not stall the API.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import shlex
+import tarfile
+import time
+import uuid
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+
+from app.config import get_settings
+from app.sandbox.driver import SandboxDriver
+from app.sandbox.types import (
+    ApplyResult,
+    FileTreeNode,
+    GradingArtifacts,
+    RunResult,
+    SandboxHandle,
+)
+
+# `docker` is imported lazily — keep this module importable even when Docker
+# isn't running on the host. The SDK is still listed as a hard dependency in
+# pyproject.toml because the prod image always has it.
+
+
+# Path to the seccomp profile shipped at infra/docker/seccomp.json.
+#
+# Resolution order:
+#   1. ``ARENA_SECCOMP_PROFILE`` env var (escape hatch for prod images that
+#      ship the profile at a non-standard path).
+#   2. ``<repo-root>/infra/docker/seccomp.json`` — works in dev and tests.
+#      From this file the repo root is parents[4] (sandbox→app→api→apps→repo).
+#   3. ``/app/infra/docker/seccomp.json`` — the path used inside both the API
+#      and sandbox-worker container images.
+def _resolve_seccomp_path() -> Path:
+    import os
+
+    env = os.environ.get("ARENA_SECCOMP_PROFILE")
+    if env:
+        return Path(env)
+
+    here = Path(__file__).resolve()
+    repo_root = here.parents[4] if len(here.parents) >= 5 else here.parents[-1]
+    candidate = repo_root / "infra" / "docker" / "seccomp.json"
+    if candidate.exists():
+        return candidate
+
+    return Path("/app/infra/docker/seccomp.json")
+
+
+_SECCOMP_PATH = _resolve_seccomp_path()
+
+
+class DockerSandboxDriver(SandboxDriver):
+    """Driver backed by the Docker Python SDK."""
+
+    name = "docker"
+
+    def __init__(self) -> None:
+        self._settings = get_settings()
+        self._client: Any | None = None  # lazy: docker.DockerClient
+
+    # ------------------------------------------------------------------ client
+    def _ensure_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        try:
+            import docker
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("docker SDK not installed") from exc
+        try:
+            self._client = docker.from_env()
+            # Ping eagerly so failure surfaces here rather than mid-request.
+            self._client.ping()
+        except Exception as exc:
+            raise RuntimeError(f"docker daemon unavailable: {exc}") from exc
+        return self._client
+
+    @staticmethod
+    def _image_for(runtime: str) -> str:
+        return {
+            "node20": "agentarena/node20:1",
+            "python312": "agentarena/python312:1",
+        }.get(runtime, "agentarena/node20:1")
+
+    # ------------------------------------------------------------- provision
+    async def provision(self, mission: Any, session_id: Any) -> SandboxHandle:
+        sid = uuid.UUID(str(session_id))
+        runtime = self._mission_runtime(mission)
+        image = self._image_for(runtime)
+        mission_id = getattr(mission, "id", None) or "unknown"
+
+        seccomp_path = _SECCOMP_PATH
+        security_opts = ["no-new-privileges:true"]
+        if seccomp_path.exists():
+            security_opts.append(f"seccomp={seccomp_path}")
+        else:
+            # Fail loud rather than silently downgrade to the Docker default.
+            logger.error(
+                "seccomp profile missing at {} — refusing to provision sandbox",
+                seccomp_path,
+            )
+            raise RuntimeError(f"seccomp profile missing: {seccomp_path}")
+
+        def _create():
+            client = self._ensure_client()
+            container = client.containers.create(
+                image=image,
+                command=["/bin/sleep", str(self._settings.sandbox_timeout_seconds)],
+                detach=True,
+                tty=False,
+                stdin_open=False,
+                network_disabled=True,
+                cap_drop=["ALL"],
+                mem_limit="2g",
+                nano_cpus=1_000_000_000,
+                # Root FS is read-only; writable scratch lives in sized tmpfs.
+                read_only=True,
+                tmpfs={
+                    "/tmp": "size=128m,uid=1000,gid=1000",
+                    "/workspace": "size=1g,uid=1000,gid=1000",
+                },
+                security_opt=security_opts,
+                pids_limit=256,
+                user="1000:1000",
+                working_dir="/workspace",
+                labels={
+                    "arena.session_id": str(sid),
+                    "arena.mission_id": str(mission_id),
+                },
+            )
+            container.start()
+            return container
+
+        container = await asyncio.to_thread(_create)
+        logger.info("docker sandbox provisioned: container={} session={}", container.id[:12], sid)
+
+        return SandboxHandle(
+            id=str(uuid.uuid4()),
+            driver=self.name,
+            workdir=Path("/workspace"),
+            mission_id=str(mission_id),
+            session_id=sid,
+            container_id=container.id,
+            driver_state={"image": image, "runtime": runtime},
+        )
+
+    @staticmethod
+    def _mission_runtime(mission: Any) -> str:
+        repo = getattr(mission, "repo", None)
+        if repo is not None:
+            return getattr(repo, "language_runtime", "node20")
+        return "node20"
+
+    # ------------------------------------------------------------- container
+    def _container(self, handle: SandboxHandle) -> Any:
+        if not handle.container_id:
+            raise RuntimeError("sandbox has no container")
+        client = self._ensure_client()
+        return client.containers.get(handle.container_id)
+
+    async def attach_shell(self, handle: SandboxHandle) -> Any:
+        """Open a TTY-attached exec instance and return its socket."""
+
+        def _exec():
+            client = self._ensure_client()
+            container = client.containers.get(handle.container_id)
+            exec_id = client.api.exec_create(
+                container.id,
+                cmd=["/bin/bash", "-i"],
+                tty=True,
+                stdin=True,
+                stdout=True,
+                stderr=True,
+                workdir=str(handle.workdir),
+            )["Id"]
+            sock = client.api.exec_start(exec_id, tty=True, socket=True, demux=False)
+            return exec_id, sock
+
+        return await asyncio.to_thread(_exec)
+
+    # ----------------------------------------------------------------- files
+    async def read_file(self, handle: SandboxHandle, path: str) -> bytes:
+        def _read():
+            container = self._container(handle)
+            stream, _stat = container.get_archive(path)
+            buf = io.BytesIO(b"".join(stream))
+            buf.seek(0)
+            with tarfile.open(fileobj=buf, mode="r|") as tar:
+                for member in tar:
+                    if member.isfile():
+                        extracted = tar.extractfile(member)
+                        if extracted is None:
+                            return b""
+                        return extracted.read()
+            return b""
+
+        return await asyncio.to_thread(_read)
+
+    async def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
+        def _write():
+            container = self._container(handle)
+            buf = io.BytesIO()
+            target_path = Path(path)
+            with tarfile.open(fileobj=buf, mode="w") as tar:
+                info = tarfile.TarInfo(name=target_path.name)
+                info.size = len(content)
+                info.mode = 0o644
+                tar.addfile(info, io.BytesIO(content))
+            buf.seek(0)
+            container.put_archive(str(target_path.parent) or "/", buf.read())
+
+        await asyncio.to_thread(_write)
+
+    async def list_tree(self, handle: SandboxHandle, root: str = "/workspace") -> FileTreeNode:
+        # We shell out to `find`: cheaper than fetching the whole archive.
+        result = await self.run(
+            handle,
+            [
+                "/bin/sh",
+                "-c",
+                f"cd {shlex.quote(root)} && find . -maxdepth 8 -mindepth 1 "
+                "-not -path '*/\\.git*' -printf '%y\\t%s\\t%p\\n'",
+            ],
+            timeout_s=15,
+        )
+        out = FileTreeNode(path=root, kind="dir")
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            kind_char, size_str, rel = parts
+            try:
+                size = int(size_str)
+            except ValueError:
+                size = 0
+            out.children.append(
+                FileTreeNode(
+                    path=rel.lstrip("./") or ".",
+                    kind="dir" if kind_char == "d" else "file",
+                    size=size,
+                )
+            )
+        return out
+
+    async def diff_from_initial(self, handle: SandboxHandle) -> str:
+        result = await self.run(handle, ["git", "--no-pager", "diff", "HEAD"], timeout_s=30)
+        return result.stdout
+
+    # ------------------------------------------------------------------- run
+    async def run(
+        self,
+        handle: SandboxHandle,
+        cmd: list[str],
+        timeout_s: int = 60,
+        cwd: str | None = None,
+    ) -> RunResult:
+        def _exec_run():
+            container = self._container(handle)
+            kwargs: dict[str, Any] = {"demux": True, "tty": False}
+            if cwd:
+                kwargs["workdir"] = cwd
+            return container.exec_run(cmd, **kwargs)
+
+        started = time.monotonic()
+        timed_out = False
+        try:
+            exit_code, (stdout_b, stderr_b) = await asyncio.wait_for(
+                asyncio.to_thread(_exec_run), timeout=timeout_s
+            )
+        except TimeoutError:
+            timed_out = True
+            exit_code, stdout_b, stderr_b = -1, b"", b"timeout"
+
+        return RunResult(
+            exit_code=int(exit_code) if exit_code is not None else -1,
+            stdout=(stdout_b or b"").decode("utf-8", errors="replace"),
+            stderr=(stderr_b or b"").decode("utf-8", errors="replace"),
+            duration_ms=int((time.monotonic() - started) * 1000),
+            timed_out=timed_out,
+            command=" ".join(cmd),
+        )
+
+    # ------------------------------------------------------------------ diff
+    async def apply_diff(self, handle: SandboxHandle, diff_text: str) -> ApplyResult:
+        await self.write_file(handle, "/tmp/p.diff", diff_text.encode("utf-8"))
+        result = await self.run(
+            handle,
+            ["git", "apply", "--3way", "--whitespace=fix", "/tmp/p.diff"],
+            timeout_s=30,
+        )
+        if result.exit_code != 0:
+            return ApplyResult(applied=False, error=result.stderr or result.stdout)
+
+        names = await self.run(handle, ["git", "diff", "--name-only", "HEAD"], timeout_s=10)
+        stat = await self.run(handle, ["git", "diff", "--numstat", "HEAD"], timeout_s=10)
+        files = [f for f in names.stdout.splitlines() if f]
+        added = removed = 0
+        for line in stat.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                try:
+                    added += int(parts[0]) if parts[0] != "-" else 0
+                    removed += int(parts[1]) if parts[1] != "-" else 0
+                except ValueError:
+                    continue
+        return ApplyResult(
+            applied=True, files_changed=files, added_lines=added, removed_lines=removed
+        )
+
+    # ------------------------------------------------------------ freeze
+    async def freeze_and_grade(
+        self,
+        handle: SandboxHandle,
+        mission: Any,
+        *,
+        manifest_folder: Path | None = None,
+    ) -> GradingArtifacts:
+        """Real M5 grading: snapshot diff, copy hidden tests, run visible + hidden suites."""
+        diff = await self.diff_from_initial(handle)
+
+        # Mount hidden tests under /grader/hidden_tests via put_archive.
+        hidden_dir = manifest_folder / "hidden_tests" if manifest_folder is not None else None
+        if hidden_dir is not None and hidden_dir.is_dir():
+            await self._put_directory(handle, hidden_dir, "/grader/hidden_tests")
+
+        # Freeze workspace (best-effort).
+        await self.run(handle, ["chmod", "-R", "a-w", "/workspace"], timeout_s=30)
+
+        test_results: dict[str, Any] = {}
+        logs: dict[str, str] = {}
+
+        # Visible suites.
+        repo = getattr(mission, "repo", None)
+        cmds: dict[str, str] = dict(getattr(repo, "test_commands", {}) if repo is not None else {})
+        for suite, cmd in cmds.items():
+            tr = await self._run_test_phase(handle, suite, cmd, 180)
+            test_results[suite] = _docker_test_run_to_dict(tr)
+            logs[f"visible.{suite}"] = tr.stdout + "\n--- stderr ---\n" + tr.stderr
+
+        # Hidden suite.
+        if hidden_dir is not None and hidden_dir.is_dir():
+            hidden_cfg = getattr(mission, "hidden_tests", None)
+            hidden_cmd = (
+                getattr(hidden_cfg, "command", "bash /grader/hidden_tests/runner.sh")
+                if hidden_cfg is not None
+                else "bash /grader/hidden_tests/runner.sh"
+            )
+            tr = await self._run_test_phase(handle, "hidden", hidden_cmd, 180)
+            test_results["hidden"] = _docker_test_run_to_dict(tr)
+            logs["hidden"] = tr.stdout + "\n--- stderr ---\n" + tr.stderr
+        elif manifest_folder is not None:
+            test_results["hidden"] = {
+                "suite": "hidden",
+                "exit_code": 127,
+                "stdout": "",
+                "stderr": f"hidden_tests directory not found: {hidden_dir}",
+                "passed": 0,
+                "failed": 1,
+                "skipped": 0,
+                "timed_out": False,
+            }
+
+        return GradingArtifacts(diff=diff, test_results=test_results, logs=logs)
+
+    async def _put_directory(
+        self,
+        handle: SandboxHandle,
+        local_dir: Path,
+        target_dir: str,
+    ) -> None:
+        """Tar up ``local_dir`` and put_archive into ``target_dir`` inside the container."""
+
+        def _make_tar() -> bytes:
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tar:
+                for path in local_dir.rglob("*"):
+                    if not path.is_file():
+                        continue
+                    info = tarfile.TarInfo(name=str(path.relative_to(local_dir)))
+                    data = path.read_bytes()
+                    info.size = len(data)
+                    info.mode = 0o644
+                    tar.addfile(info, io.BytesIO(data))
+            buf.seek(0)
+            return buf.read()
+
+        archive = await asyncio.to_thread(_make_tar)
+        await self.run(handle, ["mkdir", "-p", target_dir], timeout_s=15)
+
+        def _put() -> None:
+            container = self._container(handle)
+            container.put_archive(target_dir, archive)
+
+        await asyncio.to_thread(_put)
+
+    async def _run_test_phase(
+        self,
+        handle: SandboxHandle,
+        suite: str,
+        cmd: str,
+        timeout_s: int,
+    ) -> _DockerTestPhaseResult:
+        workdir = getattr(handle, "workdir", None)
+        cwd = str(workdir) if workdir is not None else "/workspace"
+        result = await self.run(
+            handle,
+            ["bash", "-lc", cmd],
+            timeout_s=timeout_s,
+            cwd=cwd,
+        )
+        if result.timed_out:
+            return _DockerTestPhaseResult(
+                suite=suite,
+                exit_code=max(1, result.exit_code),
+                stdout=result.stdout,
+                stderr=result.stderr + f"\n[test phase '{suite}' timed out after {timeout_s}s]",
+                passed=0,
+                failed=0,
+                skipped=0,
+                timed_out=True,
+            )
+        passed, failed, skipped = _docker_parse_counts(result.stdout, result.stderr)
+        return _DockerTestPhaseResult(
+            suite=suite,
+            exit_code=result.exit_code,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            passed=passed,
+            failed=failed,
+            skipped=skipped,
+            timed_out=False,
+        )
+
+    # -------------------------------------------------------------- destroy
+    async def destroy(self, handle: SandboxHandle) -> None:
+        if not handle.container_id:
+            return
+
+        def _destroy():
+            try:
+                client = self._ensure_client()
+                container = client.containers.get(handle.container_id)
+                container.remove(force=True, v=True)
+            except Exception as exc:
+                logger.warning("docker sandbox destroy failed: {}", exc)
+
+        await asyncio.to_thread(_destroy)
+
+
+# ---------------------------------------------------------------------------
+# Test-phase parsing helpers (used by freeze_and_grade)
+# ---------------------------------------------------------------------------
+
+
+import json as _json  # noqa: E402
+import re as _re  # noqa: E402
+from dataclasses import dataclass as _dataclass  # noqa: E402
+
+
+@_dataclass(slots=True)
+class _DockerTestPhaseResult:
+    suite: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    passed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    timed_out: bool = False
+
+
+def _docker_test_run_to_dict(result: _DockerTestPhaseResult) -> dict[str, Any]:
+    return {
+        "suite": result.suite,
+        "exit_code": result.exit_code,
+        "stdout": result.stdout[-8000:],
+        "stderr": result.stderr[-4000:],
+        "passed": result.passed,
+        "failed": result.failed,
+        "skipped": result.skipped,
+        "timed_out": result.timed_out,
+    }
+
+
+def _docker_parse_counts(stdout: str, stderr: str) -> tuple[int, int, int]:
+    """JSON-first, then test-runner-style fallback."""
+    combined = (stdout or "") + "\n" + (stderr or "")
+    for match in _re.finditer(r"\{[^{}]*\"(?:passed|failed|skipped)\"[^{}]*\}", combined):
+        try:
+            data = _json.loads(match.group(0))
+        except Exception:  # noqa: S112 — scanning for the first parseable test-count blob; bad matches are expected noise
+            continue
+        if isinstance(data, dict):
+            return (
+                int(data.get("passed", 0) or 0),
+                int(data.get("failed", 0) or 0),
+                int(data.get("skipped", 0) or 0),
+            )
+
+    m = _re.search(
+        r"Tests:\s*(?:(\d+)\s+passed)?[,\s]*(?:(\d+)\s+failed)?[,\s]*(?:(\d+)\s+skipped)?",
+        combined,
+    )
+    if m and any(m.group(i) for i in (1, 2, 3)):
+        return (
+            int(m.group(1) or 0),
+            int(m.group(2) or 0),
+            int(m.group(3) or 0),
+        )
+
+    mp = _re.search(r"(\d+)\s+passing", combined)
+    mf = _re.search(r"(\d+)\s+failing", combined)
+    ms = _re.search(r"(\d+)\s+pending", combined)
+    if mp or mf:
+        return (
+            int(mp.group(1)) if mp else 0,
+            int(mf.group(1)) if mf else 0,
+            int(ms.group(1)) if ms else 0,
+        )
+
+    pp = _re.search(r"(\d+)\s+passed", combined)
+    pf = _re.search(r"(\d+)\s+failed", combined)
+    ps = _re.search(r"(\d+)\s+skipped", combined)
+    if pp or pf or ps:
+        return (
+            int(pp.group(1)) if pp else 0,
+            int(pf.group(1)) if pf else 0,
+            int(ps.group(1)) if ps else 0,
+        )
+    return (0, 0, 0)
+
+
+# Backwards-compatible short alias — some callers / docs reference ``DockerDriver``.
+DockerDriver = DockerSandboxDriver
+
+__all__ = ["DockerDriver", "DockerSandboxDriver"]

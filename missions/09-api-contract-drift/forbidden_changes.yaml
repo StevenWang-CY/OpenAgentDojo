@@ -1,0 +1,24 @@
+# Mission 09 forbidden-change rules.
+
+forbidden:
+  - id: header_still_reads_fullName
+    description: |
+      `Header.tsx` still references `user.fullName` after the patch.
+      The backend rename means this renders `undefined`.
+    detection:
+      kind: regex_present_in_diff
+      pattern: ""  # not used for absent-in-file rules
+      penalty: 0
+    # NOTE: This rule is enforced by the hidden test that grep's for
+    # `user.fullName` in the frontend. Listed here so content authors
+    # see the intent.
+
+  - id: keeps_fullName_alias_in_type
+    description: |
+      Patch leaves `fullName?: string` on the User type. That's a
+      half-rename: it lets the legacy references compile while still
+      crashing at runtime because the backend doesn't send the field.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "fullName\\?\\s*:\\s*string"
+      penalty: 4

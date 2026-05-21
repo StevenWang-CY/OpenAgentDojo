@@ -1,0 +1,5 @@
+# Mission 10 — score envelopes.
+acceptance:
+  min_unmodified: 30
+  max_unmodified: 55
+  min_ideal: 90

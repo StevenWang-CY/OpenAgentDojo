@@ -1,0 +1,155 @@
+"""Authentication routes: magic-link flow, logout, and /me.
+
+Endpoints
+---------
+POST /auth/magic-link    — request a magic link email
+GET  /auth/callback      — exchange token → session cookie + redirect
+POST /auth/logout        — clear session cookie
+GET  /auth/me            — return current user + fresh CSRF token
+GET  /me                 — top-level alias for /auth/me
+"""
+
+from __future__ import annotations
+
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel, EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.csrf import _COOKIE_MAX_AGE, _CSRF_COOKIE_NAME, issue_csrf_token
+from app.auth.deps import require_auth
+from app.auth.email import send_magic_link_email
+from app.auth.magic_link import consume_magic_token, create_magic_link
+from app.auth.session_cookie import issue_session_cookie, revoke_session_cookie
+from app.config import get_settings
+from app.db.session import get_db
+from app.models.user import User
+from app.schemas.user import UserRead
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+class MagicLinkRequest(BaseModel):
+    email: EmailStr
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/magic-link
+# ---------------------------------------------------------------------------
+
+
+@router.post("/magic-link", status_code=204, summary="Request a magic login link")
+async def post_magic_link(
+    body: MagicLinkRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Issue a magic-link email.
+
+    Always returns 204 — we deliberately do NOT distinguish between "user
+    exists / email sent" and "delivery failed" so we can't be used as an
+    account-existence oracle. Internal observability still records the
+    failure via :func:`loguru.warning`.
+    """
+    settings = get_settings()
+    base_url = str(request.base_url).rstrip("/")
+    magic_url = await create_magic_link(db, email=str(body.email), base_url=base_url)
+    delivered = await send_magic_link_email(
+        to_email=str(body.email),
+        magic_url=magic_url,
+        settings=settings,
+    )
+    if not delivered:
+        from loguru import logger as _logger
+
+        _logger.error(
+            "[auth] magic-link delivery FAILED for {} — no backend confirmed delivery",
+            str(body.email),
+        )
+    return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# GET /auth/callback
+# ---------------------------------------------------------------------------
+
+
+@router.get("/callback", summary="Exchange magic-link token for a session")
+async def get_callback(
+    token: str = Query(..., description="Raw magic-link token from the email URL"),
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    settings = get_settings()
+    user = await consume_magic_token(db, token)
+    if user is None:
+        raise HTTPException(
+            status_code=400,
+            detail="invalid or expired magic link",
+        )
+
+    # Redirect to the frontend /missions page (absolute URL so the browser
+    # goes to the web origin, not the API origin).
+    frontend_url = f"{settings.web_origin.rstrip('/')}/missions"
+    redirect = RedirectResponse(url=frontend_url, status_code=302)
+    issue_session_cookie(redirect, str(user.id), settings)
+    issue_csrf_token(redirect, settings)
+    return redirect
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/logout
+# ---------------------------------------------------------------------------
+
+
+@router.post("/logout", status_code=204, summary="Clear the session cookie")
+async def post_logout() -> Response:
+    settings = get_settings()
+    response = Response(status_code=204)
+    revoke_session_cookie(response, settings)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# GET /me — shared helper + two routers (auth-scoped and top-level alias)
+# ---------------------------------------------------------------------------
+
+
+def _build_me_response(user: User) -> JSONResponse:
+    """Build the /me JSONResponse with CSRF cookie + body token."""
+    settings = get_settings()
+    csrf_value = secrets.token_hex(32)
+    user_data = UserRead.model_validate(user).model_dump(mode="json")
+    user_data["csrf_token"] = csrf_value
+
+    response = JSONResponse(content=user_data)
+    response.set_cookie(
+        key=_CSRF_COOKIE_NAME,
+        value=csrf_value,
+        httponly=False,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        max_age=_COOKIE_MAX_AGE,
+        path="/",
+    )
+    return response
+
+
+@router.get("/me", summary="Return the authenticated user")
+async def get_me(
+    user: User = Depends(require_auth),
+) -> JSONResponse:
+    return _build_me_response(user)
+
+
+# Top-level alias router — mounted at /api/v1/me so both
+# /api/v1/me and /api/v1/auth/me resolve to the same handler.
+me_router = APIRouter(tags=["auth"])
+
+
+@me_router.get("/me", summary="Return the authenticated user (top-level alias)")
+async def get_me_alias(
+    user: User = Depends(require_auth),
+) -> JSONResponse:
+    return _build_me_response(user)

@@ -1,0 +1,43 @@
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - discount
+      - price
+      - investigate
+      - debug
+      - the bug
+
+  test:
+    keywords:
+      - add a test
+      - regression test
+      - parametric
+      - cover this
+      - lock this down
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - that is wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+      - general case
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+      - one line
+
+  unknown: {}

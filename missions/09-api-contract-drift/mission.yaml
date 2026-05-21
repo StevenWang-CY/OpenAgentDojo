@@ -1,0 +1,186 @@
+id: api-contract-drift
+version: 1
+title: "API Contract Drift (Backend Rename Missed in the Frontend)"
+short_description: "Backend renamed user.fullName -> user.displayName. Frontend still reads fullName in three places; the agent patches one."
+difficulty: intermediate
+category: api
+estimated_minutes: 30
+skills_tested:
+  - api-contract
+  - cross-stack-refactoring
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  Last week's backend PR renamed the public field on the user payload
+  from `fullName` to `displayName` (see `backend/src/users/serialize.ts`
+  — it now returns `displayName`). The frontend was not updated in
+  lock-step. Three components still read `user.fullName`:
+
+  - `frontend/src/ProfileCard.tsx`
+  - `frontend/src/Header.tsx`
+  - `frontend/src/Settings.tsx`
+
+  Result: anywhere those components render, the user's name shows up
+  as `undefined`. The TypeScript `User` type at
+  `frontend/src/types/user.ts` still claims `fullName` is the field,
+  so the compiler doesn't catch it.
+
+  ## What you need to deliver
+
+  - A patch that updates the frontend `User` type *and* every reader
+    so it consumes `displayName` (matching the wire format).
+  - The patch must touch all three components — missing any of them
+    leaves a crash path.
+  - Existing tests stay green.
+
+  ## Where to look
+
+  Use `grep -r fullName frontend/src` to find every reference.
+  Cross-check against the backend serializer to confirm the wire
+  field name.
+
+  ## How you'll be scored
+
+  This mission rewards *finding every caller*. You earn points by
+  enumerating references before patching, updating the shared
+  `User` type so the compiler enforces it, and adding a smoke test
+  that renders each component with a `displayName`-only payload. You
+  lose points for any frontend file still containing `user.fullName`
+  after the patch.
+
+failure_mode:
+  id: partial_rename_missed_callers
+  title: "Agent updates ProfileCard.tsx and assumes that's the only caller"
+  description: |
+    The agent grep's for the failing component name, finds
+    ProfileCard, and updates it. It never grep's for `fullName`
+    directly, so `Header.tsx` and `Settings.tsx` keep crashing.
+  hint_after_submit_if_missed: "Run `grep -rn fullName frontend/src` and count the hits."
+
+expected_files:
+  - frontend/src/types/user.ts
+  - frontend/src/ProfileCard.tsx
+  - frontend/src/Header.tsx
+  - frontend/src/Settings.tsx
+
+expected_context:
+  required:
+    - frontend/src/ProfileCard.tsx
+    - frontend/src/Header.tsx
+    - frontend/src/Settings.tsx
+  recommended:
+    - frontend/src/types/user.ts
+    - backend/src/users/serialize.ts
+  discouraged:
+    - frontend/src/LoginForm.tsx
+    - frontend/src/Dashboard.tsx
+    - backend/src/auth/session.ts
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - rename
+      - displayname
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "LoginForm submits a userId and calls onSignedIn"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "ProfileCard renders displayName"
+    - "Header renders displayName"
+    - "Settings renders displayName"
+    - "no frontend file still references user.fullName"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 6
+    max_added_lines: 60
+    must_touch_any_of:
+      - frontend/src/Header.tsx
+      - frontend/src/Settings.tsx
+    must_not_touch:
+      - backend/**
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - frontend/src/tests/**/*.test.tsx
+    keywords_any_of:
+      - displayName
+      - displayname
+      - rename
+      - contract
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - every caller
+      - grep
+      - contract
+      - rename
+      - all references
+    bonus_keywords:
+      - displayName
+      - User type
+      - cross-stack
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "frontend"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

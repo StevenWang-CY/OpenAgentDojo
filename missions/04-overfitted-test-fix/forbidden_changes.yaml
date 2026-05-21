@@ -1,0 +1,22 @@
+# Mission 04 forbidden-change rules.
+
+forbidden:
+  - id: hardcoded_qty3_special_case
+    description: |
+      Patch adds a literal short-circuit for `qty == 3` instead of
+      fixing the comparison. Detected by an `if qty == 3` clause in
+      added lines.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "if\\s+qty\\s*==\\s*3"
+      penalty: 6
+
+  - id: removes_calculate_price
+    description: |
+      Removes or no-ops the `calculate_price` export. It is the only
+      public pricing entrypoint.
+    detection:
+      kind: regex_absent
+      file: backend/app/calc.py
+      pattern: "def\\s+calculate_price"
+      penalty: 10

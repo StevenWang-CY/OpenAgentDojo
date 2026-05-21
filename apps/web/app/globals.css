@@ -1,0 +1,291 @@
+@import "tailwindcss";
+
+/* ── Theme tokens ───────────────────────────────────────────────────────────
+ * OKLCH-based palette tuned for a calm, native macOS feel.
+ * `light` is the default; `.dark` overrides via class strategy.
+ */
+
+@theme {
+  --color-background: oklch(99% 0.005 240);
+  --color-foreground: oklch(20% 0.02 250);
+  --color-muted: oklch(96% 0.005 250);
+  --color-muted-foreground: oklch(50% 0.02 250);
+  --color-surface: oklch(100% 0 0);
+  --color-surface-elevated: oklch(99% 0.005 240);
+  --color-border: oklch(91% 0.01 250);
+  --color-border-strong: oklch(82% 0.015 250);
+  --color-ring: oklch(62% 0.18 264);
+
+  --color-primary: oklch(62% 0.18 264);
+  --color-primary-foreground: oklch(99% 0 0);
+  --color-accent: oklch(75% 0.15 200);
+  --color-accent-foreground: oklch(15% 0.02 250);
+
+  --color-success: oklch(64% 0.16 152);
+  --color-warning: oklch(78% 0.16 75);
+  --color-danger: oklch(60% 0.22 25);
+
+  --color-difficulty-beginner: oklch(68% 0.14 152);
+  --color-difficulty-intermediate: oklch(73% 0.16 75);
+  --color-difficulty-advanced: oklch(60% 0.21 25);
+
+  --shadow-soft: 0 1px 2px 0 oklch(0% 0 0 / 0.04), 0 1px 3px 0 oklch(0% 0 0 / 0.06);
+  --shadow-elevated:
+    0 1px 2px 0 oklch(0% 0 0 / 0.04),
+    0 10px 30px -10px oklch(0% 0 0 / 0.18);
+
+  /* Radii scale: sm 6 / md 10 / lg 14 / xl 22 — matches native macOS controls. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 22px;
+
+  /* Typographic scale — 12 / 14 / 16 / 18 / 22 / 28. */
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+
+  /* Motion tokens — 120ms micro / 180ms state / 250ms panel. */
+  --duration-micro: 120ms;
+  --duration-state: 180ms;
+  --duration-panel: 250ms;
+  --ease-out-macos: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-state-macos: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dark {
+  --color-background: oklch(18% 0.02 252);
+  --color-foreground: oklch(96% 0.005 240);
+  --color-muted: oklch(24% 0.02 252);
+  --color-muted-foreground: oklch(70% 0.015 250);
+  --color-surface: oklch(21% 0.02 252);
+  --color-surface-elevated: oklch(24% 0.025 252);
+  --color-border: oklch(30% 0.02 252);
+  --color-border-strong: oklch(38% 0.025 252);
+  --color-ring: oklch(68% 0.16 264);
+
+  --color-primary: oklch(70% 0.17 264);
+  --color-primary-foreground: oklch(18% 0.02 252);
+  --color-accent: oklch(78% 0.13 200);
+  --color-accent-foreground: oklch(18% 0.02 252);
+
+  --color-success: oklch(70% 0.16 152);
+  --color-warning: oklch(82% 0.16 75);
+  --color-danger: oklch(70% 0.21 25);
+}
+
+/* ── Base layer ─────────────────────────────────────────────────────────── */
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family:
+      -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+      "Segoe UI", system-ui, sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+  }
+
+  ::selection {
+    background-color: oklch(from var(--color-primary) l c h / 0.25);
+    color: inherit;
+  }
+
+  /* Tighter, IDE-flavored focus ring. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family:
+      "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo,
+      Monaco, Consolas, "Liberation Mono", monospace;
+  }
+
+  /* Headings inherit a tighter letter-spacing for a native, dense feel. */
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+  h4, h5, h6 {
+    letter-spacing: -0.01em;
+  }
+
+  /* Inline `code` gets a subtle tint, but only when not inside a <pre>. */
+  :not(pre) > code {
+    background-color: oklch(from var(--color-muted) l c h / 0.7);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 0.075em 0.35em;
+    font-size: 0.9em;
+  }
+
+  pre {
+    background-color: var(--color-muted);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+  }
+}
+
+/* ── Skip-to-content link (a11y per §13.6) ─────────────────────────────── */
+
+.skip-to-content {
+  position: absolute;
+  left: 0.5rem;
+  top: 0.5rem;
+  z-index: 100;
+  transform: translateY(-200%);
+  background-color: var(--color-surface);
+  color: var(--color-foreground);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-elevated);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.skip-to-content:focus,
+.skip-to-content:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+/* ── Diff add/remove glyphs (a11y per §13.6 — never color-only) ────────── */
+
+/* react-diff-view emits these classnames on each gutter cell. We add a
+ * leading glyph as a ::before so the change kind is conveyed without color. */
+.diff-gutter-insert::before {
+  content: "+";
+  color: var(--color-success);
+  font-weight: 600;
+  margin-right: 0.15rem;
+}
+.diff-gutter-delete::before {
+  content: "−";
+  color: var(--color-danger);
+  font-weight: 600;
+  margin-right: 0.15rem;
+}
+.diff-gutter-normal::before {
+  content: " ";
+  margin-right: 0.15rem;
+}
+.diff-code-insert,
+.diff-code-delete {
+  font-variant-ligatures: none;
+}
+
+/* Theme the react-diff-view colors so dark mode stays readable (4.5:1+). */
+:root {
+  --diff-gutter-insert-background-color: oklch(from var(--color-success) l c h / 0.18);
+  --diff-gutter-delete-background-color: oklch(from var(--color-danger) l c h / 0.18);
+  --diff-code-insert-background-color: oklch(from var(--color-success) l c h / 0.10);
+  --diff-code-delete-background-color: oklch(from var(--color-danger) l c h / 0.10);
+  --diff-code-insert-edit-background-color: oklch(from var(--color-success) l c h / 0.32);
+  --diff-code-delete-edit-background-color: oklch(from var(--color-danger) l c h / 0.32);
+  --diff-text-color: var(--color-foreground);
+  --diff-selection-background-color: oklch(from var(--color-primary) l c h / 0.28);
+  --diff-omit-gutter-line-color: var(--color-border-strong);
+}
+.dark {
+  --diff-gutter-insert-background-color: oklch(from var(--color-success) l c h / 0.22);
+  --diff-gutter-delete-background-color: oklch(from var(--color-danger) l c h / 0.22);
+  --diff-code-insert-background-color: oklch(from var(--color-success) l c h / 0.14);
+  --diff-code-delete-background-color: oklch(from var(--color-danger) l c h / 0.14);
+}
+
+/* ── Utility shims ─────────────────────────────────────────────────────── */
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* xterm + monaco load their own stylesheets at runtime; their root containers
+ * shouldn't inherit our default ring/background. */
+.xterm-screen,
+.monaco-editor {
+  font-feature-settings: normal;
+}
+
+/* react-resizable-panels' resize handles — 1px line that thickens to 3px on
+ * hover/active. Uses a centered pseudo-element so the active hit area stays
+ * generous while the visible line stays subtle. */
+[data-panel-resize-handle-enabled] {
+  position: relative;
+  background-color: transparent;
+}
+[data-panel-resize-handle-enabled]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background-color: var(--color-border);
+  transition:
+    background-color 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* Vertical handle (between horizontal panels) — render a 1px tall vertical bar. */
+[data-panel-resize-handle-enabled][data-panel-group-direction="horizontal"]::after {
+  width: 1px;
+  height: 100%;
+}
+[data-panel-resize-handle-enabled][data-panel-group-direction="horizontal"]:hover::after,
+[data-panel-resize-handle-enabled][data-panel-group-direction="horizontal"][data-resize-handle-active]::after {
+  width: 3px;
+  background-color: var(--color-primary);
+}
+/* Horizontal handle (between vertical panels). */
+[data-panel-resize-handle-enabled][data-panel-group-direction="vertical"]::after {
+  height: 1px;
+  width: 100%;
+}
+[data-panel-resize-handle-enabled][data-panel-group-direction="vertical"]:hover::after,
+[data-panel-resize-handle-enabled][data-panel-group-direction="vertical"][data-resize-handle-active]::after {
+  height: 3px;
+  background-color: var(--color-primary);
+}
+
+/* Don't double-tint inline code when it lives inside `.prose` — Tailwind
+ * Typography already styles it. */
+.prose :not(pre) > code {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+}

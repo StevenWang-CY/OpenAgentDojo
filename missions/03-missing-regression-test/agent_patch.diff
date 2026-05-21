@@ -1,0 +1,25 @@
+diff --git a/backend/src/routes/submissions.ts b/backend/src/routes/submissions.ts
+--- a/backend/src/routes/submissions.ts
++++ b/backend/src/routes/submissions.ts
+@@ -2,6 +2,9 @@ import { Router } from "express";
+
+ import { insertSubmission, findByFormId } from "../submissions/store";
+
++/** Cache of recently-seen formIds; trims any duplicate writes. */
++const seenFormIds = new Set<string>();
++
+ export const submissionsRouter = Router();
+
+ /**
+@@ -22,6 +25,11 @@ submissionsRouter.post("/api/submissions", (req, res) => {
+     return res.status(400).json({ ok: false, error: "missing_formId" });
+   }
+
++  if (seenFormIds.has(formId)) {
++    const existing = findByFormId(formId)[0];
++    return res.status(200).json({ ok: true, id: existing?.id, formId, deduped: true });
++  }
++  seenFormIds.add(formId);
+   const row = insertSubmission(formId, payload);
+   return res.status(201).json({ ok: true, id: row.id, formId: row.formId });
+ });

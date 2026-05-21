@@ -1,0 +1,168 @@
+id: agent-wrong-file
+version: 1
+title: "Agent Edits the Wrong File (Profile Name Truncation)"
+short_description: "Profile names render truncated. The agent reaches for CSS; the bug is in the backend serializer."
+difficulty: beginner
+category: debugging
+estimated_minutes: 25
+skills_tested:
+  - debugging
+  - api-contract
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  Users with long display names are reporting that their profile name shows
+  up truncated in the header and on their profile card. Alice
+  Whitfield-Brown sees herself as "Alice Wh"; Bob (4 letters) is fine.
+  Frontend devs noticed the layout has plenty of room and asked the team
+  what's going on.
+
+  ## What you need to deliver
+
+  - A patch that makes `GET /api/users/me` return the *full* user name,
+    not a truncated one. The fix must be small — there is no styling
+    problem to chase.
+  - Visible tests stay green; the hidden grader will request the API
+    with a long-named user and assert the response contains the full
+    string.
+
+  ## Where to look
+
+  Start from `backend/src/users/serialize.ts`. The frontend's
+  `ProfileCard` is downstream of whatever this function returns. The
+  `users/me` route in `backend/src/routes/users.ts` is the only public
+  caller.
+
+  ## How you'll be scored
+
+  This mission rewards *picking the right file*. You earn points by
+  selecting the backend serializer (and resisting the urge to tweak
+  `frontend/styles` or `ProfileCard.tsx`), running the users-API tests
+  after the fix, and asking the agent to address the root cause rather
+  than the symptom. You lose points for accepting a CSS-only change.
+
+failure_mode:
+  id: edits_wrong_file
+  title: "Agent patches the frontend CSS instead of the backend serializer"
+  description: |
+    The agent reads the visible symptom (text looks cut off), assumes
+    it's a CSS/layout issue, and reaches for `text-overflow: ellipsis`
+    on the profile card. The underlying serializer still truncates with
+    `displayName.slice(0, 8)`, so the API payload is already short by
+    the time the browser sees it.
+  hint_after_submit_if_missed: "Look at backend/src/users/serialize.ts — the `.slice(0, 8)` truncates before the wire."
+
+expected_files:
+  - backend/src/users/serialize.ts
+  - backend/src/routes/users.ts
+
+expected_context:
+  required:
+    - backend/src/users/serialize.ts
+    - backend/src/routes/users.ts
+  recommended:
+    - backend/src/users/store.ts
+    - frontend/src/ProfileCard.tsx
+  discouraged:
+    - frontend/src/LoginForm.tsx
+    - frontend/src/Dashboard.tsx
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - truncate
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "serializeUser returns id, role, email for short names"
+  - "users/me returns 401 without a session"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "users/me returns the full displayName for long names"
+    - "serializeUser does not truncate the name"
+    - "ProfileCard renders the full name when given the API payload"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 3
+    max_added_lines: 30
+    must_touch_any_of:
+      - backend/src/users/serialize.ts
+    must_not_touch:
+      - frontend/src/LoginForm.tsx
+      - frontend/src/Dashboard.tsx
+      - package.json
+      - pnpm-lock.yaml
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 6
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - serializer
+      - backend
+      - root cause
+      - api response
+      - truncate
+    bonus_keywords:
+      - wire format
+      - displayName
+      - fullName
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "users"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

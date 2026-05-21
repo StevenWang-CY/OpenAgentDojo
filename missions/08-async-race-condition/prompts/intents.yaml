@@ -1,0 +1,45 @@
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - race
+      - duplicate
+      - concurrent
+      - investigate
+      - debug
+
+  test:
+    keywords:
+      - add a test
+      - regression test
+      - gather
+      - concurrent test
+      - cover this
+      - lock this down
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+      - sql
+      - update where
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+      - no lock
+      - database
+
+  unknown: {}

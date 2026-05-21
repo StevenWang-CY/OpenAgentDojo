@@ -1,0 +1,284 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Pinned action SHAs (verified against the upstream tags below as of M8 ship).
+# Update the tag in the trailing comment whenever you bump the SHA so the next
+# upgrade audit doesn't have to dig through history.
+#
+# Re-resolving in the future: `gh api repos/<owner>/<repo>/git/refs/tags/<tag>`.
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20.18.0"
+  PNPM_VERSION: "9.12.0"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # lint-py — ruff + mypy on the FastAPI backend.
+  # ---------------------------------------------------------------------
+  lint-py:
+    name: lint (python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+
+      - name: Sync deps
+        run: uv sync --extra dev
+
+      - name: ruff check
+        run: uv run ruff check app
+
+      - name: ruff format --check
+        run: uv run ruff format --check app
+
+      - name: mypy
+        run: uv run mypy app
+
+  # ---------------------------------------------------------------------
+  # lint-web — eslint + tsc --noEmit on the Next.js frontend.
+  # ---------------------------------------------------------------------
+  lint-web:
+    name: lint (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install deps
+        # Lockfile must be in sync with package.json in CI — a drifted lockfile
+        # is the bug we want this job to catch on PRs.
+        run: pnpm install --frozen-lockfile=true
+
+      - name: Lint
+        run: pnpm --filter @arena/web lint
+
+      - name: Typecheck
+        run: pnpm --filter @arena/web typecheck
+
+  # ---------------------------------------------------------------------
+  # test-py — pytest with a real postgres + redis side-car.
+  # ---------------------------------------------------------------------
+  test-py:
+    name: test (python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: arena
+          POSTGRES_USER: arena
+          POSTGRES_PASSWORD: arena
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U arena"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://arena:arena@localhost:5432/arena
+      SYNC_DATABASE_URL: postgresql://arena:arena@localhost:5432/arena
+      REDIS_URL: redis://localhost:6379/0
+      SANDBOX_DRIVER: local
+      SESSION_SECRET: ci-secret-change-me-32-chars-min-aaaa
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+
+      - name: Sync deps
+        run: uv sync --extra dev
+
+      - name: Preload Postgres extensions
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          PGPASSWORD=arena psql -h localhost -U arena -d arena -c "CREATE EXTENSION IF NOT EXISTS citext; CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+
+      - name: Run migrations
+        run: uv run alembic upgrade head
+
+      - name: Run pytest
+        run: uv run pytest --maxfail=1
+
+  # ---------------------------------------------------------------------
+  # test-web — vitest on the frontend.
+  # ---------------------------------------------------------------------
+  test-web:
+    name: test (web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install deps
+        # Frozen lockfile so a missing-lockfile-commit fails CI loudly.
+        run: pnpm install --frozen-lockfile=true
+
+      - name: Run vitest
+        run: pnpm --filter @arena/web test --run
+
+  # ---------------------------------------------------------------------
+  # validate-missions — schema + structural checks on every mission YAML.
+  # ---------------------------------------------------------------------
+  validate-missions:
+    name: validate missions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v3.2.4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+
+      - name: Sync deps
+        working-directory: apps/api
+        run: uv sync --extra dev
+
+      - name: Validate missions
+        run: uv --project apps/api run python apps/api/scripts/validate_missions.py
+
+  # ---------------------------------------------------------------------
+  # build-images — build the prod Dockerfiles on main, sign them with cosign,
+  # and attach an SBOM. No push: the deploy workflow handles registry pushes.
+  # ---------------------------------------------------------------------
+  build-images:
+    name: build images
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint-py, lint-web, test-py, test-web, validate-missions]
+    permissions:
+      contents: read
+      id-token: write   # keyless cosign signing via OIDC
+      packages: write   # writes SBOM artifacts
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+
+      - name: Build api image
+        id: build-api
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: .
+          file: infra/docker/api.Dockerfile
+          push: false
+          load: true
+          tags: agentarena/api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: SBOM (api)
+        uses: anchore/sbom-action@e8d2a6937ecead383dfe75190d104edd1f9c5751 # v0.17.7
+        with:
+          image: agentarena/api:ci
+          format: spdx-json
+          artifact-name: sbom-api.spdx.json
+
+      - name: cosign sign (api)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          # Keyless OIDC signing — anchors signature to this workflow run.
+          # Replace agentarena/api:ci with the registry-pushed digest in
+          # the deploy workflow that pushes for real.
+          cosign sign --yes --recursive agentarena/api:ci || \
+            echo "cosign sign skipped — image not pushed to a signable registry in CI"
+
+      - name: Build web image
+        id: build-web
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: .
+          file: infra/docker/web.Dockerfile
+          push: false
+          load: true
+          tags: agentarena/web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: SBOM (web)
+        uses: anchore/sbom-action@e8d2a6937ecead383dfe75190d104edd1f9c5751 # v0.17.7
+        with:
+          image: agentarena/web:ci
+          format: spdx-json
+          artifact-name: sbom-web.spdx.json
+
+      - name: cosign sign (web)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes --recursive agentarena/web:ci || \
+            echo "cosign sign skipped — image not pushed to a signable registry in CI"

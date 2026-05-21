@@ -1,0 +1,185 @@
+id: missing-regression-test
+version: 1
+title: "Missing Regression Test (Duplicate Submissions)"
+short_description: "Double-clicks insert duplicate rows. The agent's fix is a Set; the real fix is a durable uniqueness guard plus a test that locks it down."
+difficulty: intermediate
+category: testing
+estimated_minutes: 30
+skills_tested:
+  - test-writing
+  - idempotency
+  - api
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  Support has been escalating tickets where users see "Submission
+  received" twice for the same form — and the data team has confirmed
+  the underlying table has duplicate rows for the same `formId`. The
+  form is rate-limited by a 250ms debounce on the client, but parallel
+  retries (slow network, page reload, server-side re-issue) still get
+  through.
+
+  The relevant endpoint is `POST /api/submissions`. There is no
+  idempotency guard on the server; whoever wrote it assumed the client
+  would never double-fire.
+
+  ## What you need to deliver
+
+  - A patch that makes a second submission with the same `formId` a
+    no-op (or rejection) on the server. The guard must survive a
+    process restart — an in-memory `Set<string>` is not enough.
+  - A regression test that locks the behaviour down. The hidden grader
+    will fire concurrent requests *and* simulate a server restart
+    between submits; you won't see those tests until you submit.
+
+  ## Where to look
+
+  Start from `backend/src/routes/submissions.ts` and
+  `backend/src/submissions/store.ts`. The store is a thin in-process
+  table — pretend it's Postgres for the purposes of the design and
+  reach for the SQL primitive that solves this (UNIQUE INDEX), or use a
+  client-issued idempotency token recorded with each row.
+
+  ## How you'll be scored
+
+  This mission rewards *writing the regression test*. You earn points
+  by adding a test that fires the same `formId` twice and asserts a
+  single row, by selecting the right context, and by asking the agent
+  to harden the fix against parallelism + restarts. You lose points
+  for accepting the agent's process-local `Set` fix or shipping the
+  guard without a covering test.
+
+failure_mode:
+  id: in_memory_idempotency_only
+  title: "Agent adds an in-memory Set instead of a durable uniqueness guard"
+  description: |
+    The agent's patch adds a module-level `Set<string>` of seen
+    `formId`s and short-circuits when it sees a known id. The visible
+    happy-path test passes, but the guard dies with the process and
+    misses concurrent inserts that race past the membership check.
+  hint_after_submit_if_missed: "The agent's `Set` is process-local — restart the server and try again."
+
+expected_files:
+  - backend/src/routes/submissions.ts
+  - backend/src/submissions/store.ts
+  - backend/src/tests/integration/submissions.test.ts
+
+expected_context:
+  required:
+    - backend/src/routes/submissions.ts
+    - backend/src/submissions/store.ts
+  recommended:
+    - backend/src/tests/integration/auth.test.ts
+  discouraged:
+    - frontend/src/LoginForm.tsx
+    - frontend/src/Dashboard.tsx
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - duplicate
+      - idempot
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "submissions route accepts a single submission"
+  - "submissions route rejects missing formId"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "parallel submits with the same formId only create one row"
+    - "submission survives a fresh store (no in-memory leak)"
+    - "GET /api/submissions filters by formId"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 4
+    max_added_lines: 120
+    must_touch_any_of:
+      - backend/src/routes/submissions.ts
+      - backend/src/submissions/store.ts
+    must_not_touch:
+      - frontend/**
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - backend/src/tests/**/*.test.ts
+    keywords_any_of:
+      - duplicate
+      - idempot
+      - unique
+      - formId
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 20
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 5
+
+expected_diff_lines_p50: 24
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - regression test
+      - idempot
+      - duplicate
+      - unique
+      - concurrency
+    bonus_keywords:
+      - restart
+      - process
+      - parallel
+      - constraint
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "submission"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

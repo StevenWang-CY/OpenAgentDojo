@@ -1,0 +1,12 @@
+# Mission 06 — score envelopes.
+#
+# Unmodified replays accept the 100-line useReducer rewrite. diff_scope
+# (max 2 files / 30 added) trips on the added hook file and the line
+# count; forbidden_changes dings on useReducer + new hook file.
+# diff_minimality collapses.
+#
+# Ideal: a 1-line fix in Dashboard.tsx + a covering test.
+acceptance:
+  min_unmodified: 25
+  max_unmodified: 50
+  min_ideal: 90

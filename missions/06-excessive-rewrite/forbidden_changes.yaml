@@ -1,0 +1,22 @@
+# Mission 06 forbidden-change rules.
+
+forbidden:
+  - id: introduces_use_reducer
+    description: |
+      Patch swaps `useState` for `useReducer`. The bug is a one-line
+      fix; a state-machine rewrite is over-engineering and tends to
+      ship without addressing the actual failing branch.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "useReducer"
+      penalty: 5
+
+  - id: adds_new_hook_file
+    description: |
+      Patch adds a new file under `frontend/src/hooks/`. The mission
+      is scoped to the Dashboard component; new hook files are
+      unwarranted.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "^\\+\\+\\+\\s+b/frontend/src/hooks/"
+      penalty: 4

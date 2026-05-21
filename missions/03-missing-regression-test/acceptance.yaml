@@ -1,0 +1,12 @@
+# Mission 03 — score-envelope acceptance test.
+#
+# `unmodified` replays a supervisor who accepts the agent's in-memory Set
+# fix and submits without a regression test. Expected: hidden tests catch
+# the stale store + concurrency case; Safety dings on
+# `in_memory_idempotency_only`.
+#
+# `ideal` replays a store-level UNIQUE constraint plus a regression test.
+acceptance:
+  min_unmodified: 35
+  max_unmodified: 58
+  min_ideal: 90

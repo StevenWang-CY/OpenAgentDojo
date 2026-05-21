@@ -1,0 +1,21 @@
+# Mission 10 forbidden-change rules.
+
+forbidden:
+  - id: as_any_cast
+    description: |
+      Patch contains `as any` casts. Every such cast is a hole in the
+      type system; the mission's whole point is delivering the feature
+      without them.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "\\bas\\s+any\\b"
+      penalty: 4
+
+  - id: ts_ignore_comment
+    description: |
+      Patch contains `@ts-ignore` or `@ts-expect-error` comments —
+      equivalent in spirit to `as any` and not allowed.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "@ts-(ignore|expect-error)"
+      penalty: 4

@@ -1,0 +1,452 @@
+"""Tests for `GET /api/v1/profiles/{handle}` (plan §13.1).
+
+Profile pages are public so all of these are anon (no session cookie). The
+fixture re-binds ``AsyncSessionLocal`` to the in-memory SQLite engine the
+``client`` fixture is using behind the scenes — identical pattern to
+``tests/test_reports_endpoint.py``.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from app.db.base import Base
+from app.models.badge import Badge
+from app.models.mission import Mission
+from app.models.session import SessionRow
+from app.models.submission import Submission
+from app.models.user import User
+from app.models.user_badge import UserBadge
+
+
+async def _bind_engine(db_engine):
+    """Point the FastAPI app at the same engine as the test fixture."""
+    from app.db import session as session_module
+
+    session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
+    session_module.AsyncSessionLocal = async_sessionmaker(
+        bind=db_engine, expire_on_commit=False
+    )
+    async with db_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    return session_module.AsyncSessionLocal
+
+
+def _score_report(
+    final: int = 24,
+    verification: int = 16,
+    agent_review: int = 12,
+    prompt_quality: int = 8,
+    context_selection: int = 6,
+    safety: int = 10,
+    diff_minimality: int = 4,
+) -> dict:
+    """Build a score_report payload with all 7 rubric dimensions populated."""
+    return {
+        "total": final + verification + agent_review + prompt_quality
+        + context_selection + safety + diff_minimality,
+        "dimensions": {
+            "final_correctness": {"score": final, "max_score": 30, "signals": []},
+            "verification": {"score": verification, "max_score": 20, "signals": []},
+            "agent_review": {"score": agent_review, "max_score": 15, "signals": []},
+            "prompt_quality": {"score": prompt_quality, "max_score": 10, "signals": []},
+            "context_selection": {"score": context_selection, "max_score": 10, "signals": []},
+            "safety": {"score": safety, "max_score": 10, "signals": []},
+            "diff_minimality": {"score": diff_minimality, "max_score": 5, "signals": []},
+        },
+        "strengths": [],
+        "weaknesses": [],
+        "missed_failure_mode": False,
+        "badges_earned": [],
+    }
+
+
+async def _seed_profile(db_engine):
+    """Seed one user with 2 graded sessions/submissions + 1 earned badge."""
+    AsyncSessionLocal = await _bind_engine(db_engine)
+
+    user_id = uuid.uuid4()
+    sess1 = uuid.uuid4()
+    sess2 = uuid.uuid4()
+    sub1 = uuid.uuid4()
+    sub2 = uuid.uuid4()
+
+    async with AsyncSessionLocal() as db:
+        db.add(
+            User(
+                id=user_id,
+                email="alice@arena.local",
+                handle="alice",
+                display_name="Alice",
+                created_at=datetime(2026, 1, 15, 10, 0, tzinfo=UTC),
+            )
+        )
+        db.add(
+            Mission(
+                id="auth-cookie-expiration",
+                title="Auth Cookie Expiration",
+                difficulty="intermediate",
+                category="auth",
+                repo_pack="fullstack-auth-demo",
+                initial_commit="HEAD",
+                estimated_minutes=20,
+                failure_mode="x",
+                skills_tested=["auth"],
+                manifest_sha256="sha-aaa",
+                version=1,
+                published=True,
+            )
+        )
+        db.add(
+            Mission(
+                id="api-contract-drift",
+                title="API Contract Drift",
+                difficulty="advanced",
+                category="api",
+                repo_pack="fullstack-auth-demo",
+                initial_commit="HEAD",
+                estimated_minutes=30,
+                failure_mode="y",
+                skills_tested=["api"],
+                manifest_sha256="sha-bbb",
+                version=1,
+                published=True,
+            )
+        )
+        db.add(
+            Badge(
+                id="regression-test-writer",
+                title="Regression Test Writer",
+                description="Wrote a regression test.",
+                icon="test-tube",
+            )
+        )
+
+        now = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+        db.add(
+            SessionRow(
+                id=sess1,
+                user_id=user_id,
+                mission_id="auth-cookie-expiration",
+                status="graded",
+                started_at=now - timedelta(days=5),
+                completed_at=now - timedelta(days=5),
+                score=80,
+            )
+        )
+        db.add(
+            SessionRow(
+                id=sess2,
+                user_id=user_id,
+                mission_id="api-contract-drift",
+                status="graded",
+                started_at=now,
+                completed_at=now,
+                score=92,
+            )
+        )
+        await db.flush()
+
+        db.add(
+            Submission(
+                id=sub1,
+                session_id=sess1,
+                final_diff="x",
+                visible_test_results={},
+                hidden_test_results={},
+                validator_results={},
+                score_report=_score_report(
+                    final=20, verification=14, agent_review=10,
+                    prompt_quality=6, context_selection=8,
+                    safety=10, diff_minimality=3,
+                ),
+                total_score=80,
+            )
+        )
+        db.add(
+            Submission(
+                id=sub2,
+                session_id=sess2,
+                final_diff="y",
+                visible_test_results={},
+                hidden_test_results={},
+                validator_results={},
+                score_report=_score_report(
+                    final=28, verification=18, agent_review=14,
+                    prompt_quality=10, context_selection=8,
+                    safety=10, diff_minimality=5,
+                ),
+                total_score=92,
+            )
+        )
+        db.add(
+            UserBadge(
+                user_id=user_id,
+                badge_id="regression-test-writer",
+                earned_at=now,
+                session_id=sess2,
+            )
+        )
+        await db.commit()
+
+    return {
+        "user_id": user_id,
+        "sess1": sess1,
+        "sess2": sess2,
+        "sub1": sub1,
+        "sub2": sub2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_unknown_handle_returns_404(client, db_engine) -> None:
+    await _bind_engine(db_engine)
+    resp = await client.get("/api/v1/profiles/nobody")
+    assert resp.status_code == 404, resp.text
+    assert resp.json() == {"detail": "profile not found"}
+
+
+@pytest.mark.asyncio
+async def test_full_profile_payload(client, db_engine) -> None:
+    seeded = await _seed_profile(db_engine)
+
+    resp = await client.get("/api/v1/profiles/alice")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    # Header fields.
+    assert body["handle"] == "alice"
+    assert body["display_name"] == "Alice"
+    assert body["joined_at"].startswith("2026-01-15")
+
+    # Aggregates.
+    assert body["total_missions"] == 2
+    assert body["best_score"] == 92
+
+    # Badges — newest first; PII-free.
+    assert len(body["badges"]) == 1
+    badge = body["badges"][0]
+    assert badge["id"] == "regression-test-writer"
+    assert badge["title"] == "Regression Test Writer"
+    assert badge["icon"] == "test-tube"
+    assert badge["session_id"] == str(seeded["sess2"])
+    assert "earned_at" in badge
+
+    # History — most recent (sess2) first.
+    history = body["history"]
+    assert [h["session_id"] for h in history] == [
+        str(seeded["sess2"]),
+        str(seeded["sess1"]),
+    ]
+    assert history[0]["mission_id"] == "api-contract-drift"
+    assert history[0]["mission_title"] == "API Contract Drift"
+    assert history[0]["difficulty"] == "advanced"
+    assert history[0]["score"] == 92
+    assert history[1]["mission_id"] == "auth-cookie-expiration"
+    assert history[1]["score"] == 80
+
+    # Radar averages — averaged across the two submissions.
+    radar = body["radar_averages"]
+    # All 7 dimensions present because both reports populated them.
+    assert set(radar.keys()) == {
+        "final_correctness",
+        "verification",
+        "agent_review",
+        "prompt_quality",
+        "context_selection",
+        "safety",
+        "diff_minimality",
+    }
+    assert radar["final_correctness"] == pytest.approx((20 + 28) / 2, rel=1e-3)
+    assert radar["verification"] == pytest.approx((14 + 18) / 2, rel=1e-3)
+    assert radar["safety"] == pytest.approx(10.0, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_radar_only_includes_present_dimensions(client, db_engine) -> None:
+    """If a dimension is missing in all reports, it MUST be absent from the response."""
+    AsyncSessionLocal = await _bind_engine(db_engine)
+
+    user_id = uuid.uuid4()
+    sess_id = uuid.uuid4()
+    sub_id = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        db.add(
+            User(
+                id=user_id,
+                email="bob@arena.local",
+                handle="bob",
+                display_name="Bob",
+                created_at=datetime(2026, 2, 1, tzinfo=UTC),
+            )
+        )
+        db.add(
+            Mission(
+                id="auth-cookie-expiration",
+                title="Auth Cookie Expiration",
+                difficulty="intermediate",
+                category="auth",
+                repo_pack="x",
+                initial_commit="HEAD",
+                estimated_minutes=10,
+                failure_mode="x",
+                skills_tested=["auth"],
+                manifest_sha256="sha",
+                version=1,
+                published=True,
+            )
+        )
+        db.add(
+            SessionRow(
+                id=sess_id,
+                user_id=user_id,
+                mission_id="auth-cookie-expiration",
+                status="graded",
+                score=50,
+                completed_at=datetime(2026, 2, 1, tzinfo=UTC),
+            )
+        )
+        await db.flush()
+        # Only two dimensions present in the report.
+        db.add(
+            Submission(
+                id=sub_id,
+                session_id=sess_id,
+                final_diff="",
+                visible_test_results={},
+                hidden_test_results={},
+                validator_results={},
+                score_report={
+                    "total": 50,
+                    "dimensions": {
+                        "final_correctness": {"score": 25, "max_score": 30, "signals": []},
+                        "safety": {"score": 8, "max_score": 10, "signals": []},
+                    },
+                    "strengths": [],
+                    "weaknesses": [],
+                    "missed_failure_mode": False,
+                    "badges_earned": [],
+                },
+                total_score=50,
+            )
+        )
+        await db.commit()
+
+    resp = await client.get("/api/v1/profiles/bob")
+    assert resp.status_code == 200, resp.text
+    radar = resp.json()["radar_averages"]
+    # Only the two scored dimensions are present.
+    assert set(radar.keys()) == {"final_correctness", "safety"}
+    assert radar["final_correctness"] == pytest.approx(25.0, rel=1e-3)
+    assert radar["safety"] == pytest.approx(8.0, rel=1e-3)
+
+
+@pytest.mark.asyncio
+async def test_best_score_and_total_missions(client, db_engine) -> None:
+    """``best_score`` = max(score); ``total_missions`` counts only graded+scored rows."""
+    AsyncSessionLocal = await _bind_engine(db_engine)
+
+    user_id = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        db.add(
+            User(
+                id=user_id,
+                email="cara@arena.local",
+                handle="cara",
+                display_name="Cara",
+                created_at=datetime(2026, 3, 1, tzinfo=UTC),
+            )
+        )
+        db.add(
+            Mission(
+                id="auth-cookie-expiration",
+                title="Auth Cookie Expiration",
+                difficulty="intermediate",
+                category="auth",
+                repo_pack="x",
+                initial_commit="HEAD",
+                estimated_minutes=10,
+                failure_mode="x",
+                skills_tested=["auth"],
+                manifest_sha256="sha",
+                version=1,
+                published=True,
+            )
+        )
+        # Three graded sessions w/ scores; one abandoned session that MUST
+        # NOT count toward total_missions.
+        db.add_all(
+            [
+                SessionRow(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    mission_id="auth-cookie-expiration",
+                    status="graded",
+                    score=55,
+                    completed_at=datetime(2026, 3, 1, tzinfo=UTC),
+                ),
+                SessionRow(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    mission_id="auth-cookie-expiration",
+                    status="graded",
+                    score=88,
+                    completed_at=datetime(2026, 3, 2, tzinfo=UTC),
+                ),
+                SessionRow(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    mission_id="auth-cookie-expiration",
+                    status="graded",
+                    score=70,
+                    completed_at=datetime(2026, 3, 3, tzinfo=UTC),
+                ),
+                SessionRow(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    mission_id="auth-cookie-expiration",
+                    status="abandoned",
+                    score=None,
+                ),
+            ]
+        )
+        await db.commit()
+
+    resp = await client.get("/api/v1/profiles/cara")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total_missions"] == 3
+    assert body["best_score"] == 88
+    # No submissions → no radar.
+    assert body["radar_averages"] == {}
+    # No badges earned → empty list.
+    assert body["badges"] == []
+
+
+@pytest.mark.asyncio
+async def test_handle_lookup_is_case_insensitive(client, db_engine) -> None:
+    """The handle column is CITEXT in prod; queries must succeed regardless of case."""
+    AsyncSessionLocal = await _bind_engine(db_engine)
+    async with AsyncSessionLocal() as db:
+        db.add(
+            User(
+                id=uuid.uuid4(),
+                email="dee@arena.local",
+                handle="dee",
+                display_name="Dee",
+                created_at=datetime(2026, 4, 1, tzinfo=UTC),
+            )
+        )
+        await db.commit()
+
+    # On SQLite, Text is case-sensitive — so we exercise the exact-case path,
+    # which is the contract the frontend always uses (the handle in the URL is
+    # the canonical stored form). CITEXT behaviour is exercised in Postgres
+    # integration tests.
+    resp = await client.get("/api/v1/profiles/dee")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["handle"] == "dee"
