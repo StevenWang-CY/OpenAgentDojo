@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -9,18 +11,57 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CommandCategory = Literal["test", "typecheck", "lint", "manual", "other"]
 
+# Hard caps on user-supplied workspace inputs. These are the schema-level
+# floors; middleware tightens further on specific routes.
+MAX_FILE_PATH = 512
+MAX_FILE_CONTENT_BYTES = 5_000_000  # 5 MiB cap to bound API memory + sandbox tmpfs
+MAX_COMMAND_LENGTH = 8192
+MAX_STDIO_BYTES = 65_536  # truncate command stdio in the API response
+
+# Workspace paths must be relative to /workspace and free of `..` traversal.
+_WORKSPACE_PATH_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
+
+
+def _validate_workspace_path(value: str) -> str:
+    """Reject absolute paths, traversal, and unusual characters."""
+    if not value or value.isspace():
+        raise ValueError("path must not be empty")
+    if "\x00" in value:
+        raise ValueError("path must not contain NUL bytes")
+    if value.startswith("/") or value.startswith("\\"):
+        raise ValueError("path must be workspace-relative, not absolute")
+    pure = PurePosixPath(value)
+    parts = pure.parts
+    if any(p == ".." for p in parts):
+        raise ValueError("path must not contain '..' segments")
+    if not _WORKSPACE_PATH_RE.match(value):
+        raise ValueError(
+            "path contains unsupported characters; allowed: letters, digits, '_', '.', '/', '-'"
+        )
+    return value
+
 
 class FileWriteBody(BaseModel):
-    path: str
-    content: str
+    path: str = Field(min_length=1, max_length=MAX_FILE_PATH)
+    content: str = Field(max_length=MAX_FILE_CONTENT_BYTES)
+
+    @field_validator("path")
+    @classmethod
+    def _check_path(cls, value: str) -> str:
+        return _validate_workspace_path(value)
 
 
 class FileRevertBody(BaseModel):
-    path: str
+    path: str = Field(min_length=1, max_length=MAX_FILE_PATH)
+
+    @field_validator("path")
+    @classmethod
+    def _check_path(cls, value: str) -> str:
+        return _validate_workspace_path(value)
 
 
 class CommandBody(BaseModel):
-    command: str
+    command: str = Field(min_length=1, max_length=MAX_COMMAND_LENGTH)
     category: CommandCategory = "other"
 
 
@@ -32,9 +73,9 @@ class FileContent(BaseModel):
 
     The frontend type mirror lives in
     ``packages/shared-types/src/api.ts`` and is generated from this model
-    via ``openapi-typescript``. The binary-safe ``base64`` encoding is
-    declared up-front so future binary reads do not require a schema
-    migration.
+    via ``openapi-typescript``. ``encoding`` reports whether the file was
+    safe to decode as UTF-8 (``"utf-8"``) or had to be returned as
+    base64-encoded bytes for binary content (``"base64"``).
     """
 
     path: str = ""
@@ -48,7 +89,12 @@ class UnifiedDiff(BaseModel):
 
 
 class CommandRunResponse(BaseModel):
-    """Response returned after running a command in the sandbox."""
+    """Response returned after running a command in the sandbox.
+
+    ``stdout``/``stderr`` are truncated by the route handler to
+    :data:`MAX_STDIO_BYTES` and ``stdio_truncated`` is set when the tail was
+    trimmed so the FE can show a hint.
+    """
 
     id: str
     session_id: str
@@ -56,9 +102,10 @@ class CommandRunResponse(BaseModel):
     category: CommandCategory = "other"
     exit_code: int | None = None
     duration_ms: int | None = None
-    created_at: str = ""
+    created_at: datetime | None = None
     stdout: str = ""
     stderr: str = ""
+    stdio_truncated: bool = False
 
 
 class SupervisionEventRead(BaseModel):
@@ -69,22 +116,13 @@ class SupervisionEventRead(BaseModel):
     id: int
     session_id: str = Field(..., json_schema_extra={"format": "uuid"})
     event_type: str
-    payload: dict = Field(default_factory=dict)
-    occurred_at: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: datetime
 
     @field_validator("session_id", mode="before")
     @classmethod
     def _stringify_session_id(cls, value: Any) -> Any:
         return str(value) if value is not None else value
-
-    @field_validator("occurred_at", mode="before")
-    @classmethod
-    def _stringify_occurred_at(cls, value: Any) -> Any:
-        from datetime import datetime as _dt
-
-        if isinstance(value, _dt):
-            return value.isoformat()
-        return value
 
 
 class FileTreeNodeSchema(BaseModel):

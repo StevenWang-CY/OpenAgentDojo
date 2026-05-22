@@ -37,6 +37,8 @@ from app.schemas.mission import MissionDetail
 from app.schemas.session import ContextSelection, SessionCreate, SessionDetail, SessionRead
 from app.schemas.submission import SubmissionRead
 from app.schemas.workspace import (
+    MAX_FILE_PATH,
+    MAX_STDIO_BYTES,
     CommandBody,
     CommandRunResponse,
     FileContent,
@@ -45,6 +47,7 @@ from app.schemas.workspace import (
     FileWriteBody,
     SupervisionEventRead,
     UnifiedDiff,
+    _validate_workspace_path,
 )
 from app.sessions.events import EventEmitter, get_redis
 from app.sessions.service import (
@@ -132,12 +135,18 @@ async def post_session(
         raise HTTPException(status_code=404, detail=f"mission not found: {exc}") from exc
     except ActiveSessionExistsError as exc:
         # §21 — per-user concurrency cap (MVP: 1 live session per user).
+        # FastAPI's default error envelope wraps ``detail`` once, so we keep
+        # ``detail`` a plain string (the FE parser reads ``body.detail`` as
+        # text) and surface the actionable metadata via response headers
+        # (``X-Code`` + ``X-Active-Session-Id``). This avoids the
+        # double-nested-detail trap that made the FE fall back to the
+        # generic ``HTTP 409`` message.
         raise HTTPException(
             status_code=409,
-            detail={
-                "detail": "an active session already exists",
-                "code": "active_session_exists",
-                "active_session_id": str(exc.active_session_id),
+            detail="an active session already exists",
+            headers={
+                "X-Code": "active_session_exists",
+                "X-Active-Session-Id": str(exc.active_session_id),
             },
         ) from exc
 
@@ -252,23 +261,46 @@ async def get_tree(
 async def get_file(
     session_id: uuid.UUID,
     request: Request,
-    path: str = Query(..., description="Absolute or workspace-relative path to the file"),
+    path: str = Query(
+        ...,
+        description="Workspace-relative path to the file",
+        min_length=1,
+        max_length=MAX_FILE_PATH,
+    ),
     user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> FileContent:
     await _require_owned_session(db, session_id, user)
 
+    try:
+        safe_path = _validate_workspace_path(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     handle = _get_sandbox_handle(request, session_id)
     pool = request.app.state.sandbox_pool
     try:
-        raw: bytes = await pool.driver.read_file(handle, path)
+        raw: bytes = await pool.driver.read_file(handle, safe_path)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"file not found: {path}") from exc
+        raise HTTPException(status_code=404, detail="file not found") from exc
     except Exception as exc:
-        logger.warning("read_file failed for {}: {}", path, exc)
-        raise HTTPException(status_code=500, detail=f"could not read file: {exc}") from exc
+        logger.opt(exception=True).warning("read_file failed for {}: {}", safe_path, exc)
+        raise HTTPException(status_code=500, detail="could not read file") from exc
 
-    return FileContent(path=path, content=raw.decode("utf-8", errors="replace"))
+    # Honour the schema's binary-safe contract — files that decode cleanly
+    # as UTF-8 ride the fast path; everything else returns base64 so the FE
+    # can decide what to do without seeing replacement glyphs.
+    try:
+        text = raw.decode("utf-8")
+        return FileContent(path=safe_path, content=text, encoding="utf-8")
+    except UnicodeDecodeError:
+        import base64
+
+        return FileContent(
+            path=safe_path,
+            content=base64.b64encode(raw).decode("ascii"),
+            encoding="base64",
+        )
 
 
 @router.post("/{session_id}/files", status_code=204, summary="Write a file in the sandbox")
@@ -285,6 +317,9 @@ async def post_file(
     handle = _get_sandbox_handle(request, session_id)
     pool = request.app.state.sandbox_pool
 
+    # body.path has already passed the workspace-path validator at the
+    # schema layer (FileWriteBody._check_path). No second validation needed.
+
     # Read the old content to compute line diff stats. A missing file is
     # the expected case for new-file creation; any other failure is logged
     # but doesn't block the write.
@@ -295,7 +330,9 @@ async def post_file(
     except FileNotFoundError:
         pass
     except Exception as exc:
-        logger.warning("read_file for diff stats failed for {}: {}", body.path, exc)
+        logger.opt(exception=True).warning(
+            "read_file for diff stats failed for {}: {}", body.path, exc
+        )
 
     new_content = body.content
     old_lines = _count_lines(old_content)
@@ -355,10 +392,13 @@ async def post_revert(
         cwd="/workspace",
     )
     if result.exit_code != 0:
-        raise HTTPException(
-            status_code=500,
-            detail=f"git checkout failed: {result.stderr[:300]}",
+        logger.warning(
+            "git checkout failed for {} (exit={}): stderr={!r}",
+            body.path,
+            result.exit_code,
+            result.stderr[:300],
         )
+        raise HTTPException(status_code=500, detail="git checkout failed")
 
     redis = await get_redis()
     emitter = EventEmitter(db=db, redis_client=redis)
@@ -431,6 +471,15 @@ async def post_command(
         },
     )
 
+    # Truncate large stdio at the API boundary so a single noisy run can't
+    # blow up the response and cripple the FE state store.
+    truncated_stdout = result.stdout[-MAX_STDIO_BYTES:] if result.stdout else ""
+    truncated_stderr = result.stderr[-MAX_STDIO_BYTES:] if result.stderr else ""
+    stdio_truncated = (
+        len(result.stdout or "") > MAX_STDIO_BYTES
+        or len(result.stderr or "") > MAX_STDIO_BYTES
+    )
+
     return CommandRunResponse(
         id=str(cmd_row.id),
         session_id=str(session_id),
@@ -438,9 +487,10 @@ async def post_command(
         category=body.category,
         exit_code=result.exit_code,
         duration_ms=result.duration_ms,
-        created_at=cmd_row.created_at.isoformat(),
-        stdout=result.stdout,
-        stderr=result.stderr,
+        created_at=cmd_row.created_at,
+        stdout=truncated_stdout,
+        stderr=truncated_stderr,
+        stdio_truncated=stdio_truncated,
     )
 
 
@@ -527,7 +577,7 @@ async def get_timeline(
     stmt = (
         select(SupervisionEvent)
         .where(SupervisionEvent.session_id == session_id)
-        .order_by(SupervisionEvent.occurred_at)
+        .order_by(SupervisionEvent.occurred_at, SupervisionEvent.id)
     )
     events = list((await db.execute(stmt)).scalars().all())
     return [SupervisionEventRead.model_validate(ev) for ev in events]
@@ -541,7 +591,6 @@ async def get_timeline(
 @router.post(
     "/{session_id}/submit",
     response_model=SubmissionRead,
-    status_code=202,
     summary="Submit a session for grading",
 )
 async def post_submit(
@@ -552,7 +601,8 @@ async def post_submit(
 ) -> SubmissionRead:
     """Trigger the grading pipeline for a session.
 
-    Returns 202 Accepted with the ``SubmissionRead`` once grading completes.
+    Returns 200 with the final ``SubmissionRead`` once grading completes
+    (the call blocks until the runner returns; see ``sessions/submit.py``).
     """
     request.state.user = user
     row = await _require_owned_session(db, session_id, user)

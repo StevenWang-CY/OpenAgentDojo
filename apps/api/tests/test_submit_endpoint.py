@@ -143,7 +143,9 @@ async def test_submit_endpoint_round_trip(client, db_engine, monkeypatch) -> Non
         f"/api/v1/sessions/{session_id}/submit",
         headers=headers,
     )
-    assert resp.status_code == 202, resp.text
+    # Submit returns 200 with the final SubmissionRead synchronously — the
+    # previous 202 lied about asynchrony since the call blocks on the grader.
+    assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["session_id"] == str(session_id)
     assert body["total_score"] >= 0

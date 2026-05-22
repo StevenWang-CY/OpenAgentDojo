@@ -473,9 +473,16 @@ async def test_runner_validator_exception_is_fail_soft(monkeypatch, session_fact
             manifest_folder=folder,
         )
 
-    # Each broken validator surfaces a passed=False ValidatorResult.
-    for vname, vres in result.validator_results.items():
-        if vname == "tests_pass":
+    # Each broken validator surfaces a passed=False ValidatorResult. The
+    # runner now emits validator_results as a list of dicts (one per
+    # validator) so the FE narrowed type stays honest; switch over.
+    validator_iter = (
+        result.validator_results
+        if isinstance(result.validator_results, list)
+        else [{"kind": k, **v} for k, v in result.validator_results.items()]
+    )
+    for vres in validator_iter:
+        if vres.get("kind") == "tests_pass":
             continue
         assert vres["passed"] is False
         assert any("validator error" in v for v in vres["violations"])
@@ -555,12 +562,24 @@ async def test_submission_graded_breakdown_always_has_seven_dimensions(
     def _stub_compute_score(
         *, diff, events, validator_results, test_results, manifest, agent_turns
     ):
+        from app.grading.dimensions import DIMENSION_MAX
+
         partial: dict[str, DimensionScore] = {
-            "final_correctness": DimensionScore(score=20, max_score=30, signals=["stub"]),
-            "verification": DimensionScore(score=12, max_score=20, signals=["stub"]),
-            "agent_review": DimensionScore(score=10, max_score=15, signals=["stub"]),
-            "context_selection": DimensionScore(score=6, max_score=10, signals=["stub"]),
-            "diff_minimality": DimensionScore(score=4, max_score=5, signals=["stub"]),
+            "final_correctness": DimensionScore(
+                score=20, max_score=DIMENSION_MAX["final_correctness"], signals=["stub"]
+            ),
+            "verification": DimensionScore(
+                score=12, max_score=DIMENSION_MAX["verification"], signals=["stub"]
+            ),
+            "agent_review": DimensionScore(
+                score=10, max_score=DIMENSION_MAX["agent_review"], signals=["stub"]
+            ),
+            "context_selection": DimensionScore(
+                score=6, max_score=DIMENSION_MAX["context_selection"], signals=["stub"]
+            ),
+            "diff_minimality": DimensionScore(
+                score=4, max_score=DIMENSION_MAX["diff_minimality"], signals=["stub"]
+            ),
         }
         return ScoreReport(
             total=52,

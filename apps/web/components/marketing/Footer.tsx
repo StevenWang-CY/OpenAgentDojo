@@ -48,7 +48,7 @@ export function MarketingFooter() {
 
         <FooterColumn title="Project">
           <FooterLink
-            href="https://github.com/wangchuyue/realrepo-arena"
+            href="https://github.com/StevenWang-CY/OpenAgentDojo"
             external
           >
             <Github className="size-3.5" aria-hidden /> GitHub

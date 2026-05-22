@@ -62,3 +62,13 @@ class SandboxDriver(ABC):
 
     @abstractmethod
     async def destroy(self, handle: SandboxHandle) -> None: ...
+
+    async def ping(self) -> bool:
+        """Lightweight readiness probe — used by ``/healthz/ready``.
+
+        Drivers override to verify their underlying runtime is reachable
+        (e.g. the Docker daemon). The default returns ``True`` so a driver
+        that has nothing to probe (the local subprocess driver) stays ready
+        without each subclass having to repeat the boilerplate.
+        """
+        return True

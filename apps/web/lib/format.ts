@@ -61,3 +61,14 @@ export function formatRelative(iso: string | Date, now: Date = new Date()): stri
   if (day < 7) return `${day}d ago`;
   return formatDate(d);
 }
+
+/**
+ * "2026-05-22 13:07:42 UTC" — operational format used by /status and the
+ * timeline so different parts of the app render dates in the same form.
+ * Always renders in UTC (no locale variability).
+ */
+export function formatUtcDateTime(iso: string | Date): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.toISOString().replace("T", " ").replace(/\.\d+Z$/, "")} UTC`;
+}

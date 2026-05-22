@@ -1,19 +1,10 @@
-"""Supervision event schema."""
+"""Supervision event schema.
+
+The legacy ``SupervisionEventOut`` model was removed: no router referenced
+it as a ``response_model`` (the timeline route returns
+``app.schemas.workspace.SupervisionEventRead`` and the WS path serialises
+``SupervisionEvent`` rows directly as ``dict``). Importers should switch to
+``SupervisionEventRead`` from ``app.schemas.workspace``.
+"""
 
 from __future__ import annotations
-
-import uuid
-from datetime import datetime
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class SupervisionEventOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    session_id: uuid.UUID
-    event_type: str
-    payload: dict[str, Any] = Field(default_factory=dict)
-    occurred_at: datetime

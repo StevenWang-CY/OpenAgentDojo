@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/Card";
 import { env } from "@/lib/env";
+import { formatUtcDateTime } from "@/lib/format";
 
 export const metadata: Metadata = {
   title: "Status — OpenAgentDojo",
@@ -133,14 +134,8 @@ function componentLabel(name: string): string {
 
 function formatChecked(iso?: string): string | null {
   if (!iso) return null;
-  try {
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return null;
-    // SSR-safe: explicit UTC formatting, no Intl locale assumptions.
-    return `${date.toISOString().replace("T", " ").replace(/\.\d+Z$/, "")} UTC`;
-  } catch {
-    return null;
-  }
+  const formatted = formatUtcDateTime(iso);
+  return formatted === "—" ? null : formatted;
 }
 
 function formatUptime(seconds?: number): string | null {
@@ -248,7 +243,7 @@ function OverallAndComponents({
             <div>
               <dt className="uppercase tracking-wide text-[10px]">Checked</dt>
               <dd className="text-[var(--color-foreground)]">
-                {renderedAt.toISOString().replace("T", " ").replace(/\.\d+Z$/, "")} UTC
+                {formatUtcDateTime(renderedAt)}
               </dd>
             </div>
           </dl>

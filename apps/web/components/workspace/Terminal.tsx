@@ -73,7 +73,7 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
       if (pendingBytes + size > PENDING_BUFFER_BYTES) {
         if (!warnedBufferFull) {
           warnedBufferFull = true;
-          toast.warning("Buffer full, releasing keys");
+          toast.warning("Reconnecting — recent keystrokes dropped");
         }
         return;
       }

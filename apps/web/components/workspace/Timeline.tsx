@@ -77,6 +77,15 @@ function render(event: SupervisionEvent): RenderedEvent {
         label: "Session abandoned",
         detail: event.payload.reason ?? "Session reaped",
       };
+    case "session.provision_failed":
+      return {
+        icon: XCircle,
+        tone: "danger",
+        label: "Provision failed",
+        detail: event.payload.detail
+          ? `${event.payload.reason}: ${event.payload.detail}`
+          : event.payload.reason,
+      };
     case "context.selected":
       return {
         icon: ListChecks,

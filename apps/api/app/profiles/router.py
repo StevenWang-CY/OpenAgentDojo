@@ -28,6 +28,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.grading.dimensions import DIMENSION_NAMES
 from app.models.badge import Badge
 from app.models.mission import Mission
 from app.models.session import SessionRow
@@ -43,16 +44,10 @@ from app.schemas.profile import (
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
-# Plan §11.1 — the seven rubric dimensions.
-_RUBRIC_DIMENSIONS: tuple[str, ...] = (
-    "final_correctness",
-    "verification",
-    "agent_review",
-    "prompt_quality",
-    "context_selection",
-    "safety",
-    "diff_minimality",
-)
+# Plan §11.1 — the seven rubric dimensions. Sourced from the single
+# ``app.grading.dimensions`` table so the radar aggregator can never drift
+# from the scoring engine's actual outputs.
+_RUBRIC_DIMENSIONS: tuple[str, ...] = DIMENSION_NAMES
 
 # Per-profile history cap. Profile pages render a single table so a large
 # cap is wasted bytes; the constant is exported for the test suite.

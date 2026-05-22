@@ -26,16 +26,24 @@ def _score(
     diff_min: int = 0,
     correctness: int = 0,
 ) -> ScoreReport:
+    from app.grading.dimensions import DIMENSION_MAX
+
     return ScoreReport(
         total=0,
         dimensions={
-            "final_correctness": DimensionScore(score=correctness, max_score=30),
-            "verification": DimensionScore(score=0, max_score=20),
-            "agent_review": DimensionScore(score=0, max_score=15),
-            "prompt_quality": DimensionScore(score=0, max_score=10),
-            "context_selection": DimensionScore(score=0, max_score=10),
-            "safety": DimensionScore(score=0, max_score=10),
-            "diff_minimality": DimensionScore(score=diff_min, max_score=5),
+            "final_correctness": DimensionScore(
+                score=correctness, max_score=DIMENSION_MAX["final_correctness"]
+            ),
+            "verification": DimensionScore(score=0, max_score=DIMENSION_MAX["verification"]),
+            "agent_review": DimensionScore(score=0, max_score=DIMENSION_MAX["agent_review"]),
+            "prompt_quality": DimensionScore(score=0, max_score=DIMENSION_MAX["prompt_quality"]),
+            "context_selection": DimensionScore(
+                score=0, max_score=DIMENSION_MAX["context_selection"]
+            ),
+            "safety": DimensionScore(score=0, max_score=DIMENSION_MAX["safety"]),
+            "diff_minimality": DimensionScore(
+                score=diff_min, max_score=DIMENSION_MAX["diff_minimality"]
+            ),
         },
         strengths=[],
         weaknesses=[],
@@ -161,8 +169,11 @@ def test_agent_skeptic_requires_corrective_prompt_diff_and_edit() -> None:
 
 
 def test_minimal_diff_requires_full_minimality_and_correctness() -> None:
+    from app.grading.dimensions import DIMENSION_MAX
+
+    full_minimal = DIMENSION_MAX["diff_minimality"]
     out = compute_badges(
-        score_report=_score(diff_min=5, correctness=24),
+        score_report=_score(diff_min=full_minimal, correctness=24),
         validator_results=[],
         test_results=[],
         events=[],
@@ -171,7 +182,7 @@ def test_minimal_diff_requires_full_minimality_and_correctness() -> None:
     assert MINIMAL_DIFF in out
 
     out_low = compute_badges(
-        score_report=_score(diff_min=5, correctness=20),
+        score_report=_score(diff_min=full_minimal, correctness=20),
         validator_results=[],
         test_results=[],
         events=[],

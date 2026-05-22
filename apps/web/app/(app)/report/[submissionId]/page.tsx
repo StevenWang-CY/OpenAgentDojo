@@ -58,14 +58,13 @@ export async function generateMetadata({
       : "Process-driven supervision grading across 7 rubric dimensions.";
 
   const title = `Score ${score}/100 · OpenAgentDojo`;
-  // Preserve the share token on the OG card route so the edge runtime fetch
-  // succeeds for unauthenticated viewers loading the public share link.
-  const ogImageUrl = new URL(
-    `/report/${encodeURIComponent(submissionId)}/opengraph-image`,
-    "https://placeholder.invalid"
-  );
-  if (share) ogImageUrl.searchParams.set("share", share);
-  const ogImage = `${ogImageUrl.pathname}${ogImageUrl.search}`;
+  // Build the OG image URL as a plain pathname (+ optional query). Next.js
+  // resolves it against ``metadataBase`` (set in app/layout.tsx → env.appUrl)
+  // when serialising the metadata for crawlers, so we don't need a
+  // placeholder host — using one risked breaking previews on a misconfigured
+  // crawler that didn't honour metadataBase.
+  const sharePart = share ? `?share=${encodeURIComponent(share)}` : "";
+  const ogImage = `/report/${encodeURIComponent(submissionId)}/opengraph-image${sharePart}`;
 
   return {
     title,

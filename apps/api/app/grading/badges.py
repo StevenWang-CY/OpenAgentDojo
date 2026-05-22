@@ -133,11 +133,15 @@ def compute_badges(
         earned.append(AGENT_SKEPTIC)
 
     # ---- minimal-diff -------------------------------------------------
+    # Compare against ``max_score`` (not a literal 5) so the badge tracks
+    # whatever weight the rubric assigns ``diff_minimality`` — the rubric
+    # rebalanced from max=5 to max=10, and pinning the literal silently
+    # broke the badge until ``DimensionScore.score`` happened to be 5.
     minimality = dims.get("diff_minimality")
     correctness = dims.get("final_correctness")
     if (
         minimality is not None
-        and minimality.score == 5
+        and minimality.score >= minimality.max_score
         and correctness is not None
         and correctness.score >= 24
     ):

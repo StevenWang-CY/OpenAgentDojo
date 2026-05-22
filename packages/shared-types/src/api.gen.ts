@@ -106,23 +106,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/me': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Return the authenticated user (top-level alias) */
-    get: operations['get_me_alias_api_v1_me_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/api/v1/missions': {
     parameters: {
       query?: never;
@@ -401,7 +384,16 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Apply the agent patch for a specific turn */
+    /**
+     * Apply the agent patch for a specific turn (no request body)
+     * @description Apply the agent-proposed patch for ``turn_id``.
+     *
+     *     Takes no request body — the (turn_id, session_id) tuple in the URL is
+     *     the only input. The previous ``ApplyPatchBody`` placeholder model was
+     *     removed (P1-B9): nothing consumed it and publishing an empty schema as
+     *     part of the public OpenAPI surface led FE generators to mint a useless
+     *     type alias.
+     */
     post: operations['post_apply_patch_api_v1_sessions__session_id__patches__turn_id__apply_post'];
     delete?: never;
     options?: never;
@@ -462,7 +454,8 @@ export interface paths {
      * Submit a session for grading
      * @description Trigger the grading pipeline for a session.
      *
-     *     Returns 202 Accepted with the ``SubmissionRead`` once grading completes.
+     *     Returns 200 with the final ``SubmissionRead`` once grading completes
+     *     (the call blocks until the runner returns; see ``sessions/submit.py``).
      */
     post: operations['post_submit_api_v1_sessions__session_id__submit_post'];
     delete?: never;
@@ -573,12 +566,12 @@ export interface paths {
      * Readiness probe
      * @description Full readiness check with bounded per-probe timeouts.
      *
-     *     Returns HTTP 200 when both the DB and Redis are reachable. When either
-     *     fails we return the same JSON body with HTTP 503 so load balancers and
-     *     Kubernetes can de-list the pod. ``s3_ok`` is treated as best-effort and
-     *     does NOT force 503 — object storage is not on the request hot-path for
-     *     every endpoint, and a transient S3 hiccup shouldn't take traffic away
-     *     from the API.
+     *     Returns HTTP 200 when the DB, Redis, and sandbox runtime are reachable.
+     *     When any of those three fail we return the same JSON body with HTTP 503
+     *     so load balancers and Kubernetes can de-list the pod. ``s3_ok`` is
+     *     treated as best-effort and does NOT force 503 — object storage is not on
+     *     the request hot-path for every endpoint, and a transient S3 hiccup
+     *     shouldn't take traffic away from the API.
      */
     get: operations['healthz_ready_healthz_ready_get'];
     put?: never;
@@ -647,19 +640,6 @@ export interface components {
       /** User Prompt */
       user_prompt: string;
     };
-    /**
-     * ApplyPatchBody
-     * @description POST body for ``/sessions/{id}/patches/{turn_id}/apply``.
-     *
-     *     Currently empty; reserved so the endpoint can accept driver overrides
-     *     (e.g. dry-run) without a breaking-change later. We previously declared
-     *     ``dry_run: bool`` but nothing in the agent service consumed it (P1-B9)
-     *     — the field was published as a public contract through the OpenAPI
-     *     schema with no implementation backing it, which is worse than no
-     *     field at all. Removed; clients sending an empty body still pass schema
-     *     validation.
-     */
-    ApplyPatchBody: Record<string, never>;
     /** CommandBody */
     CommandBody: {
       /**
@@ -674,6 +654,10 @@ export interface components {
     /**
      * CommandRunResponse
      * @description Response returned after running a command in the sandbox.
+     *
+     *     ``stdout``/``stderr`` are truncated by the route handler to
+     *     :data:`MAX_STDIO_BYTES` and ``stdio_truncated`` is set when the tail was
+     *     trimmed so the FE can show a hint.
      */
     CommandRunResponse: {
       /**
@@ -684,11 +668,8 @@ export interface components {
       category: 'test' | 'typecheck' | 'lint' | 'manual' | 'other';
       /** Command */
       command: string;
-      /**
-       * Created At
-       * @default
-       */
-      created_at: string;
+      /** Created At */
+      created_at?: string | null;
       /** Duration Ms */
       duration_ms?: number | null;
       /** Exit Code */
@@ -702,6 +683,11 @@ export interface components {
        * @default
        */
       stderr: string;
+      /**
+       * Stdio Truncated
+       * @default false
+       */
+      stdio_truncated: boolean;
       /**
        * Stdout
        * @default
@@ -760,9 +746,9 @@ export interface components {
      *
      *     The frontend type mirror lives in
      *     ``packages/shared-types/src/api.ts`` and is generated from this model
-     *     via ``openapi-typescript``. The binary-safe ``base64`` encoding is
-     *     declared up-front so future binary reads do not require a schema
-     *     migration.
+     *     via ``openapi-typescript``. ``encoding`` reports whether the file was
+     *     safe to decode as UTF-8 (``"utf-8"``) or had to be returned as
+     *     base64-encoded bytes for binary content (``"base64"``).
      */
     FileContent: {
       /** Content */
@@ -1004,6 +990,9 @@ export interface components {
     /**
      * PromptBody
      * @description POST body for ``/sessions/{id}/prompts``.
+     *
+     *     Bounded at 20k characters — anything beyond is pathological for a
+     *     supervision prompt and would balloon DB rows + WS event payloads.
      */
     PromptBody: {
       context?: components['schemas']['ContextSelection'] | null;
@@ -1172,9 +1161,13 @@ export interface components {
        */
       final_diff: string;
       /** Hidden Test Results */
-      hidden_test_results?: {
-        [key: string]: unknown;
-      };
+      hidden_test_results?:
+        | {
+            [key: string]: unknown;
+          }[]
+        | {
+            [key: string]: unknown;
+          };
       /**
        * Id
        * Format: uuid
@@ -1194,13 +1187,21 @@ export interface components {
       /** Total Score */
       total_score: number;
       /** Validator Results */
-      validator_results?: {
-        [key: string]: unknown;
-      };
+      validator_results?:
+        | {
+            [key: string]: unknown;
+          }[]
+        | {
+            [key: string]: unknown;
+          };
       /** Visible Test Results */
-      visible_test_results?: {
-        [key: string]: unknown;
-      };
+      visible_test_results?:
+        | {
+            [key: string]: unknown;
+          }[]
+        | {
+            [key: string]: unknown;
+          };
     };
     /**
      * SupervisionEventRead
@@ -1211,7 +1212,10 @@ export interface components {
       event_type: string;
       /** Id */
       id: number;
-      /** Occurred At */
+      /**
+       * Occurred At
+       * Format: date-time
+       */
       occurred_at: string;
       /** Payload */
       payload?: {
@@ -1236,7 +1240,7 @@ export interface components {
        */
       created_at: string;
       /** Csrf Token */
-      csrf_token?: string | null;
+      csrf_token: string;
       /** Display Name */
       display_name?: string | null;
       /**
@@ -1390,26 +1394,6 @@ export interface operations {
     };
   };
   get_me_api_v1_auth_me_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['UserRead'];
-        };
-      };
-    };
-  };
-  get_me_alias_api_v1_me_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -1775,7 +1759,7 @@ export interface operations {
   get_file_api_v1_sessions__session_id__file_get: {
     parameters: {
       query: {
-        /** @description Absolute or workspace-relative path to the file */
+        /** @description Workspace-relative path to the file */
         path: string;
       };
       header?: never;
@@ -1882,11 +1866,7 @@ export interface operations {
       };
       cookie?: never;
     };
-    requestBody?: {
-      content: {
-        'application/json': components['schemas']['ApplyPatchBody'] | null;
-      };
-    };
+    requestBody?: never;
     responses: {
       /** @description Successful Response */
       200: {
@@ -1986,7 +1966,7 @@ export interface operations {
     requestBody?: never;
     responses: {
       /** @description Successful Response */
-      202: {
+      200: {
         headers: {
           [name: string]: unknown;
         };

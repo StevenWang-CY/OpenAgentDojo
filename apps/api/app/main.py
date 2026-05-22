@@ -19,7 +19,6 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app import __version__
 from app.agent.router import router as agent_router
-from app.auth.routes import me_router
 from app.auth.routes import router as auth_router
 from app.config import Settings, get_settings
 from app.healthz import router as health_router
@@ -27,6 +26,7 @@ from app.middleware import (
     BannedCommandsMiddleware,
     CSRFMiddleware,
     RateLimitMiddleware,
+    RequestIdMiddleware,
     SecurityHeadersMiddleware,
 )
 from app.missions.router import router as missions_router
@@ -111,6 +111,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.grading.runner import shutdown_fs_executor
 
         shutdown_fs_executor()
+        # Close the cached Redis client so we don't leak a socket past
+        # process shutdown. Best-effort — never block shutdown on it.
+        try:
+            from app.sessions.events import close_redis
+
+            await close_redis()
+        except Exception as exc:  # pragma: no cover — shutdown must not raise
+            logger.debug("close_redis failed during shutdown (ignored): {}", exc)
         logger.info("agentarena api shutdown complete")
 
 
@@ -128,12 +136,14 @@ def create_app() -> FastAPI:
 
     # Middleware is applied in REVERSE order of registration in Starlette
     # (last added = outermost). Order we want, outermost first:
-    #   1. TrustedHost     — drop requests with bogus Host headers early
-    #   2. SecurityHeaders — attach headers to every response (incl. errors)
-    #   3. CORS            — preflight/Origin handling
-    #   4. RateLimit       — per-route token bucket
-    #   5. CSRF            — double-submit cookie check on unsafe methods
-    #   6. BannedCommands  — body inspection for /commands
+    #   1. RequestId       — assign correlation id BEFORE any other layer so
+    #                        rejected requests (CSRF/CORS/host) still log it
+    #   2. TrustedHost     — drop requests with bogus Host headers early
+    #   3. SecurityHeaders — attach headers to every response (incl. errors)
+    #   4. CORS            — preflight/Origin handling
+    #   5. RateLimit       — per-route token bucket
+    #   6. CSRF            — double-submit cookie check on unsafe methods
+    #   7. BannedCommands  — body inspection for /commands
     app.add_middleware(BannedCommandsMiddleware)
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(RateLimitMiddleware)
@@ -149,6 +159,10 @@ def create_app() -> FastAPI:
         TrustedHostMiddleware,
         allowed_hosts=settings.allowed_hosts_list,
     )
+    # Registered LAST → executes FIRST. Every log line below this layer will
+    # carry ``extra.request_id`` and every response — including 400/403 from
+    # the host / CSRF / CORS guards — will echo ``X-Request-ID``.
+    app.add_middleware(RequestIdMiddleware)
 
     # ---- error handler ----
     @app.exception_handler(ArenaError)
@@ -175,7 +189,10 @@ def create_app() -> FastAPI:
     app.include_router(missions_router, prefix="/api/v1")
     app.include_router(sessions_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
-    app.include_router(me_router, prefix="/api/v1")
+    # ``/api/v1/me`` previously aliased ``/api/v1/auth/me`` via ``me_router``;
+    # we dropped the alias because the FE (apps/web/lib/api.ts ``auth.me``)
+    # only calls ``/auth/me`` and shipping two paths confused the contract
+    # generator. ``auth_router`` already exposes ``/auth/me``.
     app.include_router(agent_router, prefix="/api/v1")
     app.include_router(reports_router, prefix="/api/v1")
     app.include_router(profiles_router, prefix="/api/v1")

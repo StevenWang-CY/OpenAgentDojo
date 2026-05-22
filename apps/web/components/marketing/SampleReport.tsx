@@ -49,8 +49,11 @@ export function SampleReport() {
             className="size-2.5 rounded-full bg-[oklch(from_var(--color-success)_l_c_h/0.8)]"
           />
           <p className="ml-3 truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
-            arena.dev/report/01-auth-cookie-expiration
+            openagentdojo.app/report/sample
           </p>
+          <span className="ml-2 rounded-full border border-[var(--color-border)] bg-[var(--color-muted)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-muted-foreground)]">
+            sample
+          </span>
         </div>
 
         <div className="grid gap-6 p-6 lg:grid-cols-[1.1fr,1fr]">

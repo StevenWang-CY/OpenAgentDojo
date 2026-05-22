@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { usePathname } from "next/navigation";
+import { env } from "@/lib/env";
 import {
   __setTelemetryClient,
   pageView,
@@ -30,9 +31,8 @@ export function TelemetryProvider({ children }: TelemetryProviderProps) {
   // against the in-memory ring buffer.
   React.useEffect(() => {
     let cancelled = false;
-    const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
-    const host =
-      process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com";
+    const key = env.posthogKey;
+    const host = env.posthogHost;
 
     if (!key) return;
     if (typeof window === "undefined") return;

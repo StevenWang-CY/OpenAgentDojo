@@ -215,7 +215,11 @@ async def test_apply_patch_driver_exception_emits_patch_failed(db_engine: Any) -
         await db.commit()
 
     assert result.applied is False
-    assert "boom" in (result.error or "")
+    # P0: the raw exception (which may include internal driver paths) must NOT
+    # leak to the client. The generic message is what reaches the user; the
+    # full exc remains in the structured log.
+    assert "boom" not in (result.error or "")
+    assert "patch apply failed" in (result.error or "").lower()
     assert any(e[0] == "patch.failed" for e in emitter.events)
 
 

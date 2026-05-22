@@ -184,7 +184,21 @@ async def _load_db_inputs(session_id: uuid.UUID) -> tuple[Any, Any]:
 
         # Validator + test reconstructions: the submission row stores
         # serialised dicts; we materialise them back as dataclasses so the
-        # signature matches the production runner.
+        # signature matches the production runner. Accepts both the legacy
+        # dict-by-suite shape and the current list-of-dicts shape (the
+        # grading runner switched from one to the other for contract
+        # alignment — see ``apps/api/app/grading/runner.py``).
+        def _as_entry_iter(payload: Any) -> list[dict[str, Any]]:
+            if isinstance(payload, list):
+                return [p for p in payload if isinstance(p, dict)]
+            if isinstance(payload, dict):
+                return [
+                    {**p, "suite": p.get("suite", k) if isinstance(p, dict) else k}
+                    for k, p in payload.items()
+                    if isinstance(p, dict)
+                ]
+            return []
+
         validator_results = [
             ValidatorResult(
                 kind=v.get("kind", "unknown"),
@@ -193,23 +207,22 @@ async def _load_db_inputs(session_id: uuid.UUID) -> tuple[Any, Any]:
                 evidence=list(v.get("evidence", []) or []),
                 penalty=int(v.get("penalty", 0) or 0),
             )
-            for v in (sub.validator_results or {}).values()
+            for v in _as_entry_iter(sub.validator_results)
         ]
 
         test_results: list[TestRunResult] = []
-        for suite_map in (sub.visible_test_results or {}, sub.hidden_test_results or {}):
-            for suite_name, payload in suite_map.items():
-                if not isinstance(payload, dict):
-                    continue
+        for payload_set in (sub.visible_test_results, sub.hidden_test_results):
+            for entry in _as_entry_iter(payload_set):
+                suite_name = entry.get("suite") or "unknown"
                 test_results.append(
                     TestRunResult(
-                        suite=suite_name,
-                        exit_code=int(payload.get("exit_code", -1)),
-                        stdout=str(payload.get("stdout", "") or ""),
-                        stderr=str(payload.get("stderr", "") or ""),
-                        passed=int(payload.get("passed", 0) or 0),
-                        failed=int(payload.get("failed", 0) or 0),
-                        skipped=int(payload.get("skipped", 0) or 0),
+                        suite=str(suite_name),
+                        exit_code=int(entry.get("exit_code", -1)),
+                        stdout=str(entry.get("stdout", "") or ""),
+                        stderr=str(entry.get("stderr", "") or ""),
+                        passed=int(entry.get("passed", 0) or 0),
+                        failed=int(entry.get("failed", 0) or 0),
+                        skipped=int(entry.get("skipped", 0) or 0),
                     )
                 )
 

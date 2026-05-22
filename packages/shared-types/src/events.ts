@@ -21,6 +21,7 @@ export const SupervisionEventType = {
   SessionStarted: "session.started",
   SessionErrored: "session.errored",
   SessionAbandoned: "session.abandoned",
+  SessionProvisionFailed: "session.provision_failed",
   ContextSelected: "context.selected",
   PromptSubmitted: "prompt.submitted",
   AgentResponded: "agent.responded",
@@ -65,22 +66,45 @@ export interface SessionAbandonedPayload {
   reason?: string;
 }
 
+/**
+ * Emitted when the provisioning worker fails to bring a sandbox online
+ * (manifest load timeout, repo-pack hydration crash, etc.). Distinct from
+ * ``session.errored`` because the FE renders a separate "provision failed"
+ * UX for this signal — see ``apps/api/app/workers/provision.py`` and
+ * IMPLEMENTATION_PLAN.md §P1-B8.
+ */
+export interface SessionProvisionFailedPayload {
+  reason: string;
+  detail?: string;
+}
+
 export type ContextSelectedPayload = ContextSelection;
 
 export interface PromptSubmittedPayload {
   turn_index: number;
   text: string;
   char_count: number;
-  keyword_hits?: string[];
+  intent?: string;
+  context_files?: string[];
 }
 
 export type AgentIntent = "fix" | "test" | "revise" | "narrow" | "unknown";
 
+/**
+ * `source` distinguishes the deterministic harness path from a real LLM
+ * call so replays + scoring can attribute behaviour correctly. The backend
+ * currently emits ``"deterministic"`` | ``"llm"`` but the union widens to
+ * ``string`` so future sources (e.g. a cached response) don't break the
+ * type at compile time.
+ */
 export interface AgentRespondedPayload {
   turn_index: number;
   response_summary: string;
   intent?: AgentIntent;
   llm_used?: boolean;
+  source?: "deterministic" | "llm" | string;
+  proposed_actions?: string[];
+  turn_id?: UUID;
 }
 
 export interface PatchProposedPayload {
@@ -88,6 +112,7 @@ export interface PatchProposedPayload {
   /** Path to the proposed patch artefact (e.g. "patches/turn-0.patch"). */
   patch_file: string;
   intent?: AgentIntent;
+  turn_id?: UUID;
 }
 
 export interface PatchAppliedPayload {
@@ -100,6 +125,7 @@ export interface PatchAppliedPayload {
   file_count: number;
   added: number;
   removed: number;
+  turn_id?: UUID;
 }
 
 export interface PatchFailedPayload {
@@ -110,6 +136,7 @@ export interface PatchFailedPayload {
   file_count?: number;
   added?: number;
   removed?: number;
+  turn_id?: UUID;
 }
 
 export interface DiffOpenedPayload {
@@ -124,7 +151,11 @@ export interface DiffHoveredPayload {
   line?: number;
 }
 
-export type FileEditSource = "human" | "agent";
+// Backend canonical values are ``"user"`` (typed in the workspace editor)
+// and ``"agent"`` (written by an applied patch). The legacy alias
+// ``"human"`` was never emitted; if it shows up on the wire it indicates a
+// regressed producer.
+export type FileEditSource = "user" | "agent";
 
 export interface FileEditedPayload {
   path: string;
@@ -177,6 +208,17 @@ export interface ValidatorFlagPayload {
    * ``kind === "prompt_injection"``.
    */
   patterns?: string[];
+  /**
+   * Banned-commands middleware (``apps/api/app/middleware/banned_commands.py``)
+   * rides along extra diagnostic fields when ``kind === "banned_command"``:
+   * - ``pattern``: the regex name that matched the blocked shell invocation
+   * - ``command``: a truncated copy of the offending command line
+   * The prompt-injection detector-error path also emits ``reason`` so the
+   * grader can distinguish "check skipped" from a genuine match.
+   */
+  pattern?: string;
+  command?: string;
+  reason?: string;
 }
 
 export interface SubmissionRequestedPayload {
@@ -210,6 +252,7 @@ export type SupervisionEvent =
   | SupervisionEventOf<"session.started", SessionStartedPayload>
   | SupervisionEventOf<"session.errored", SessionErroredPayload>
   | SupervisionEventOf<"session.abandoned", SessionAbandonedPayload>
+  | SupervisionEventOf<"session.provision_failed", SessionProvisionFailedPayload>
   | SupervisionEventOf<"context.selected", ContextSelectedPayload>
   | SupervisionEventOf<"prompt.submitted", PromptSubmittedPayload>
   | SupervisionEventOf<"agent.responded", AgentRespondedPayload>

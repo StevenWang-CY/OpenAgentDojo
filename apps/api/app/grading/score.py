@@ -6,6 +6,7 @@ All functions are pure (no DB, no I/O, no randomness) and fully deterministic.
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,7 @@ from typing import Any
 from loguru import logger
 
 from app.grading.diff import ParsedDiff
+from app.grading.dimensions import DIMENSION_MAX, RUBRIC_DIMENSIONS
 from app.grading.validators.base import ValidatorResult
 from app.grading.validators.tests_pass import TestRunResult
 
@@ -140,32 +142,97 @@ def _event_occurred_after(
     return False
 
 
-def _hidden_tests_passed(test_results: list[TestRunResult]) -> bool:
-    hidden = [r for r in test_results if "hidden" in r.suite.lower()]
+def _diff_opened_after_last_patch(events: list[dict[str, Any]]) -> bool:
+    """True iff a ``diff.opened`` event followed the LAST ``patch.applied``.
+
+    The grading runner returns events ordered by ``(occurred_at, id)``, so
+    iterating forward and remembering the most recent ``patch.applied``
+    index suffices. The "after last patch" framing matters because a
+    supervisor may have applied several iterations of a patch — we credit
+    them for reviewing the operative (final) patch, not just an earlier one.
+    """
+    last_patch_idx: int | None = None
+    for i, e in enumerate(events):
+        if e.get("event_type") == "patch.applied":
+            last_patch_idx = i
+    if last_patch_idx is None:
+        return False
+    for j in range(last_patch_idx + 1, len(events)):
+        if events[j].get("event_type") == "diff.opened":
+            return True
+    return False
+
+
+def _hidden_tests_passed(
+    test_results: list[TestRunResult], manifest: Any | None = None
+) -> bool:
+    """Return True iff every hidden suite exited 0.
+
+    Uses the shared :func:`app.grading.runner.is_hidden_suite` predicate so
+    the runner-side bucketing and the score-side correctness gate can't drift
+    apart. Callers that still pass no manifest get the legacy substring
+    fallback (``"hidden" in suite``).
+    """
+    if manifest is not None:
+        # Local import to avoid a circular import between
+        # ``app.grading.runner`` and ``app.grading.score``.
+        from app.grading.runner import is_hidden_suite
+
+        hidden = [r for r in test_results if is_hidden_suite(manifest, r.suite)]
+    else:
+        hidden = [r for r in test_results if "hidden" in r.suite.lower()]
     if not hidden:
         return False  # No hidden tests = treat as failed for scoring
     return all(r.exit_code == 0 for r in hidden)
 
 
-def _visible_tests_passed(test_results: list[TestRunResult]) -> bool:
+def _manifest_has_visible_suites(manifest: Any | None) -> bool:
+    """Return True iff the mission manifest configured any visible suites.
+
+    Visible suites live under ``manifest.repo.test_commands`` — a dict keyed
+    by suite name. An empty/absent dict means the mission ships no visible
+    runner at all, so the correctness rubric should treat the visible-tests
+    gate as N/A rather than punishing the supervisor for a missing suite the
+    author never wired up.
+    """
+    if manifest is None:
+        return True
+    repo = getattr(manifest, "repo", None)
+    cmds = getattr(repo, "test_commands", None) if repo is not None else None
+    if not isinstance(cmds, dict):
+        return False
+    return len(cmds) > 0
+
+
+def _visible_tests_passed(
+    test_results: list[TestRunResult], manifest: Any | None = None
+) -> bool:
     """Return True iff every visible *unit/integration* suite exited 0.
 
     Lint and typecheck are excluded from this gate — they have their own
     verification credit (§11.2.2) and a flaky lint config should not
     zero-out the correctness dimension when the tests themselves are green.
 
-    When the mission ships *no* visible suites at all we treat that as a
-    fail (P0-B4): an empty visible-tests set used to score the free +8
-    credit because there was nothing to disagree with, which let a
-    misconfigured mission (visible_tests declared but no ``test_commands``
-    wired up) silently award correctness points. The loader now blocks that
-    drift up-front, but we keep the engine honest as a defence in depth.
+    Distinguishes the two failure modes that used to collapse into
+    ``return False`` (P0-B4 / rubric-1 follow-up):
+
+    * *No visible suites configured by the manifest* — the mission never
+      declared ``repo.test_commands``, so there is nothing to gate on.
+      Treated as N/A (return True). The loader already refuses missions that
+      declare ``visible_tests`` without a matching ``test_commands``, so this
+      branch only fires for missions whose author intentionally ships only a
+      hidden suite.
+    * *Visible suites configured but none passed (or none were even run)* —
+      return False; the supervisor really did miss the gate.
     """
     visible = [
         r
         for r in test_results
         if "hidden" not in r.suite.lower() and r.suite.lower() not in {"lint", "typecheck"}
     ]
+    if not _manifest_has_visible_suites(manifest):
+        # No visible suites configured by the mission manifest → N/A.
+        return True
     if not visible:
         return False
     return all(r.exit_code == 0 for r in visible)
@@ -191,10 +258,15 @@ def _score_final_correctness(
     score = 0
     signals: list[str] = []
 
-    hidden_pass = _hidden_tests_passed(test_results)
-    visible_pass = _visible_tests_passed(test_results)
+    hidden_pass = _hidden_tests_passed(test_results, manifest)
+    visible_pass = _visible_tests_passed(test_results, manifest)
+    visible_na = not _manifest_has_visible_suites(manifest)
 
     # Regression proxy: existing tests (visible) still pass after patch.
+    # When the mission ships no visible suites at all, there is no regression
+    # signal to evaluate — so the regression credit is awarded by default
+    # (otherwise a hidden-only mission could only score 24/30 even on a
+    # perfect submission). The hidden-test pass remains the dominant gate.
     regression_ok = visible_pass
 
     # Root-cause proxy: regression_test_required validator passed,
@@ -211,7 +283,13 @@ def _score_final_correctness(
     else:
         signals.append("+0: hidden tests did not pass")
 
-    if visible_pass:
+    if visible_na:
+        # N/A: mission ships no visible suites — surface the marker but
+        # still award the credit so the supervisor isn't penalised for the
+        # author's design choice.
+        score += 8
+        signals.append("+8: visible tests N/A (mission ships no visible suites)")
+    elif visible_pass:
         score += 8
         signals.append("+8: all visible tests pass")
     else:
@@ -238,7 +316,7 @@ def _score_final_correctness(
 
 
 # ---------------------------------------------------------------------------
-# Dimension 2: Verification Discipline (max 20)
+# Dimension 2: Verification Discipline (max 15)
 # ---------------------------------------------------------------------------
 
 
@@ -249,11 +327,12 @@ def _score_verification(
 ) -> DimensionScore:
     score = 0
     signals: list[str] = []
+    max_score = DIMENSION_MAX["verification"]
 
     command_run_events = _events_of_type(events, "command.run")
     has_any_command = len(command_run_events) > 0
 
-    # +8: test command run that matches require_targeted_test.
+    # +6: test command run that matches require_targeted_test.
     targeted_test_pattern: str | None = None
     reward_signals = getattr(manifest, "reward_signals", None)
     verification_cfg = getattr(reward_signals, "verification", None)
@@ -279,43 +358,43 @@ def _score_verification(
                 break
 
     if has_targeted_test:
-        score += 8
-        signals.append("+8: targeted test command run")
+        score += 6
+        signals.append("+6: targeted test command run")
     else:
         signals.append("+0: no targeted test command found")
 
-    # +4: typecheck command run.
+    # +3: typecheck command run.
     has_typecheck = any(
         e.get("payload", {}).get("category") == "typecheck" for e in command_run_events
     )
     if has_typecheck:
-        score += 4
-        signals.append("+4: typecheck run")
+        score += 3
+        signals.append("+3: typecheck run")
     else:
         signals.append("+0: no typecheck run")
 
-    # +3: lint command run.
+    # +2: lint command run.
     has_lint = any(e.get("payload", {}).get("category") == "lint" for e in command_run_events)
     if has_lint:
-        score += 3
-        signals.append("+3: lint run")
+        score += 2
+        signals.append("+2: lint run")
     else:
         signals.append("+0: no lint run")
 
-    # +5: regression_test_required validator passed.
+    # +4: regression_test_required validator passed.
     regression_val = _find_validator(validator_results, "regression_test_required")
     if regression_val is not None and regression_val.passed:
-        score += 5
-        signals.append("+5: regression test validator passed")
+        score += 4
+        signals.append("+4: regression test validator passed")
     else:
         signals.append("+0: regression test validator not passed")
 
-    # -8: zero command.run events of any kind.
+    # -6: zero command.run events of any kind.
     if not has_any_command:
-        score -= 8
-        signals.append("-8: no command.run events at all")
+        score -= 6
+        signals.append("-6: no command.run events at all")
 
-    return DimensionScore(score=max(0, min(score, 20)), max_score=20, signals=signals)
+    return DimensionScore(score=max(0, min(score, max_score)), max_score=max_score, signals=signals)
 
 
 # ---------------------------------------------------------------------------
@@ -358,13 +437,23 @@ def _score_agent_review(
         signals.append("0/15: submit within 15s of agent.responded with no diff opened (hard zero)")
         return DimensionScore(score=0, max_score=15, signals=signals)
 
-    # +6: diff.opened event occurred after patch.applied event.
-    diff_after_patch = _event_occurred_after(events, "patch.applied", "diff.opened")
+    # +6: diff.opened event occurred AFTER the LAST patch.applied event.
+    #
+    # The previous heuristic (``_event_occurred_after("patch.applied",
+    # "diff.opened")``) rewarded *any* diff opened after the *first* patch —
+    # which silently double-counted a stale review of an early patch even
+    # when the supervisor never looked at the most recent operative patch.
+    # The score is for opening the diff AFTER the patch the supervisor is
+    # actually about to submit, so we walk events sorted by
+    # (occurred_at, id) (the runner already returns them in this order),
+    # find the LAST ``patch.applied``, and check whether any
+    # ``diff.opened`` followed it.
+    diff_after_patch = _diff_opened_after_last_patch(events)
     if diff_after_patch:
         score += 6
-        signals.append("+6: diff opened after patch applied")
+        signals.append("+6: diff opened after the most recent patch applied")
     else:
-        signals.append("+0: diff not opened after patch applied")
+        signals.append("+0: diff not opened after the most recent patch applied")
 
     # +5: any file.edited or file.reverted event.
     has_edit_or_revert = _any_event(events, "file.edited", "file.reverted")
@@ -412,7 +501,22 @@ def _score_prompt_quality(
     agent_turns: list[dict[str, Any]],
     manifest: Any,
 ) -> DimensionScore:
+    """Score prompt quality as the AVERAGE of the LAST 3 turns.
+
+    Why average (not max-of-all)? The previous heuristic picked the single
+    best prompt across all turns, which rewarded a supervisor who lobbed in
+    one strong prompt then degraded into ``fix it`` follow-ups. Averaging the
+    final few turns measures consistency — the score reflects what the
+    supervisor was actually doing as they closed in on submission.
+
+    Why "last 3" specifically? It's a small enough window that a one-off
+    weak revise prompt still shows up in the rolling average, but large
+    enough to forgive a brief clarification turn (e.g. ``yes, do that``)
+    sandwiched between two substantive prompts. Fewer than 3 turns → use
+    however many exist. Zero prompts → score 0 (we don't crash).
+    """
     signals: list[str] = []
+    max_score = DIMENSION_MAX["prompt_quality"]
 
     must_include: list[str] = []
     bonus_keywords: list[str] = []
@@ -428,53 +532,38 @@ def _score_prompt_quality(
         must_include = list(getattr(prompt_cfg, "must_include_any", []) or [])
         bonus_keywords = list(getattr(prompt_cfg, "bonus_keywords", []) or [])
 
-    best_score = 0
-
-    for turn in agent_turns:
-        prompt = ""
-        if isinstance(turn, dict):
-            prompt = turn.get("user_prompt", turn.get("prompt", "")) or ""
-        if not prompt:
-            continue
-
+    def _score_one_turn(prompt: str) -> tuple[int, list[str]]:
         prompt_lower = prompt.lower()
         turn_score = 0
         turn_signals: list[str] = []
 
-        # +2 if >= 80 chars.
         if len(prompt) >= 80:
             turn_score += 2
             turn_signals.append("+2: prompt >= 80 chars")
 
-        # +2 if any must_include_any keyword present.
         if any(kw.lower() in prompt_lower for kw in must_include):
             turn_score += 2
             turn_signals.append("+2: required keyword present")
 
-        # +1 per bonus keyword (max +3).
         bonus_hit = sum(1 for kw in bonus_keywords if kw.lower() in prompt_lower)
         bonus_pts = min(bonus_hit, 3)
         if bonus_pts:
             turn_score += bonus_pts
             turn_signals.append(f"+{bonus_pts}: {bonus_pts} bonus keyword(s)")
 
-        # +2 if "test" or "regression" in prompt.
         if "test" in prompt_lower or "regression" in prompt_lower:
             turn_score += 2
             turn_signals.append("+2: test/regression mentioned")
 
-        # +2 if scope phrase present.
         scope_phrases = ["do not modify", "minimal", "without changing", "only change"]
         if any(p in prompt_lower for p in scope_phrases):
             turn_score += 2
             turn_signals.append("+2: scope phrase present")
 
-        # -3 if prompt < 40 chars.
         if len(prompt) < 40:
             turn_score -= 3
             turn_signals.append("-3: prompt < 40 chars")
 
-        # -2 if prompt is vague-only.
         vague_phrases = ["fix it", "make it work", "just fix", "do it"]
         prompt_stripped = prompt.strip().lower()
         if any(prompt_stripped == vague for vague in vague_phrases) or (
@@ -483,12 +572,34 @@ def _score_prompt_quality(
             turn_score -= 2
             turn_signals.append("-2: vague-only prompt")
 
-        turn_score = max(0, min(turn_score, 10))
-        if turn_score > best_score:
-            best_score = turn_score
-            signals = turn_signals
+        return max(0, min(turn_score, max_score)), turn_signals
 
-    return DimensionScore(score=max(0, min(best_score, 10)), max_score=10, signals=signals)
+    # Filter to turns that actually carry a prompt — keep ordering, then take
+    # the trailing 3.
+    prompts: list[str] = []
+    for turn in agent_turns:
+        if not isinstance(turn, dict):
+            continue
+        prompt = turn.get("user_prompt", turn.get("prompt", "")) or ""
+        if prompt:
+            prompts.append(prompt)
+
+    if not prompts:
+        return DimensionScore(
+            score=0,
+            max_score=max_score,
+            signals=["no agent turns with user_prompt — scored 0/10"],
+        )
+
+    tail = prompts[-3:]
+    per_turn = [_score_one_turn(p) for p in tail]
+    avg = round(sum(s for s, _ in per_turn) / len(per_turn))
+
+    signals.append(f"averaged last {len(tail)} of {len(prompts)} prompt(s) → {avg}/{max_score}")
+    for idx, (s, sigs) in enumerate(per_turn, start=1):
+        signals.append(f"turn -{len(tail) - idx + 1}: {s}/{max_score} [{'; '.join(sigs) or '-'}]")
+
+    return DimensionScore(score=max(0, min(avg, max_score)), max_score=max_score, signals=signals)
 
 
 # ---------------------------------------------------------------------------
@@ -517,36 +628,89 @@ def _score_context_selection(
         recommended = list(getattr(expected_context, "recommended", []) or [])
         discouraged = list(getattr(expected_context, "discouraged", []) or [])
 
-    # Get selected files from the last context.selected event.
-    selected_files: list[str] = []
-    for e in reversed(events):
+    # Selected files = the LAST ``context.selected`` event that preceded the
+    # LAST ``prompt.submitted`` event. That's the context the supervisor
+    # actually shipped TO the agent — selections made *after* submitting the
+    # prompt are post-hoc exploration and should not count toward (or
+    # against) the prompt-time score.
+    #
+    # If no prompt has been submitted yet (e.g. mission graded before the
+    # user submitted), fall back to the MAX recall across all selections so
+    # an early correct selection still earns credit.
+    selection_payloads: list[dict[str, Any]] = []
+    for e in events:
         if e.get("event_type") == "context.selected":
-            payload = e.get("payload", {})
-            selected_files = list(payload.get("files", []))
-            break
+            selection_payloads.append(e.get("payload") or {})
 
-    selected_set = set(selected_files)
+    last_prompt_idx: int | None = None
+    for i, e in enumerate(events):
+        if e.get("event_type") == "prompt.submitted":
+            last_prompt_idx = i
+
+    operative_files: list[str] | None = None
+    if last_prompt_idx is not None:
+        for j in range(last_prompt_idx - 1, -1, -1):
+            if events[j].get("event_type") == "context.selected":
+                payload = events[j].get("payload") or {}
+                operative_files = list(payload.get("files", []))
+                break
+
     required_set = set(required)
     recommended_set = set(recommended)
     discouraged_set = set(discouraged)
+    max_score = DIMENSION_MAX["context_selection"]
 
-    required_hit = len(selected_set & required_set) / len(required_set) if required_set else 0.0
-    recommended_hit = len(selected_set & recommended_set) / max(1, len(recommended_set))
-    discouraged_hit = len(selected_set & discouraged_set)
+    def _score_selection(files: list[str]) -> tuple[int, float, float, int]:
+        selected_set = set(files)
+        required_hit = (
+            len(selected_set & required_set) / len(required_set) if required_set else 0.0
+        )
+        recommended_hit = len(selected_set & recommended_set) / max(1, len(recommended_set))
+        discouraged_hit = len(selected_set & discouraged_set)
+        raw = round(required_hit * 7 + recommended_hit * 3) - min(3, discouraged_hit)
+        return max(0, min(raw, max_score)), required_hit, recommended_hit, discouraged_hit
 
-    raw_score = round(required_hit * 7 + recommended_hit * 3) - min(3, discouraged_hit)
-    score = max(0, min(raw_score, 10))
-
-    signals.append(
-        f"required_hit={required_hit:.2f} recommended_hit={recommended_hit:.2f} "
-        f"discouraged_hit={discouraged_hit}"
-    )
-    if selected_files:
-        signals.append(f"selected {len(selected_files)} file(s)")
+    if last_prompt_idx is not None:
+        # A prompt was submitted — the operative selection is whatever was
+        # in flight at that instant (which may be empty if the supervisor
+        # never picked any files before pressing submit).
+        score, required_hit, recommended_hit, discouraged_hit = _score_selection(
+            operative_files or []
+        )
+        signals.append(
+            f"required_hit={required_hit:.2f} recommended_hit={recommended_hit:.2f} "
+            f"discouraged_hit={discouraged_hit}"
+        )
+        if operative_files is not None:
+            signals.append(f"selected {len(operative_files)} file(s) at prompt time")
+        else:
+            signals.append("prompt submitted with no preceding context.selected event")
+    elif selection_payloads:
+        # No prompt submitted yet — fall back to the MAX score across all
+        # selections so the supervisor isn't penalised for still being in
+        # the exploration phase. Documented in the dimension docstring.
+        results = [
+            _score_selection(list(p.get("files", []) or [])) for p in selection_payloads
+        ]
+        best = max(results, key=lambda r: r[0])
+        score, required_hit, recommended_hit, discouraged_hit = best
+        signals.append(
+            f"required_hit={required_hit:.2f} recommended_hit={recommended_hit:.2f} "
+            f"discouraged_hit={discouraged_hit}"
+        )
+        signals.append(
+            f"no prompt.submitted yet — used max across "
+            f"{len(selection_payloads)} context.selected event(s)"
+        )
     else:
+        score, required_hit, recommended_hit, discouraged_hit = _score_selection([])
+        signals.append(
+            f"required_hit={required_hit:.2f} recommended_hit={recommended_hit:.2f} "
+            f"discouraged_hit={discouraged_hit}"
+        )
         signals.append("no context.selected event found")
 
-    return DimensionScore(score=score, max_score=10, signals=signals)
+    return DimensionScore(score=score, max_score=max_score, signals=signals)
 
 
 # ---------------------------------------------------------------------------
@@ -619,8 +783,8 @@ def _score_safety(
     command_run_events = _events_of_type(events, "command.run")
     has_banned = False
     for e in command_run_events:
-        cmd = e.get("payload", {}).get("command", "")
-        if any(banned in cmd for banned in banned_commands):
+        cmd = e.get("payload", {}).get("command", "") or ""
+        if _command_matches_banned(cmd, banned_commands):
             has_banned = True
             break
 
@@ -633,36 +797,114 @@ def _score_safety(
     return DimensionScore(score=min(score, 10), max_score=10, signals=signals)
 
 
+def _command_matches_banned(cmd: str, banned: list[str]) -> bool:
+    """True if ``cmd`` runs anything matching one of the ``banned`` patterns.
+
+    Tries argv-aware matching first via :func:`shlex.split` so a wrapper
+    like ``sh -c 'rm -rf /'`` is still caught when the banned list contains
+    ``rm -rf`` or ``rm``. Each banned pattern is itself shlex-split into
+    tokens, then we check whether those tokens appear as a contiguous
+    subsequence anywhere in the parsed argv (including inside any single
+    ``-c <script>`` argument we recurse into).
+
+    Falls back to the legacy literal-substring check if either side fails
+    to parse — malformed shell shouldn't silently bypass the gate.
+    """
+    if not cmd or not banned:
+        return False
+
+    def _argv_for(text: str) -> list[str] | None:
+        try:
+            return shlex.split(text)
+        except ValueError:
+            return None
+
+    cmd_argv = _argv_for(cmd)
+    if cmd_argv is None:
+        return any(b in cmd for b in banned)
+
+    # Recursively flatten nested shells: ``sh -c "rm -rf /"`` ->
+    # ["sh", "-c", "rm -rf /"]. Split the inner script as a separate argv
+    # so the matcher can see the inner tokens too.
+    flat_argvs: list[list[str]] = [cmd_argv]
+    for i, tok in enumerate(cmd_argv):
+        if tok in {"-c", "--command"} and i + 1 < len(cmd_argv):
+            nested = _argv_for(cmd_argv[i + 1])
+            if nested:
+                flat_argvs.append(nested)
+
+    for banned_pat in banned:
+        if not banned_pat:
+            continue
+        banned_argv = _argv_for(banned_pat)
+        if not banned_argv:
+            # Pattern didn't parse — fall back to literal substring.
+            if banned_pat in cmd:
+                return True
+            continue
+        for argv in flat_argvs:
+            if _argv_contains(argv, banned_argv):
+                return True
+        # Last-resort literal substring (covers patterns like ``rm -rf /``
+        # where the user might or might not have an exact space layout).
+        if banned_pat in cmd:
+            return True
+    return False
+
+
+def _argv_contains(argv: list[str], needle: list[str]) -> bool:
+    """True if ``needle`` appears as a contiguous subsequence in ``argv``."""
+    if not needle or len(needle) > len(argv):
+        return False
+    for i in range(len(argv) - len(needle) + 1):
+        if argv[i : i + len(needle)] == needle:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
-# Dimension 7: Diff Minimality (max 5)
+# Dimension 7: Diff Minimality (max 10)
 # ---------------------------------------------------------------------------
 
 
 def _score_diff_minimality(diff: ParsedDiff, manifest: Any) -> DimensionScore:
+    """Score how compact the final diff is, gauged against the mission p50.
+
+    Uses ``max(added, removed)`` instead of just ``added_lines_total`` so that
+    destructive minimisation — wiping out 200 lines while only adding 5 — is
+    not silently rewarded with a perfect minimality score. Either direction
+    of churn pushes the diff away from minimal; the rubric should treat
+    them symmetrically.
+    """
     signals: list[str] = []
+    max_score = DIMENSION_MAX["diff_minimality"]
 
     p50 = getattr(manifest, "expected_diff_lines_p50", 20)
     added = diff.added_lines_total()
-    ratio = added / max(1, p50)
+    removed = diff.removed_lines_total()
+    churn = max(added, removed)
+    ratio = churn / max(1, p50)
 
     if ratio <= 1.0:
-        score = 5
-        signals.append(f"ratio={ratio:.2f} <= 1.0 → 5/5")
+        score = 10
+        signals.append(f"ratio={ratio:.2f} <= 1.0 → 10/10")
     elif ratio <= 1.5:
-        score = 4
-        signals.append(f"ratio={ratio:.2f} in (1.0, 1.5] → 4/5")
+        score = 8
+        signals.append(f"ratio={ratio:.2f} in (1.0, 1.5] → 8/10")
     elif ratio <= 2.0:
-        score = 3
-        signals.append(f"ratio={ratio:.2f} in (1.5, 2.0] → 3/5")
+        score = 6
+        signals.append(f"ratio={ratio:.2f} in (1.5, 2.0] → 6/10")
     elif ratio <= 3.0:
-        score = 2
-        signals.append(f"ratio={ratio:.2f} in (2.0, 3.0] → 2/5")
+        score = 4
+        signals.append(f"ratio={ratio:.2f} in (2.0, 3.0] → 4/10")
     else:
         score = 0
-        signals.append(f"ratio={ratio:.2f} > 3.0 → 0/5")
+        signals.append(f"ratio={ratio:.2f} > 3.0 → 0/10")
 
-    signals.append(f"added_lines={added} p50={p50}")
-    return DimensionScore(score=score, max_score=5, signals=signals)
+    signals.append(
+        f"churn=max(added={added}, removed={removed})={churn} p50={p50}"
+    )
+    return DimensionScore(score=score, max_score=max_score, signals=signals)
 
 
 # ---------------------------------------------------------------------------
@@ -674,14 +916,13 @@ def _narrative(dimensions: dict[str, DimensionScore]) -> tuple[list[str], list[s
     strengths: list[str] = []
     weaknesses: list[str] = []
 
+    # Strength = >= 80% of max, weakness = <= 40% of max. Computed from the
+    # central ``DIMENSION_MAX`` so adjusting a dimension's weight in
+    # ``app.grading.dimensions`` automatically reflows the narrative
+    # thresholds (the old hard-coded table drifted whenever a max changed).
     thresholds = {
-        "final_correctness": (24, 18),
-        "verification": (16, 8),
-        "agent_review": (12, 5),
-        "prompt_quality": (8, 4),
-        "context_selection": (8, 4),
-        "safety": (8, 4),
-        "diff_minimality": (4, 2),
+        name: (round(max_s * 0.8), round(max_s * 0.4))
+        for name, max_s in DIMENSION_MAX.items()
     }
     labels = {
         "final_correctness": "Correctness",
@@ -735,29 +976,30 @@ def compute_score(
     agent_turns:
         List of ``agent_turns`` rows as plain dicts (for prompt quality).
     """
-    d_correctness = _score_final_correctness(diff, validator_results, test_results, manifest)
-    d_verification = _score_verification(events, validator_results, manifest)
-    d_agent_review = _score_agent_review(events, manifest)
-    d_prompt_quality = _score_prompt_quality(agent_turns, manifest)
-    d_context = _score_context_selection(events, manifest)
-    d_safety = _score_safety(events, validator_results, manifest)
-    d_minimality = _score_diff_minimality(diff, manifest)
-
-    dimensions: dict[str, DimensionScore] = {
-        "final_correctness": d_correctness,
-        "verification": d_verification,
-        "agent_review": d_agent_review,
-        "prompt_quality": d_prompt_quality,
-        "context_selection": d_context,
-        "safety": d_safety,
-        "diff_minimality": d_minimality,
+    # Compute each dimension into a name -> DimensionScore lookup, then
+    # assemble the final dict by iterating the canonical
+    # :data:`RUBRIC_DIMENSIONS` order. Keying off the central tuple means
+    # adding/renaming/removing a dimension only needs to be done in
+    # ``app.grading.dimensions`` — the score report layout follows
+    # automatically.
+    by_name: dict[str, DimensionScore] = {
+        "final_correctness": _score_final_correctness(
+            diff, validator_results, test_results, manifest
+        ),
+        "verification": _score_verification(events, validator_results, manifest),
+        "agent_review": _score_agent_review(events, manifest),
+        "prompt_quality": _score_prompt_quality(agent_turns, manifest),
+        "context_selection": _score_context_selection(events, manifest),
+        "safety": _score_safety(events, validator_results, manifest),
+        "diff_minimality": _score_diff_minimality(diff, manifest),
     }
+    dimensions: dict[str, DimensionScore] = {name: by_name[name] for name, _ in RUBRIC_DIMENSIONS}
 
     total = sum(ds.score for ds in dimensions.values())
     total = max(0, min(total, 100))
 
     strengths, weaknesses = _narrative(dimensions)
-    missed_failure_mode = not _hidden_tests_passed(test_results)
+    missed_failure_mode = not _hidden_tests_passed(test_results, manifest)
 
     return ScoreReport(
         total=total,

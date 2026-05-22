@@ -93,16 +93,12 @@ def _score_dimensions(total: int) -> dict[str, dict[str, Any]]:
     Used so the radar chart on the profile page renders with realistic
     proportions rather than every demo user having identical scores.
     """
-    # Plan §11.1 weights — sum to 100.
-    weights = {
-        "final_correctness": 30,
-        "verification": 20,
-        "agent_review": 15,
-        "prompt_quality": 10,
-        "context_selection": 10,
-        "safety": 10,
-        "diff_minimality": 5,
-    }
+    # Plan §11.1 weights — sourced from the single source of truth in
+    # :mod:`app.grading.dimensions` so the demo radar uses the same weights
+    # the live scoring engine does.
+    from app.grading.dimensions import DIMENSION_MAX
+
+    weights = dict(DIMENSION_MAX)
     # Scale each dim proportional to the user's overall score (total/100), then
     # round to int and clamp to the dim's max.
     pct = total / 100.0
@@ -206,9 +202,21 @@ async def _seed_mission_history(
                 id=uuid.uuid4(),
                 session_id=session_row.id,
                 final_diff=f"# demo final diff for {mission_id}\n",
-                visible_test_results={"passed": 5, "failed": 0},
-                hidden_test_results={"passed": 4, "failed": 1 if score < 90 else 0},
-                validator_results={"forbidden_changes": {"passed": True}},
+                # Lists to match the shared-types contract — each entry is a
+                # serialised ``TestRunResult`` / ``ValidatorResult`` dict that
+                # the FE iterates as an array.
+                visible_test_results=[
+                    {"suite": "unit", "passed": 5, "failed": 0, "exit_code": 0}
+                ],
+                hidden_test_results=[
+                    {
+                        "suite": "hidden",
+                        "passed": 4,
+                        "failed": 1 if score < 90 else 0,
+                        "exit_code": 0 if score >= 90 else 1,
+                    }
+                ],
+                validator_results=[{"kind": "forbidden_changes", "passed": True}],
                 score_report=score_report,
                 total_score=score,
                 created_at=completed_at,

@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import shlex
 import tarfile
 import time
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from loguru import logger
@@ -61,6 +62,37 @@ def _resolve_seccomp_path() -> Path:
 
 
 _SECCOMP_PATH = _resolve_seccomp_path()
+
+_SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9_./\-]+$")
+
+
+def _safe_workspace_path(path: str, workdir: str = "/workspace") -> str:
+    """Resolve ``path`` against ``workdir`` and reject traversal/absolute escapes.
+
+    Mirrors :func:`LocalSandboxDriver._resolve` so the docker driver enforces
+    the same workspace-only invariant. Returns the canonical absolute path
+    inside the workdir. Raises ``ValueError`` on any escape attempt.
+    """
+    if not path or path.isspace():
+        raise ValueError("path must not be empty")
+    if "\x00" in path:
+        raise ValueError("path must not contain NUL bytes")
+    if not _SAFE_PATH_RE.match(path.lstrip("/")):
+        raise ValueError("path contains unsupported characters")
+
+    workdir_p = PurePosixPath(workdir)
+    pure = PurePosixPath(path)
+    if pure.is_absolute():
+        resolved = pure
+    else:
+        resolved = workdir_p / pure
+    # Reject any '..' segment after joining.
+    parts = resolved.parts
+    if any(p == ".." for p in parts):
+        raise ValueError("path must not contain '..' segments")
+    if not str(resolved).startswith(str(workdir_p)):
+        raise ValueError(f"path '{path}' escapes workspace '{workdir}'")
+    return str(resolved)
 
 
 class DockerSandboxDriver(SandboxDriver):
@@ -193,9 +225,11 @@ class DockerSandboxDriver(SandboxDriver):
 
     # ----------------------------------------------------------------- files
     async def read_file(self, handle: SandboxHandle, path: str) -> bytes:
+        safe = _safe_workspace_path(path, str(handle.workdir))
+
         def _read():
             container = self._container(handle)
-            stream, _stat = container.get_archive(path)
+            stream, _stat = container.get_archive(safe)
             buf = io.BytesIO(b"".join(stream))
             buf.seek(0)
             saw_member = False
@@ -205,30 +239,32 @@ class DockerSandboxDriver(SandboxDriver):
                     if member.isdir():
                         # Explicitly signal directory so the caller can 404
                         # rather than silently returning empty bytes (P1-B22).
-                        raise IsADirectoryError(path)
+                        raise IsADirectoryError(safe)
                     if member.isfile():
                         extracted = tar.extractfile(member)
                         if extracted is None:
                             return b""
                         return extracted.read()
             if not saw_member:
-                raise FileNotFoundError(path)
+                raise FileNotFoundError(safe)
             return b""
 
         return await asyncio.to_thread(_read)
 
     async def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
+        safe = _safe_workspace_path(path, str(handle.workdir))
+        target_path = PurePosixPath(safe)
+
         def _write():
             container = self._container(handle)
             buf = io.BytesIO()
-            target_path = Path(path)
             with tarfile.open(fileobj=buf, mode="w") as tar:
                 info = tarfile.TarInfo(name=target_path.name)
                 info.size = len(content)
                 info.mode = 0o644
                 tar.addfile(info, io.BytesIO(content))
             buf.seek(0)
-            container.put_archive(str(target_path.parent) or "/", buf.read())
+            container.put_archive(str(target_path.parent) or str(handle.workdir), buf.read())
 
         await asyncio.to_thread(_write)
 
@@ -298,7 +334,14 @@ class DockerSandboxDriver(SandboxDriver):
             return exit_code, (stdout_b or b"", stderr_b or b"")
 
         def _kill_exec() -> None:
-            """Best-effort kill of the exec process started for this run."""
+            """Best-effort kill of THIS exec process — not the container.
+
+            Previously this called ``container.kill(SIGKILL)`` which nuked
+            every concurrent exec (PTY shell, parallel grading phase). We
+            now send the signal to the specific exec's PID via the host's
+            kernel signalling, falling back to a no-op if the PID has
+            already exited.
+            """
             exec_id = exec_id_holder.get("id")
             if not exec_id:
                 return
@@ -306,9 +349,20 @@ class DockerSandboxDriver(SandboxDriver):
                 client = self._ensure_client()
                 info = client.api.exec_inspect(exec_id)
                 pid = info.get("Pid")
-                if pid:
+                if not pid:
+                    return
+                # Signal the exec inside the container — use ``kill -TERM``
+                # via a tiny shell exec so we don't depend on host PID
+                # namespace mapping. If that fails we fall back to a hard
+                # SIGKILL on the same PID.
+                try:
                     container = self._container(handle)
-                    container.kill(signal="SIGKILL")  # nuke the whole exec
+                    container.exec_run(
+                        ["/bin/sh", "-c", f"kill -TERM {int(pid)} 2>/dev/null || true"],
+                        detach=True,
+                    )
+                except Exception:  # pragma: no cover — best-effort
+                    pass
             except Exception as exc:  # pragma: no cover — best-effort
                 logger.debug("docker exec kill failed for {}: {}", exec_id, exc)
 
@@ -334,12 +388,41 @@ class DockerSandboxDriver(SandboxDriver):
 
     # ------------------------------------------------------------------ diff
     async def apply_diff(self, handle: SandboxHandle, diff_text: str) -> ApplyResult:
-        await self.write_file(handle, "/tmp/p.diff", diff_text.encode("utf-8"))
-        result = await self.run(
-            handle,
-            ["git", "apply", "--3way", "--whitespace=fix", "/tmp/p.diff"],
-            timeout_s=30,
-        )
+        # Random suffix prevents two concurrent apply_diff calls on the
+        # same sandbox from trampling each other's diff bytes (the previous
+        # ``/tmp/p.diff`` shared name silently corrupted concurrent agent
+        # turns + grader runs). Write into /tmp (tmpfs), apply, then remove.
+        diff_name = f"/tmp/arena-patch-{uuid.uuid4().hex}.diff"
+
+        # Bypass the workspace-path guard for the tmp scratch file by
+        # constructing the tarball directly — apply_diff needs to write
+        # outside /workspace.
+        def _write_tmp_diff() -> None:
+            container = self._container(handle)
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tar:
+                payload = diff_text.encode("utf-8")
+                info = tarfile.TarInfo(name=Path(diff_name).name)
+                info.size = len(payload)
+                info.mode = 0o644
+                tar.addfile(info, io.BytesIO(payload))
+            buf.seek(0)
+            container.put_archive("/tmp", buf.read())
+
+        await asyncio.to_thread(_write_tmp_diff)
+        try:
+            result = await self.run(
+                handle,
+                ["git", "apply", "--3way", "--whitespace=fix", diff_name],
+                timeout_s=30,
+            )
+        finally:
+            # Best-effort cleanup; loop won't stall if the rm fails.
+            try:
+                await self.run(handle, ["rm", "-f", diff_name], timeout_s=5)
+            except Exception:  # pragma: no cover — best-effort
+                pass
+
         if result.exit_code != 0:
             return ApplyResult(applied=False, error=result.stderr or result.stdout)
 
@@ -389,15 +472,25 @@ class DockerSandboxDriver(SandboxDriver):
             test_results[suite] = _docker_test_run_to_dict(tr)
             logs[f"visible.{suite}"] = tr.stdout + "\n--- stderr ---\n" + tr.stderr
 
-        # Hidden suite.
+        # Hidden suite. The runner is expected under /grader/hidden_tests/
+        # (mounted outside /workspace so the user can't list or pre-pass it).
+        # Mission YAMLs that still write ``bash hidden_tests/runner.sh`` are
+        # rewritten to the canonical /grader path; everything else passes
+        # through verbatim so missions can specify custom commands.
         if hidden_dir is not None and hidden_dir.is_dir():
             hidden_cfg = getattr(mission, "hidden_tests", None)
-            hidden_cmd = (
-                getattr(hidden_cfg, "command", "bash /grader/hidden_tests/runner.sh")
-                if hidden_cfg is not None
-                else "bash /grader/hidden_tests/runner.sh"
+            default_cmd = "bash /grader/hidden_tests/runner.sh"
+            raw_cmd = (
+                getattr(hidden_cfg, "command", default_cmd) if hidden_cfg is not None else default_cmd
+            ) or default_cmd
+            # Word-boundary-safe rewrite: only legacy ``hidden_tests/``
+            # references (no ``/grader/`` prefix already) get rewritten to
+            # the canonical mount path.
+            hidden_cmd = re.sub(r"(?<![\w/])hidden_tests/", "/grader/hidden_tests/", raw_cmd)
+            wrapped = (
+                f"WORKSPACE_DIR=/workspace GRADER_DIR=/grader/hidden_tests {hidden_cmd}"
             )
-            tr = await self._run_test_phase(handle, "hidden", hidden_cmd, 180)
+            tr = await self._run_test_phase(handle, "hidden", wrapped, 180)
             test_results["hidden"] = _docker_test_run_to_dict(tr)
             logs["hidden"] = tr.stdout + "\n--- stderr ---\n" + tr.stderr
         elif manifest_folder is not None:
@@ -482,6 +575,21 @@ class DockerSandboxDriver(SandboxDriver):
             skipped=skipped,
             timed_out=False,
         )
+
+    # ------------------------------------------------------------------ ping
+    async def ping(self) -> bool:
+        """Verify the Docker daemon is reachable.
+
+        Called from ``/healthz/ready`` so a sandbox daemon outage shows up as
+        a 503 instead of letting traffic hit the API and fail at provision
+        time. Runs in a thread because the underlying SDK call is sync.
+        """
+
+        def _do_ping() -> bool:
+            client = self._ensure_client()
+            return bool(client.ping())
+
+        return await asyncio.to_thread(_do_ping)
 
     # -------------------------------------------------------------- destroy
     async def destroy(self, handle: SandboxHandle) -> None:

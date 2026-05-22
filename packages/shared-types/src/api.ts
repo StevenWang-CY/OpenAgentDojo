@@ -106,9 +106,11 @@ export interface User {
   handle?: string;
   created_at: ISODateString;
   last_login_at: ISODateString | null;
-  /** CSRF token rotated on every /me call; embedded for clients that prefer
-   *  reading from JSON over reading the arena_csrf cookie. */
-  csrf_token?: string;
+  /** CSRF token issued on every /me call (re-uses the existing cookie when
+   *  present — see `_build_me_response` on the backend). Always populated by
+   *  the route; the FE can rely on it being present without a defensive
+   *  branch. */
+  csrf_token: string;
 }
 
 // ── Mission enrichment ──────────────────────────────────────────────────────

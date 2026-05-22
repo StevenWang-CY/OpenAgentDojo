@@ -15,14 +15,18 @@ import { cn } from "@/lib/utils";
 
 /**
  * Horizontally-scrolling marketing strip of every published mission. Used on
- * the landing page so visitors can scan all 10 scenarios at a glance. Falls
- * back to a frozen sample list when the API is offline so the marketing page
- * never looks broken locally.
+ * the landing page so visitors can scan all 10 scenarios at a glance.
+ *
+ * Fallback semantics: the static FALLBACK_MISSIONS list is shown ONLY when the
+ * backend is unreachable (network failure / 5xx). A reachable backend that
+ * returns an empty mission list is treated as the truthful state — we render
+ * a real empty state rather than substituting the hardcoded preview, so
+ * marketing visitors never see fake clickable cards that 404 on click.
  */
 export function ScenarioCarousel() {
   const scrollerRef = React.useRef<HTMLUListElement | null>(null);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, isError } = useQuery({
     queryKey: ["missions"],
     queryFn: ({ signal }) => listMissions(signal),
     retry: (failureCount, e) => {
@@ -31,8 +35,14 @@ export function ScenarioCarousel() {
     },
   });
 
-  const missions: Mission[] = data && data.length > 0 ? data : FALLBACK_MISSIONS;
+  const apiUnreachable = isError && (!data || data.length === 0);
+  const missions: Mission[] = data && data.length > 0
+    ? data
+    : apiUnreachable
+      ? FALLBACK_MISSIONS
+      : [];
   const offline = !isLoading && (error || (data && data.length === 0));
+  const reachableButEmpty = !isLoading && !isError && data && data.length === 0;
 
   function scrollBy(direction: 1 | -1) {
     const el = scrollerRef.current;
@@ -87,6 +97,11 @@ export function ScenarioCarousel() {
             <Skeleton key={i} className="h-44 w-72 shrink-0 rounded-xl" />
           ))}
         </div>
+      ) : reachableButEmpty ? (
+        <div className="mt-10 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-10 text-center text-sm text-[var(--color-muted-foreground)]">
+          The catalog is empty. Missions will appear here as soon as content
+          ships.
+        </div>
       ) : (
         <ul
           ref={scrollerRef}
@@ -99,7 +114,7 @@ export function ScenarioCarousel() {
               key={mission.id}
               className="w-72 shrink-0 snap-start"
             >
-              <ScenarioCard mission={mission} />
+              <ScenarioCard mission={mission} preview={apiUnreachable} />
             </li>
           ))}
         </ul>
@@ -115,21 +130,29 @@ export function ScenarioCarousel() {
   );
 }
 
-function ScenarioCard({ mission }: { mission: Mission }) {
-  const href = `/missions/${mission.id}` as const;
-  return (
-    <Link
-      href={href}
-      className={cn(
-        "group flex h-full flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-soft",
-        "transition-all duration-180 ease-macos hover:-translate-y-0.5 hover:shadow-elevated"
-      )}
-    >
+function ScenarioCard({ mission, preview = false }: { mission: Mission; preview?: boolean }) {
+  // When the backend is unreachable we render preview cards that are
+  // visually identical but non-clickable — a click would route to a 404
+  // mission detail because no catalog row exists yet.
+  const baseClasses = cn(
+    "group flex h-full flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-soft",
+    preview
+      ? "cursor-default opacity-90"
+      : "transition-all duration-180 ease-macos hover:-translate-y-0.5 hover:shadow-elevated"
+  );
+  const body = (
+    <>
       <div className="flex items-center justify-between">
         <Badge tone="outline" className="font-mono text-[10px] tracking-normal">
           {mission.category}
         </Badge>
-        <DifficultyBadge difficulty={mission.difficulty} />
+        {preview ? (
+          <Badge tone="outline" className="text-[10px]">
+            preview
+          </Badge>
+        ) : (
+          <DifficultyBadge difficulty={mission.difficulty} />
+        )}
       </div>
       <p className="line-clamp-2 text-sm font-semibold tracking-tight">
         {mission.title}
@@ -142,10 +165,28 @@ function ScenarioCard({ mission }: { mission: Mission }) {
           <Clock className="size-3" aria-hidden />
           {formatEstimatedMinutes(mission.estimated_minutes)}
         </span>
-        <span className="inline-flex items-center gap-1 text-[var(--color-primary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-          Start <ArrowRight className="size-3" aria-hidden />
-        </span>
+        {preview ? null : (
+          <span className="inline-flex items-center gap-1 text-[var(--color-primary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+            Start <ArrowRight className="size-3" aria-hidden />
+          </span>
+        )}
       </div>
+    </>
+  );
+  if (preview) {
+    return (
+      <div
+        aria-disabled
+        className={baseClasses}
+        title="Preview only — backend offline"
+      >
+        {body}
+      </div>
+    );
+  }
+  return (
+    <Link href={`/missions/${mission.id}`} className={baseClasses}>
+      {body}
     </Link>
   );
 }

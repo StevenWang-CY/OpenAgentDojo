@@ -14,6 +14,7 @@ import type {
 import {
   ApiError,
   applyPatch,
+  auth,
   getDiff,
   getFileTree,
   getSession,
@@ -179,6 +180,17 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   // `status === "active" | "submitting"` so we don't fire it during
   // provisioning or after a graded/abandoned terminal state.
   const tokenQueryEnabled = status === "active" || status === "submitting";
+  // Fetch the authenticated user so the "Session ended" terminal view can
+  // deep-link to the correct ``/profile/{handle}`` page. Cheap, cached, and
+  // safe to keep mounted — `auth.me()` is a tiny GET that the layout already
+  // primes elsewhere via React Query's shared cache.
+  const meQuery = useQuery({
+    queryKey: ["auth-me"],
+    queryFn: ({ signal }) => auth.me(signal),
+    staleTime: 60_000,
+    retry: false,
+  });
+
   const tokenQuery = useQuery({
     queryKey: ["ws-token", sessionId],
     queryFn: ({ signal }) => getWsToken(sessionId, signal),
@@ -445,9 +457,11 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
             <Button asChild>
               <Link href="/missions">Start a new mission</Link>
             </Button>
-            <Button asChild variant="ghost">
-              <Link href="/profile/me">Open profile</Link>
-            </Button>
+            {meQuery.data?.handle ? (
+              <Button asChild variant="ghost">
+                <Link href={`/profile/${meQuery.data.handle}`}>Open profile</Link>
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -742,6 +756,8 @@ function isSupervisionEvent(value: unknown): value is SupervisionEvent {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return (
+    typeof v.id === "number" &&
+    typeof v.session_id === "string" &&
     typeof v.event_type === "string" &&
     typeof v.occurred_at === "string" &&
     typeof v.payload === "object" &&

@@ -36,14 +36,21 @@ async def _bind_engine(db_engine):
 
 def _score_report(
     final: int = 24,
-    verification: int = 16,
+    verification: int = 12,
     agent_review: int = 12,
     prompt_quality: int = 8,
     context_selection: int = 6,
     safety: int = 10,
-    diff_minimality: int = 4,
+    diff_minimality: int = 8,
 ) -> dict:
-    """Build a score_report payload with all 7 rubric dimensions populated."""
+    """Build a score_report payload with all 7 rubric dimensions populated.
+
+    Max scores are pulled from the single :mod:`app.grading.dimensions`
+    source of truth — adjusting a dimension's weight there reflows the test
+    fixture automatically.
+    """
+    from app.grading.dimensions import DIMENSION_MAX
+
     return {
         "total": final
         + verification
@@ -53,13 +60,37 @@ def _score_report(
         + safety
         + diff_minimality,
         "dimensions": {
-            "final_correctness": {"score": final, "max": 30, "signals": []},
-            "verification": {"score": verification, "max": 20, "signals": []},
-            "agent_review": {"score": agent_review, "max": 15, "signals": []},
-            "prompt_quality": {"score": prompt_quality, "max": 10, "signals": []},
-            "context_selection": {"score": context_selection, "max": 10, "signals": []},
-            "safety": {"score": safety, "max": 10, "signals": []},
-            "diff_minimality": {"score": diff_minimality, "max": 5, "signals": []},
+            "final_correctness": {
+                "score": final,
+                "max": DIMENSION_MAX["final_correctness"],
+                "signals": [],
+            },
+            "verification": {
+                "score": verification,
+                "max": DIMENSION_MAX["verification"],
+                "signals": [],
+            },
+            "agent_review": {
+                "score": agent_review,
+                "max": DIMENSION_MAX["agent_review"],
+                "signals": [],
+            },
+            "prompt_quality": {
+                "score": prompt_quality,
+                "max": DIMENSION_MAX["prompt_quality"],
+                "signals": [],
+            },
+            "context_selection": {
+                "score": context_selection,
+                "max": DIMENSION_MAX["context_selection"],
+                "signals": [],
+            },
+            "safety": {"score": safety, "max": DIMENSION_MAX["safety"], "signals": []},
+            "diff_minimality": {
+                "score": diff_minimality,
+                "max": DIMENSION_MAX["diff_minimality"],
+                "signals": [],
+            },
         },
         "strengths": [],
         "weaknesses": [],
@@ -164,12 +195,12 @@ async def _seed_profile(db_engine):
                 validator_results={},
                 score_report=_score_report(
                     final=20,
-                    verification=14,
+                    verification=10,
                     agent_review=10,
                     prompt_quality=6,
                     context_selection=8,
                     safety=10,
-                    diff_minimality=3,
+                    diff_minimality=6,
                 ),
                 total_score=80,
             )
@@ -184,12 +215,12 @@ async def _seed_profile(db_engine):
                 validator_results={},
                 score_report=_score_report(
                     final=28,
-                    verification=18,
+                    verification=14,
                     agent_review=14,
                     prompt_quality=10,
                     context_selection=8,
                     safety=10,
-                    diff_minimality=5,
+                    diff_minimality=10,
                 ),
                 total_score=92,
             )
@@ -273,7 +304,7 @@ async def test_full_profile_payload(client, db_engine) -> None:
         "diff_minimality",
     }
     assert radar["final_correctness"] == pytest.approx((20 + 28) / 2, rel=1e-3)
-    assert radar["verification"] == pytest.approx((14 + 18) / 2, rel=1e-3)
+    assert radar["verification"] == pytest.approx((10 + 14) / 2, rel=1e-3)
     assert radar["safety"] == pytest.approx(10.0, rel=1e-3)
 
 

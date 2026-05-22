@@ -27,13 +27,15 @@ jobs:
     name: api contracts (no drift)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
+        # TODO: pin via sha — currently floating on v7 (ci.yml pins v3.2.4
+        # against a different SHA so we cannot reuse that one here).
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -43,12 +45,12 @@ jobs:
         working-directory: apps/api
         run: uv sync --extra dev
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
         with:
           version: ${{ env.PNPM_VERSION }}
           run_install: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm

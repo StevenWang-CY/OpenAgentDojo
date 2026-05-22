@@ -77,7 +77,8 @@ def _retryable(exc: BaseException) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
         try:
             return 500 <= exc.response.status_code < 600
-        except Exception:
+        except AttributeError:
+            logger.debug("LLM HTTPStatusError missing response.status_code, treating as non-retryable")
             return False
     return False
 
@@ -161,7 +162,7 @@ class AnthropicClient:
 
         model_label = str(kwargs["model"])
         attempts = self._max_retries + 1
-        last_exc: BaseException | None = None
+        last_exc: Exception | None = None
 
         for attempt in range(attempts):
             client = self._ensure()
@@ -171,7 +172,10 @@ class AnthropicClient:
                     client.messages.create(**kwargs),
                     timeout=self._call_timeout_seconds,
                 )
-            except BaseException as exc:
+            except asyncio.CancelledError:
+                # Cooperative cancellation must propagate untouched.
+                raise
+            except Exception as exc:
                 elapsed = time.perf_counter() - started
                 llm_latency_seconds.labels(provider=self.provider_name, model=model_label).observe(
                     elapsed

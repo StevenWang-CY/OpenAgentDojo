@@ -74,7 +74,10 @@ async def test_status_shape_is_complete(client, monkeypatch) -> None:
     assert "sandbox_pool" in body["components"]
     assert "workers" in body["components"]
     for name, comp in body["components"].items():
-        assert set(comp.keys()) == {"status", "checked_at"}, name
+        # Every component must carry status + checked_at; optional ``note``
+        # is allowed for context (e.g. workers component reports
+        # ``"in-process"`` when provisioning runs inside the API process).
+        assert {"status", "checked_at"}.issubset(comp.keys()), name
         assert comp["status"] in {"operational", "degraded", "down"}, name
         # checked_at is an ISO-8601 string we can round-trip.
         from datetime import datetime

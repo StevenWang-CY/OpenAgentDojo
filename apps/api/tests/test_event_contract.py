@@ -193,6 +193,77 @@ async def test_patch_applied_file_count_is_int(db_engine) -> None:
         assert "removed_lines" not in row.payload
 
 
+# Hand-maintained mirror of ``packages/shared-types/src/events.ts``'s
+# ``SupervisionEventType`` enum. Adding a new ``event_type=`` string to the
+# emitter REQUIRES a matching entry on the FE — appending to this set
+# without also adding it to the TS enum will fail
+# ``test_event_types_emitted_in_be_match_fe_enum`` and the FE-side
+# ``contract-event-types.test.ts`` will fail in lockstep.
+_FE_KNOWN_EVENT_TYPES: set[str] = {
+    "session.started",
+    "session.errored",
+    "session.abandoned",
+    "session.provision_failed",
+    "context.selected",
+    "prompt.submitted",
+    "agent.responded",
+    "patch.proposed",
+    "patch.applied",
+    "patch.failed",
+    "diff.opened",
+    "diff.hovered",
+    "file.edited",
+    "file.reverted",
+    "command.run",
+    "test.run",
+    "validator.flag",
+    "submission.requested",
+    "submission.graded",
+    "submission.failed",
+}
+
+
+def test_event_types_emitted_in_be_match_fe_enum() -> None:
+    """Every ``event_type=`` literal emitted by the BE must be in the FE enum.
+
+    Grep is intentional — we want to catch *all* call sites, including ad-hoc
+    middleware and worker emits, not just the ones routed through a typed
+    helper. The grep target is the ``event_type="..."`` literal that the
+    :class:`EventEmitter.emit` API takes as its sole categorical argument.
+
+    A failing assertion here means one of two things:
+      1. A new event was added to the BE without updating
+         ``packages/shared-types/src/events.ts``. Add it to the enum AND to
+         ``_FE_KNOWN_EVENT_TYPES`` above.
+      2. A typo crept into an ``event_type=`` literal — fix the typo at the
+         call site.
+    """
+    import re
+    from pathlib import Path
+
+    app_root = Path(__file__).resolve().parent.parent / "app"
+    pattern = re.compile(r'event_type\s*=\s*"([^"]+)"')
+
+    emitted: set[str] = set()
+    for py in app_root.rglob("*.py"):
+        text = py.read_text(encoding="utf-8", errors="replace")
+        for match in pattern.findall(text):
+            # Skip the parameter declaration in ``def emit(...)`` itself —
+            # the regex matches ``event_type=event_type`` and Prometheus
+            # ``labels(event_type=event_type)``; both forward an existing
+            # variable rather than introducing a new literal.
+            if match in {"event_type", ""}:
+                continue
+            emitted.add(match)
+
+    missing_from_fe = emitted - _FE_KNOWN_EVENT_TYPES
+    assert not missing_from_fe, (
+        f"BE emits event_type literals not in the FE enum: "
+        f"{sorted(missing_from_fe)}. Update "
+        f"packages/shared-types/src/events.ts AND _FE_KNOWN_EVENT_TYPES."
+    )
+
+
 @pytest.mark.asyncio
 async def test_publish_deferred_until_after_commit(db_engine) -> None:
     """`EventEmitter.emit` should queue the publish, not fan it out inline."""

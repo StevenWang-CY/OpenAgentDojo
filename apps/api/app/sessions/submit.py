@@ -188,8 +188,13 @@ async def submit_session(
             manifest_folder=manifest_folder,
         )
     except TimeoutError as exc:
-        # Stub a Submission row so GET /submission returns 200 instead of 404,
-        # with the failure surfaced via session.status='error' (P1-B17).
+        # Flip the session to a terminal ``error`` state BEFORE we attempt to
+        # stub a Submission row. ``_ensure_failed_stub`` rolls back the active
+        # transaction up-front (so it can recover from a partial pipeline
+        # write), which would otherwise discard a status mutation queued on
+        # this session. Persist + commit it first, then let the stub-writer
+        # do its best-effort INSERT.
+        await _mark_session_errored(db, session, session_id)
         await _ensure_failed_stub(db, session_id, reason=f"timeout: {exc}")
         # ``outcome="timeout"`` is split out from the generic ``failed`` bucket
         # so the SLO dashboard can distinguish wall-clock-budget hits (an
@@ -201,6 +206,7 @@ async def submit_session(
         ) from exc
     except Exception as exc:
         logger.exception("[submit] grading pipeline failed for session {}", session_id)
+        await _mark_session_errored(db, session, session_id)
         await _ensure_failed_stub(db, session_id, reason=f"pipeline_error: {exc}")
         submissions_total.labels(mission_id=mission_id, outcome="failed").inc()
         raise HTTPException(
@@ -217,6 +223,39 @@ async def submit_session(
         submission.total_score,
     )
     return SubmissionRead.model_validate(submission)
+
+
+async def _mark_session_errored(
+    db: AsyncSession,
+    session: SessionRow,
+    session_id: uuid.UUID,
+) -> None:
+    """Flip ``session`` to ``status='error'`` + stamp ``completed_at``.
+
+    Runs BEFORE :func:`_ensure_failed_stub` so the session's terminal state is
+    persisted even if the stub-writer's rollback discards the in-flight
+    transaction. The mutation uses a bounded ``UPDATE`` so we touch the row
+    even when the ORM instance is detached (e.g. after the pipeline crash
+    drained the active transaction).
+    """
+    now = datetime.now(UTC)
+    try:
+        # Reflect on the in-memory ORM so downstream readers see a consistent
+        # snapshot — but the source of truth is the UPDATE below.
+        session.status = "error"
+        session.completed_at = now
+        await db.execute(
+            update(SessionRow)
+            .where(SessionRow.id == session_id)
+            .values(status="error", completed_at=now)
+        )
+        await db.commit()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("[submit] failed to mark session {} errored: {}", session_id, exc)
+        try:
+            await db.rollback()
+        except Exception:  # pragma: no cover — defensive
+            pass
 
 
 async def _ensure_failed_stub(
@@ -255,9 +294,13 @@ async def _ensure_failed_stub(
         stub = Submission(
             session_id=session_id,
             final_diff="",
-            visible_test_results={},
-            hidden_test_results={},
-            validator_results={},
+            # Empty lists (not dicts) to match the shared-types contract —
+            # see ``GradingResult`` for the wider rationale. The FE iterates
+            # these arrays unconditionally so an object here would break
+            # rendering of the failure stub.
+            visible_test_results=[],
+            hidden_test_results=[],
+            validator_results=[],
             score_report={
                 "total": 0,
                 "dimensions": {},

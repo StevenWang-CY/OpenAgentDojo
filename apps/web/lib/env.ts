@@ -15,6 +15,11 @@ export const env = {
   appUrl: trimTrailingSlash(
     process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
   ),
+  /** PostHog project API key. Empty string disables product analytics. */
+  posthogKey: process.env.NEXT_PUBLIC_POSTHOG_KEY ?? "",
+  /** PostHog ingest host (US cloud by default). */
+  posthogHost:
+    process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com",
 } as const;
 
 function trimTrailingSlash(s: string): string {

@@ -73,25 +73,14 @@ def __getattr__(name: str) -> Any:  # pragma: no cover — import shim
 
 
 class PromptBody(BaseModel):
-    """POST body for ``/sessions/{id}/prompts``."""
+    """POST body for ``/sessions/{id}/prompts``.
 
-    text: str = Field(min_length=1)
-    context: ContextSelection | None = None
-
-
-class ApplyPatchBody(BaseModel):
-    """POST body for ``/sessions/{id}/patches/{turn_id}/apply``.
-
-    Currently empty; reserved so the endpoint can accept driver overrides
-    (e.g. dry-run) without a breaking-change later. We previously declared
-    ``dry_run: bool`` but nothing in the agent service consumed it (P1-B9)
-    — the field was published as a public contract through the OpenAPI
-    schema with no implementation backing it, which is worse than no
-    field at all. Removed; clients sending an empty body still pass schema
-    validation.
+    Bounded at 20k characters — anything beyond is pathological for a
+    supervision prompt and would balloon DB rows + WS event payloads.
     """
 
-    model_config = {"extra": "ignore"}
+    text: str = Field(min_length=1, max_length=20_000)
+    context: ContextSelection | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -252,17 +241,24 @@ async def post_prompt(
 @router.post(
     "/{session_id}/patches/{turn_id}/apply",
     response_model=PatchResult,
-    summary="Apply the agent patch for a specific turn",
+    summary="Apply the agent patch for a specific turn (no request body)",
 )
 async def post_apply_patch(
     session_id: uuid.UUID,
     turn_id: uuid.UUID,
     request: Request,
-    body: ApplyPatchBody | None = None,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_auth),
     agent_service: AgentService = Depends(get_agent_service),
 ) -> PatchResult:
+    """Apply the agent-proposed patch for ``turn_id``.
+
+    Takes no request body — the (turn_id, session_id) tuple in the URL is
+    the only input. The previous ``ApplyPatchBody`` placeholder model was
+    removed (P1-B9): nothing consumed it and publishing an empty schema as
+    part of the public OpenAPI surface led FE generators to mint a useless
+    type alias.
+    """
     session = await get_session(db, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
@@ -276,11 +272,23 @@ async def post_apply_patch(
 
     # Lookup the manifest so apply_patch can pick up an optional
     # ``agent.patch_file`` override declared by the mission.
-    loaded = None
+    #
+    # P0: previously this block swallowed ``HTTPException`` and silently fell
+    # back to ``loaded=None`` — which made ``apply_patch`` ignore the
+    # manifest's configured ``agent.patch_file`` override and apply the
+    # historical ``agent_patch.diff`` instead. A cache miss here is a real
+    # bug (the missions cache should be seeded by the time a session is
+    # alive), so we log loudly and surface the 500 to the caller rather
+    # than apply the wrong patch.
     try:
         loaded = _resolve_manifest(session.mission_id)
     except HTTPException:
-        loaded = None
+        logger.exception(
+            "[agent] manifest cache miss for mission {} during apply_patch — "
+            "refusing to apply blind",
+            session.mission_id,
+        )
+        raise
 
     return await agent_service.apply_patch(
         db=db,

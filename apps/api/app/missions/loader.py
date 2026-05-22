@@ -58,14 +58,21 @@ class MissionLoader:
     def scan(self) -> list[LoadedMission]:
         """Return every valid mission under ``root`` sorted by id.
 
-        Mission folders that contain a ``.draft`` marker file are skipped —
-        used for in-progress missions that should not appear in the catalog
-        or be exercised by ``validate:missions`` until they're ready.
+        A single broken manifest must NOT zero the catalog. ``scan`` collects
+        every mission it can parse and logs the rest; ``validate_all`` is the
+        strict variant that callers (the validate-missions CLI, pre-commit
+        hooks, contract tests) reach for when they need a hard failure.
         """
+        loaded, _ = self._scan_collecting_failures()
+        return loaded
+
+    def _scan_collecting_failures(self) -> tuple[list[LoadedMission], list[tuple[Path, Exception]]]:
+        """Internal helper that also returns the per-mission failure list."""
         out: list[LoadedMission] = []
+        failures: list[tuple[Path, Exception]] = []
         if not self.root.exists():
             logger.debug("missions root {} does not exist; returning []", self.root)
-            return out
+            return out, failures
 
         for path in sorted(self.root.glob("*/mission.yaml")):
             if (path.parent / ".draft").exists():
@@ -75,13 +82,18 @@ class MissionLoader:
                 loaded = self._load_one(path)
             except Exception as exc:
                 logger.error("failed to load mission at {}: {}", path, exc)
-                raise
+                failures.append((path, exc))
+                continue
             out.append(loaded)
-        return sorted(out, key=lambda x: x.manifest.id)
+        return sorted(out, key=lambda x: x.manifest.id), failures
 
     def validate_all(self) -> list[LoadedMission]:
-        """Like ``scan`` but raises a single aggregated error if any fail."""
-        return self.scan()
+        """Strict scan — raise an aggregated error if any mission fails."""
+        loaded, failures = self._scan_collecting_failures()
+        if failures:
+            joined = "; ".join(f"{p}: {exc}" for p, exc in failures)
+            raise MissionConfigError(f"mission load failures: {joined}")
+        return loaded
 
     def load_manifest(self, manifest_path: Path) -> LoadedMission:
         """Load a single ``mission.yaml`` into a :class:`LoadedMission`.
@@ -116,38 +128,79 @@ class MissionLoader:
     async def upsert_catalog(self, db: Any) -> int:
         """Upsert every loaded mission into the catalog using the given AsyncSession.
 
-        Returns the number of rows upserted.
+        Returns the number of rows upserted. Uses ``ON CONFLICT`` for both
+        Postgres and SQLite (both support the same syntax for INSERT ... ON
+        CONFLICT (id) DO UPDATE since SQLite 3.24) and falls back to a
+        SELECT-then-UPDATE/INSERT pair for any other dialect so tests stay
+        portable.
         """
         loaded = self.scan()
         if not loaded:
             return 0
 
-        sql = text(
-            """
-            INSERT INTO missions
-              (id, title, difficulty, category, repo_pack, initial_commit,
-               estimated_minutes, failure_mode, skills_tested,
-               manifest_sha256, version, published)
-            VALUES
-              (:id, :title, :difficulty, :category, :repo_pack, :initial_commit,
-               :estimated_minutes, :failure_mode, :skills_tested,
-               :manifest_sha256, :version, :published)
-            ON CONFLICT (id) DO UPDATE SET
-              title             = EXCLUDED.title,
-              difficulty        = EXCLUDED.difficulty,
-              category          = EXCLUDED.category,
-              repo_pack         = EXCLUDED.repo_pack,
-              initial_commit    = EXCLUDED.initial_commit,
-              estimated_minutes = EXCLUDED.estimated_minutes,
-              failure_mode      = EXCLUDED.failure_mode,
-              skills_tested     = EXCLUDED.skills_tested,
-              manifest_sha256   = EXCLUDED.manifest_sha256,
-              version           = EXCLUDED.version,
-              published         = EXCLUDED.published
-            """
-        )
-        for m in loaded:
-            await db.execute(sql, m.to_catalog_row())
+        dialect = db.bind.dialect.name if hasattr(db, "bind") and db.bind is not None else None
+        if dialect is None:
+            engine = getattr(db, "get_bind", lambda: None)()
+            if engine is not None:
+                dialect = engine.dialect.name
+
+        if dialect in {"postgresql", "sqlite"}:
+            sql = text(
+                """
+                INSERT INTO missions
+                  (id, title, difficulty, category, repo_pack, initial_commit,
+                   estimated_minutes, failure_mode, skills_tested,
+                   manifest_sha256, version, published)
+                VALUES
+                  (:id, :title, :difficulty, :category, :repo_pack, :initial_commit,
+                   :estimated_minutes, :failure_mode, :skills_tested,
+                   :manifest_sha256, :version, :published)
+                ON CONFLICT (id) DO UPDATE SET
+                  title             = EXCLUDED.title,
+                  difficulty        = EXCLUDED.difficulty,
+                  category          = EXCLUDED.category,
+                  repo_pack         = EXCLUDED.repo_pack,
+                  initial_commit    = EXCLUDED.initial_commit,
+                  estimated_minutes = EXCLUDED.estimated_minutes,
+                  failure_mode      = EXCLUDED.failure_mode,
+                  skills_tested     = EXCLUDED.skills_tested,
+                  manifest_sha256   = EXCLUDED.manifest_sha256,
+                  version           = EXCLUDED.version,
+                  published         = EXCLUDED.published
+                """
+            )
+            for m in loaded:
+                await db.execute(sql, m.to_catalog_row())
+        else:
+            # Portable fallback: emulate UPSERT via SELECT + INSERT/UPDATE.
+            select_sql = text("SELECT id FROM missions WHERE id = :id")
+            insert_sql = text(
+                """
+                INSERT INTO missions
+                  (id, title, difficulty, category, repo_pack, initial_commit,
+                   estimated_minutes, failure_mode, skills_tested,
+                   manifest_sha256, version, published)
+                VALUES
+                  (:id, :title, :difficulty, :category, :repo_pack, :initial_commit,
+                   :estimated_minutes, :failure_mode, :skills_tested,
+                   :manifest_sha256, :version, :published)
+                """
+            )
+            update_sql = text(
+                """
+                UPDATE missions SET
+                  title=:title, difficulty=:difficulty, category=:category,
+                  repo_pack=:repo_pack, initial_commit=:initial_commit,
+                  estimated_minutes=:estimated_minutes, failure_mode=:failure_mode,
+                  skills_tested=:skills_tested, manifest_sha256=:manifest_sha256,
+                  version=:version, published=:published
+                WHERE id=:id
+                """
+            )
+            for m in loaded:
+                row = m.to_catalog_row()
+                exists = (await db.execute(select_sql, {"id": row["id"]})).first()
+                await db.execute(update_sql if exists else insert_sql, row)
         await db.commit()
         return len(loaded)
 

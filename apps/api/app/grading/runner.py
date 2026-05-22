@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.grading.badges import award as award_badges
 from app.grading.diff import ParsedDiff
+from app.grading.dimensions import RUBRIC_DIMENSIONS
 from app.grading.score import ScoreReport, compute_score
 from app.grading.validators import ValidatorResult, dispatch
 from app.grading.validators.tests_pass import TestRunResult, validate_tests_pass
@@ -46,20 +47,13 @@ DEFAULT_BUDGET_SECONDS = 300
 PER_VALIDATOR_TIMEOUT_S = 30
 
 # §11.2 rubric — the seven dimensions in canonical order with their MAX
-# scores. Mirrored in :mod:`app.grading.score` (kept duplicated rather than
-# imported so a change to the scoring engine's internals can't silently rename
-# a dimension out from under the FE contract). Defaulting against this table
-# guarantees ``submission.graded`` always carries all seven keys (P1-B4) so
-# the FE radar chart never renders a hole.
-_RUBRIC_DIMENSIONS: tuple[tuple[str, int], ...] = (
-    ("final_correctness", 30),
-    ("verification", 20),
-    ("agent_review", 15),
-    ("prompt_quality", 10),
-    ("context_selection", 10),
-    ("safety", 10),
-    ("diff_minimality", 5),
-)
+# scores. Re-exported from :mod:`app.grading.dimensions` so that the runner,
+# the score engine, and the profile aggregator all share a single source of
+# truth (a renamed or re-weighted dimension can no longer drift between
+# layers). Defaulting against this table guarantees ``submission.graded``
+# always carries all seven keys (P1-B4) so the FE radar chart never renders a
+# hole.
+_RUBRIC_DIMENSIONS: tuple[tuple[str, int], ...] = RUBRIC_DIMENSIONS
 
 
 def _ensure_all_dimensions(
@@ -121,13 +115,19 @@ def shutdown_fs_executor() -> None:
 
 @dataclass
 class GradingResult:
-    """Return value of :meth:`GradingRunner.run` — drives Submission insert."""
+    """Return value of :meth:`GradingRunner.run` — drives Submission insert.
+
+    ``visible_test_results`` / ``hidden_test_results`` / ``validator_results``
+    are LISTS so they match the shared-types contract
+    (``packages/shared-types/src/api.ts`` declares them as arrays). Each entry
+    is a serialised :class:`TestRunResult` / :class:`ValidatorResult` dict.
+    """
 
     session_id: uuid.UUID
     final_diff: str
-    visible_test_results: dict[str, Any]
-    hidden_test_results: dict[str, Any]
-    validator_results: dict[str, Any]
+    visible_test_results: list[dict[str, Any]]
+    hidden_test_results: list[dict[str, Any]]
+    validator_results: list[dict[str, Any]]
     score_report: dict[str, Any]
     total_score: int
     badges_earned: list[str] = field(default_factory=list)
@@ -372,12 +372,18 @@ class GradingRunner:
         report.badges_earned = list(badge_ids)
 
         # Step 6: build GradingResult.
+        # Lists (not dicts) so the JSON serialisation matches the contract in
+        # ``packages/shared-types/src/api.ts``. Each entry includes the
+        # ``suite`` / ``kind`` key inline (TestRunResult.to_dict / the same on
+        # ValidatorResult already carries it, but we make it explicit so a
+        # future shape regression in those serialisers can't silently strip
+        # the discriminator the FE filters on).
         return GradingResult(
             session_id=session_id,
             final_diff=diff_text,
-            visible_test_results={r.suite: r.to_dict() for r in visible_results},
-            hidden_test_results={r.suite: r.to_dict() for r in hidden_results},
-            validator_results={r.kind: r.to_dict() for r in validator_results},
+            visible_test_results=[{**r.to_dict(), "suite": r.suite} for r in visible_results],
+            hidden_test_results=[{**r.to_dict(), "suite": r.suite} for r in hidden_results],
+            validator_results=[{**r.to_dict(), "kind": r.kind} for r in validator_results],
             score_report=report.to_dict(),
             total_score=report.total,
             badges_earned=list(badge_ids),
@@ -507,6 +513,24 @@ def _hidden_suite_names(manifest: Any) -> set[str]:
     return {"hidden"}
 
 
+def is_hidden_suite(manifest: Any, suite_name: str) -> bool:
+    """Single predicate shared by the runner and the scoring engine.
+
+    Both ``_split_results`` (driver-side bucketing) and
+    ``_hidden_tests_passed`` (score engine) historically used different
+    heuristics — the runner did an exact lowercase-set lookup against
+    ``manifest.hidden_tests.suites`` while ``score.py`` did a ``"hidden" in
+    suite.lower()`` substring check. That meant a suite called e.g.
+    ``"e2e-canary"`` declared in the manifest as hidden would bucket as
+    hidden by the runner but be invisible to the score engine, silently
+    zeroing the hidden-test correctness credit. Funnelling both through this
+    one helper keeps them honest.
+    """
+    if not suite_name:
+        return False
+    return suite_name.lower() in _hidden_suite_names(manifest)
+
+
 def _split_results(
     test_results: dict[str, Any] | list[Any] | None,
     manifest: Any | None = None,
@@ -521,8 +545,6 @@ def _split_results(
     if not test_results:
         return visible, hidden
 
-    hidden_names = _hidden_suite_names(manifest)
-
     items: list[tuple[str, Any]] = []
     if isinstance(test_results, dict):
         items = list(test_results.items())
@@ -535,7 +557,7 @@ def _split_results(
 
     for suite, value in items:
         tr = _coerce_test_run_result(suite, value)
-        if suite.lower() in hidden_names:
+        if is_hidden_suite(manifest, suite):
             hidden.append(tr)
         else:
             visible.append(tr)
@@ -639,7 +661,11 @@ async def _load_agent_turns(db: AsyncSession, session_id: uuid.UUID) -> list[dic
             await db.execute(
                 select(AgentTurn)
                 .where(AgentTurn.session_id == session_id)
-                .order_by(AgentTurn.turn_index)
+                # Order by (turn_index, created_at, id) for stability — two
+                # turns with the same turn_index would otherwise come back in
+                # arbitrary order on Postgres, which lets the scoring engine's
+                # "last 3 turns" prompt-quality average drift between runs.
+                .order_by(AgentTurn.turn_index, AgentTurn.created_at, AgentTurn.id)
             )
         )
         .scalars()

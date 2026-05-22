@@ -45,8 +45,11 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 }
 
 function initials(name: string): string {
+  // Treat dot/dash/underscore/whitespace as word separators so handle-style
+  // names ("jane.doe", "jane-doe", "jane_doe") render two-letter initials
+  // instead of one.
   return name
-    .split(/\s+/)
+    .split(/[\s._-]+/)
     .map((part) => part[0])
     .filter(Boolean)
     .slice(0, 2)

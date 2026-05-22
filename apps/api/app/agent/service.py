@@ -20,6 +20,7 @@ Key invariants (M4 polish):
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import uuid
 from functools import cached_property
@@ -285,9 +286,6 @@ class AgentService:
             )
             new_turns = result.scalar_one()
             turn_index = new_turns - 1  # 0-based index for the row we insert
-            # Reflect the new value on the in-memory ORM object so downstream
-            # code (and the test assertions) see a consistent snapshot.
-            session.agent_turns = new_turns
 
             turn = AgentTurn(
                 session_id=session.id,
@@ -353,6 +351,12 @@ class AgentService:
                     },
                 )
 
+        # Only reflect the new turn counter on the in-memory ORM object AFTER
+        # the transaction has committed successfully. If the ``async with``
+        # block above raised, the DB UPDATE was rolled back and we must NOT
+        # leave the ORM with a bumped value that no longer matches the row.
+        session.agent_turns = new_turns
+
         return AgentTurnResponse(
             id=turn.id,
             session_id=session.id,
@@ -387,7 +391,6 @@ class AgentService:
         driver invocation is also wrapped in ``asyncio.wait_for`` so a
         runaway docker exec cannot stall the whole pipeline.
         """
-        import asyncio
         from datetime import UTC, datetime
 
         settings = self._settings
@@ -419,7 +422,9 @@ class AgentService:
                 applied=False,
                 error=f"patch file not found at {patch_path}",
             )
-        patch_text = patch_path.read_text(encoding="utf-8")
+        # Offload the (potentially-multi-KB) disk read so a slow filesystem
+        # doesn't block the asyncio loop while other requests are waiting.
+        patch_text = await asyncio.to_thread(patch_path.read_text, encoding="utf-8")
         turn_index = int(getattr(turn, "turn_index", 0) or 0)
 
         # -- Invoke the sandbox driver ----------------------------------------
@@ -442,18 +447,25 @@ class AgentService:
                 )
             return PatchResult(applied=False, error="apply_diff timed out after 60s")
         except Exception as exc:
-            logger.warning("apply_diff raised for turn {}: {}", turn_id, exc)
+            # Keep the full exception (including traceback + driver paths) in
+            # the structured log so an operator can debug, but only surface a
+            # generic message to the client — the raw ``str(exc)`` can leak
+            # internal driver/file paths that the user has no business seeing.
+            logger.opt(exception=True).warning(
+                "apply_diff raised for turn {}: {}", turn_id, exc
+            )
+            generic_error = "patch apply failed — see server logs"
             async with _safe_begin(db):
                 await emitter.emit(
                     session_id=session.id,
                     event_type="patch.failed",
                     payload={
                         "turn_index": turn_index,
-                        "error": str(exc),
+                        "error": generic_error,
                         "turn_id": str(turn_id),
                     },
                 )
-            return PatchResult(applied=False, error=str(exc))
+            return PatchResult(applied=False, error=generic_error)
 
         if not result.applied:
             files_list = list(result.files_changed)

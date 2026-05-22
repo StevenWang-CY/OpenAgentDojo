@@ -53,6 +53,23 @@ _ORPHAN_SWEEP_INTERVAL_S = 300
 _ORPHAN_PROVISIONING_GRACE_S = 5 * 60  # 5 minutes
 _ORPHAN_SUBMITTING_GRACE_S = 15 * 60  # 15 minutes
 
+# Dead-letter store of container ids whose ``destroy()`` raised. The pool
+# release path bumps a handle into this set when the driver fails to tear it
+# down; the orphan sweeper later retries ``docker rm -f`` so a transient
+# driver error doesn't leak a container forever. Maps container_id ->
+# handle_id so observability + logs can correlate back to the original lease.
+_DEAD_LETTER: dict[str, str] = {}
+
+
+def dead_letter_handles() -> dict[str, str]:
+    """Return a snapshot of dead-letter ``{container_id: handle_id}`` mappings.
+
+    Exposed for the orphan sweeper and operator tooling; returns a copy so
+    iteration is safe even while ``release()`` is concurrently bumping new
+    entries in.
+    """
+    return dict(_DEAD_LETTER)
+
 
 def _touch(handle: SandboxHandle) -> None:
     """Stamp ``handle.driver_state['last_activity_at']`` with the current time."""
@@ -129,6 +146,11 @@ class _ActivityTrackedDriver(SandboxDriver):
     async def destroy(self, handle):
         return await self._inner.destroy(handle)
 
+    async def ping(self) -> bool:
+        # Forward to the inner driver so a Docker daemon outage surfaces here
+        # instead of the no-op default from ``SandboxDriver``.
+        return await self._inner.ping()
+
 
 class SandboxPool:
     """Concurrency-limited pool. One driver instance per pool."""
@@ -149,6 +171,12 @@ class SandboxPool:
     @property
     def driver(self) -> SandboxDriver:
         return self._driver
+
+    async def ping(self) -> bool:
+        """Forward to the underlying driver — readiness probe convenience."""
+        if self._closed:
+            return False
+        return await self._driver.ping()
 
     # --------------------------------------------------------------- acquire
     async def acquire(self, mission: Any, session_id: uuid.UUID) -> SandboxHandle:
@@ -187,17 +215,47 @@ class SandboxPool:
         if not owned:
             return
 
-        sessions_active.dec()
         try:
-            await self._driver.destroy(handle)
-        except Exception as exc:
-            logger.warning("sandbox destroy failed for {}: {}", handle.id, exc)
+            try:
+                await self._driver.destroy(handle)
+            except Exception as exc:
+                # A destroy() failure means the underlying container did NOT
+                # get torn down. We MUST still drop the handle from the pool
+                # (otherwise the semaphore + slot leaks forever) but we also
+                # record the orphaned container id so the orphan sweeper can
+                # retry ``docker rm -f`` later. Log loudly — silent container
+                # leaks bankrupt Docker hosts in production.
+                # Prefer the dataclass field; some drivers (docker) only
+                # populate ``driver_state["container_id"]``.
+                container_id = getattr(handle, "container_id", None) or (
+                    handle.driver_state.get("container_id")
+                    if isinstance(handle.driver_state, dict)
+                    else None
+                )
+                if container_id:
+                    _DEAD_LETTER[str(container_id)] = handle.id
+                logger.error(
+                    "[sandbox] destroy FAILED for handle={} container={} — "
+                    "container leaked; dead-lettered for orphan sweeper retry: {}",
+                    handle.id,
+                    container_id or "<unknown>",
+                    exc,
+                )
+            finally:
+                async with self._lock:
+                    self._handles.pop(handle.id, None)
+                    self._handles_by_session.pop(handle.session_id, None)
+                self._semaphore.release()
+                logger.debug(
+                    "sandbox pool: released {} ({} active)",
+                    handle.id,
+                    len(self._handles),
+                )
         finally:
-            async with self._lock:
-                self._handles.pop(handle.id, None)
-                self._handles_by_session.pop(handle.session_id, None)
-            self._semaphore.release()
-            logger.debug("sandbox pool: released {} ({} active)", handle.id, len(self._handles))
+            # ``finally`` so the gauge always returns to baseline — a raise
+            # from any of the above (driver bug, lock acquire failure)
+            # otherwise leaves ``sessions_active`` permanently inflated.
+            sessions_active.dec()
 
     def get(self, handle_id: str) -> SandboxHandle | None:
         return self._handles.get(handle_id)
@@ -281,8 +339,64 @@ class SandboxPool:
                     await self._sweep_orphans_once()
                 except Exception as exc:  # pragma: no cover
                     logger.warning("orphan sweep failed: {}", exc)
+                # Best-effort dead-letter retry — independent from the DB
+                # sweep so a DB outage doesn't block container reclamation.
+                try:
+                    await self._retry_dead_letter()
+                except Exception as exc:  # pragma: no cover
+                    logger.warning("dead-letter retry failed: {}", exc)
         except asyncio.CancelledError:
             pass
+
+    async def _retry_dead_letter(self) -> None:
+        """Retry ``docker rm -f`` on any container ids stranded by a destroy fail.
+
+        Drains entries off ``_DEAD_LETTER`` one at a time; on success we drop
+        the entry, on failure we leave it for the next pass. The driver
+        exposes ``force_remove_container`` when it supports forceful removal;
+        we fall back to a no-op when the wrapper lacks that hook (the local
+        driver, used in tests, does not run containers).
+        """
+        if not _DEAD_LETTER:
+            return
+        snapshot = list(_DEAD_LETTER.items())
+        force_remove = getattr(self._driver, "force_remove_container", None)
+        if force_remove is None:
+            # Try the inner driver too — ``_ActivityTrackedDriver`` delegates
+            # via ``__getattr__`` but a custom wrapper may not.
+            inner = getattr(self._driver, "inner", None) or getattr(
+                self._driver, "_inner", None
+            )
+            if inner is not None:
+                force_remove = getattr(inner, "force_remove_container", None)
+        for container_id, handle_id in snapshot:
+            try:
+                if force_remove is None:
+                    # No reclamation primitive available — drop the entry so
+                    # we don't loop on it forever. The destroy fail is still
+                    # in the structured log.
+                    logger.warning(
+                        "[sandbox] dead-letter entry container={} handle={} "
+                        "dropped — driver has no force_remove_container hook",
+                        container_id,
+                        handle_id,
+                    )
+                    _DEAD_LETTER.pop(container_id, None)
+                    continue
+                await force_remove(container_id)
+                _DEAD_LETTER.pop(container_id, None)
+                logger.info(
+                    "[sandbox] dead-letter retry SUCCESS — reclaimed container={} (handle={})",
+                    container_id,
+                    handle_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[sandbox] dead-letter retry failed for container={} (handle={}): {}",
+                    container_id,
+                    handle_id,
+                    exc,
+                )
 
     async def _sweep_orphans_once(self) -> int:
         """Flip orphaned in-flight sessions to a terminal state.

@@ -6,7 +6,10 @@ POST /auth/magic-link    — request a magic link email
 GET  /auth/callback      — exchange token → session cookie + redirect
 POST /auth/logout        — clear session cookie
 GET  /auth/me            — return current user + fresh CSRF token
-GET  /me                 — top-level alias for /auth/me
+POST /auth/csrf-refresh  — force-rotate the CSRF cookie
+
+The top-level ``/me`` alias was retired (see main.py) because the FE only
+calls ``/auth/me`` and the duplicate path doubled the OpenAPI surface.
 """
 
 from __future__ import annotations
@@ -151,14 +154,31 @@ def _build_me_response(user: User, request: Request) -> JSONResponse:
     on every poll, which silently invalidated whatever the FE already had
     cached. We now reuse the existing cookie when one is present so the FE
     can keep working without re-fetching the body token.
+
+    We keep the manual ``JSONResponse`` construction (rather than returning
+    the ``UserRead`` model directly) because we still need to ``set_cookie``
+    when minting a fresh token — letting FastAPI serialize would discard
+    the cookie mutation.
     """
     settings = get_settings()
     existing_csrf = request.cookies.get(_CSRF_COOKIE_NAME, "")
     csrf_value = existing_csrf or secrets.token_hex(32)
-    user_data = UserRead.model_validate(user).model_dump(mode="json")
-    user_data["csrf_token"] = csrf_value
+    # Build the body via the schema directly so the wire format always matches
+    # the OpenAPI contract (csrf_token: str — required since P0).
+    payload = UserRead.model_validate(
+        {
+            "id": user.id,
+            "email": user.email,
+            "handle": user.handle,
+            "display_name": user.display_name,
+            "github_login": user.github_login,
+            "created_at": user.created_at,
+            "last_login_at": user.last_login_at,
+            "csrf_token": csrf_value,
+        }
+    )
 
-    response = JSONResponse(content=user_data)
+    response = JSONResponse(content=payload.model_dump(mode="json"))
     if not existing_csrf:
         response.set_cookie(
             key=_CSRF_COOKIE_NAME,
@@ -198,18 +218,8 @@ async def post_csrf_refresh(
     return _build_me_response(user, request)
 
 
-# Top-level alias router — mounted at /api/v1/me so both
-# /api/v1/me and /api/v1/auth/me resolve to the same handler.
-me_router = APIRouter(tags=["auth"])
-
-
-@me_router.get(
-    "/me",
-    response_model=UserRead,
-    summary="Return the authenticated user (top-level alias)",
-)
-async def get_me_alias(
-    request: Request,
-    user: User = Depends(require_auth),
-) -> JSONResponse:
-    return _build_me_response(user, request)
+# The top-level ``me_router`` (which mounted ``/api/v1/me`` as an alias for
+# ``/api/v1/auth/me``) was removed: the FE only ever hits ``/auth/me`` and
+# shipping two paths for one handler confused the OpenAPI → TS generator
+# (it minted two equivalent operation IDs). Re-add via main.py if a new
+# client ever needs the top-level shape.

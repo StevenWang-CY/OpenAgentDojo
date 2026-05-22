@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import text
@@ -106,6 +106,39 @@ async def _s3_ok_bounded() -> bool:
         return False
 
 
+async def _sandbox_ok(request: Request) -> bool:
+    """Probe the sandbox driver for readiness.
+
+    For the local subprocess driver this is a no-op (returns True). For the
+    docker driver this hits the daemon's ``ping`` endpoint. If the pool is
+    not yet attached to ``app.state`` (e.g. during test harness setup), we
+    treat the probe as best-effort True rather than failing the readiness
+    check on a missing dependency we never wired.
+    """
+    pool = getattr(request.app.state, "sandbox_pool", None)
+    if pool is None:
+        return True
+    try:
+        # Prefer the pool-level wrapper so the call respects ``_closed``.
+        if hasattr(pool, "ping"):
+            return bool(await pool.ping())
+        driver = getattr(pool, "driver", None)
+        if driver is None or not hasattr(driver, "ping"):
+            return True
+        return bool(await driver.ping())
+    except Exception as exc:
+        logger.debug("healthz: sandbox check failed: {}", exc)
+        return False
+
+
+async def _sandbox_ok_bounded(request: Request) -> bool:
+    try:
+        return await asyncio.wait_for(_sandbox_ok(request), timeout=_PROBE_TIMEOUT_S + 0.5)
+    except TimeoutError:
+        logger.debug("healthz: sandbox check timed out")
+        return False
+
+
 @router.get("/healthz", summary="Liveness probe")
 async def healthz() -> dict[str, Any]:
     """Cheap liveness probe — no DB / Redis touches.
@@ -123,29 +156,31 @@ async def healthz() -> dict[str, Any]:
 
 
 @router.get("/healthz/ready", summary="Readiness probe")
-async def healthz_ready() -> Any:
+async def healthz_ready(request: Request) -> Any:
     """Full readiness check with bounded per-probe timeouts.
 
-    Returns HTTP 200 when both the DB and Redis are reachable. When either
-    fails we return the same JSON body with HTTP 503 so load balancers and
-    Kubernetes can de-list the pod. ``s3_ok`` is treated as best-effort and
-    does NOT force 503 — object storage is not on the request hot-path for
-    every endpoint, and a transient S3 hiccup shouldn't take traffic away
-    from the API.
+    Returns HTTP 200 when the DB, Redis, and sandbox runtime are reachable.
+    When any of those three fail we return the same JSON body with HTTP 503
+    so load balancers and Kubernetes can de-list the pod. ``s3_ok`` is
+    treated as best-effort and does NOT force 503 — object storage is not on
+    the request hot-path for every endpoint, and a transient S3 hiccup
+    shouldn't take traffic away from the API.
     """
     settings = get_settings()
-    db_ok, redis_ok, s3_ok = await asyncio.gather(
+    db_ok, redis_ok, s3_ok, sandbox_ok = await asyncio.gather(
         _db_ok_bounded(),
         _redis_ok_bounded(),
         _s3_ok_bounded(),
+        _sandbox_ok_bounded(request),
     )
     body: dict[str, Any] = {
         "db": db_ok,
         "redis": redis_ok,
         "s3": s3_ok,
+        "sandbox": sandbox_ok,
         "sandbox_driver": settings.sandbox_driver,
         "version": __version__,
     }
-    if not (db_ok and redis_ok):
+    if not (db_ok and redis_ok and sandbox_ok):
         return JSONResponse(content=body, status_code=503)
     return body

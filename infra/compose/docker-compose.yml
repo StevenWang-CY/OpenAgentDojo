@@ -134,6 +134,12 @@ services:
       EMAIL_FROM: hello@arena.local
       MISSIONS_ROOT: /missions
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      # Pin sandbox driver explicitly so the api does not silently inherit
+      # SANDBOX_DRIVER=local from a developer's root .env. The worker pins
+      # the same value below; api + worker must agree on the driver.
+      SANDBOX_DRIVER: docker
+      # Provisioning runs via the RQ worker in compose, not in-process.
+      PROVISION_IN_PROCESS: "false"
       # Optional LLM creds — empty defaults are fine; the API logs
       # `provider=disabled` when none are set.
       ANTHROPIC_PROVIDER: ${ANTHROPIC_PROVIDER:-}

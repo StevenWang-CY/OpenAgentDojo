@@ -21,6 +21,11 @@ def _prod_env(monkeypatch, **overrides) -> None:
         "WEB_ORIGIN": "https://arena.example",
         "ALLOWED_HOSTS": "arena.example",
         "ALLOW_DEV_AUTH": "false",
+        # New prod invariants — see ``_validate_for_environment``:
+        # the local sandbox driver has no isolation, and STARTTLS without
+        # cert verification is open to passive MITM on real SMTP relays.
+        "SANDBOX_DRIVER": "docker",
+        "SMTP_VERIFY_CERTS": "true",
     }
     for k, v in {**base, **overrides}.items():
         monkeypatch.setenv(k, v)

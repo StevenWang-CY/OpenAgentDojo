@@ -1,8 +1,24 @@
+"use client";
+
 import Link from "next/link";
 import { ArrowRight, Sparkles } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ApiError, listMissions } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 
 export function Hero() {
+  // Reuse the same useQuery key as ScenarioCarousel so React Query
+  // serves the same response from the cache and we don't double-fetch.
+  const { data } = useQuery({
+    queryKey: ["missions"],
+    queryFn: ({ signal }) => listMissions(signal),
+    retry: (failureCount, e) => {
+      if (e instanceof ApiError && e.status === 0) return false;
+      return failureCount < 1;
+    },
+    staleTime: 60_000,
+  });
+  const missionCount = Array.isArray(data) ? data.length : null;
   return (
     <section
       aria-labelledby="hero-heading"
@@ -55,7 +71,10 @@ export function Hero() {
 
         <dl className="mt-12 grid grid-cols-1 gap-6 text-sm sm:grid-cols-3">
           {[
-            { label: "Curated missions", value: "10" },
+            {
+              label: "Curated missions",
+              value: missionCount === null ? "—" : String(missionCount),
+            },
             { label: "Rubric dimensions", value: "7" },
             { label: "Deterministic grading", value: "Always" },
           ].map((item) => (

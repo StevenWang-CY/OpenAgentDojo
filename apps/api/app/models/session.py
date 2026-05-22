@@ -42,6 +42,8 @@ class SessionRow(Base):
         ),
         # Plan §6.1: index on (user_id, started_at DESC) for "latest sessions" lookups.
         Index("idx_sessions_user", "user_id", desc("started_at")),
+        # Mirror migration 0006 — keeps alembic --autogenerate clean.
+        Index("idx_sessions_last_activity", "last_activity_at"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

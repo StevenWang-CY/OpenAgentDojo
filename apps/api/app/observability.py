@@ -195,8 +195,17 @@ def _json_format(record: Any) -> str:
         "line": record["line"],
         "message": record["message"],
     }
-    if record.get("extra"):
-        payload["extra"] = record["extra"]
+    # Promote ``request_id`` to a top-level field (when present) so log
+    # aggregators can index on it directly instead of digging into ``extra``.
+    # Bound by RequestIdMiddleware via ``logger.contextualize`` — see
+    # app/middleware/request_id.py.
+    record_extra = record.get("extra") or {}
+    if isinstance(record_extra, dict):
+        request_id = record_extra.get("request_id")
+        if request_id:
+            payload["request_id"] = request_id
+    if record_extra:
+        payload["extra"] = record_extra
     exc = record.get("exception")
     if exc is not None:
         payload["exception"] = {

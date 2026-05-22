@@ -2,12 +2,14 @@
 
 The mission tree is read-only at runtime (content updates trigger a redeploy /
 loader re-run), so scanning the YAML once per request is wasted work. The
-cache key uses the aggregate mtime of every ``mission.yaml`` under the
-configured root so a file edit invalidates without a server restart.
+cache key is a content hash of every ``mission.yaml`` under the configured
+root so a ``git checkout`` (which keeps file mtime stable on some configs)
+still invalidates the cache without a server restart.
 """
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -16,37 +18,37 @@ from loguru import logger
 from app.config import get_settings
 from app.missions.loader import LoadedMission, MissionLoader
 
-_MANIFEST_CACHE: dict[tuple[str, int], dict[str, LoadedMission]] = {}
+_MANIFEST_CACHE: dict[tuple[str, str], dict[str, LoadedMission]] = {}
 
 
-def _aggregate_mtime(root: Path) -> int:
-    """Return the integer max(mtime) across every mission.yaml under ``root``."""
+def _aggregate_fingerprint(root: Path) -> str:
+    """Return a content fingerprint across every mission.yaml under ``root``."""
     if not root.exists():
-        return 0
-    latest = 0
+        return ""
+    h = hashlib.blake2b(digest_size=16)
     try:
-        for yaml in root.glob("*/mission.yaml"):
+        for yaml in sorted(root.glob("*/mission.yaml")):
             try:
-                mtime = int(yaml.stat().st_mtime_ns)
+                h.update(yaml.read_bytes())
+                h.update(yaml.name.encode("utf-8"))
             except OSError:
                 continue
-            latest = max(latest, mtime)
     except OSError:
-        return 0
-    return latest
+        return ""
+    return h.hexdigest()
 
 
 def cached_manifests() -> dict[str, LoadedMission]:
     """Return ``{mission_id: LoadedMission}`` for the configured missions root.
 
-    Caches by (root, max-mtime). On scan failure logs at WARN and returns an
-    empty mapping so callers can fall back to DB-only data.
+    Caches by (root, content-hash). On scan failure logs at WARN and returns
+    an empty mapping so callers can fall back to DB-only data.
     """
     settings = get_settings()
     root_path: Path = settings.missions_root
     root_str = str(root_path)
-    mtime = _aggregate_mtime(root_path)
-    key = (root_str, mtime)
+    fingerprint = _aggregate_fingerprint(root_path)
+    key = (root_str, fingerprint)
 
     cached = _MANIFEST_CACHE.get(key)
     if cached is not None:

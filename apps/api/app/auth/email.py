@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import email.mime.multipart
 import email.mime.text
+from typing import Any
 
 from loguru import logger
 
@@ -34,10 +35,17 @@ async def send_magic_link_email(to_email: str, magic_url: str, settings: Setting
         return True
 
     # Dev fallback — print to terminal so a developer can click the link.
-    # We treat this as a "delivered" outcome only in development; staging /
-    # production should not rely on it.
-    logger.info("MAGIC LINK for {}: {}", to_email, magic_url)
-    return settings.arena_env == "development"
+    # Outside development we MUST NOT log the URL: magic links are
+    # single-use bearer credentials and shipping them to a log aggregator
+    # gives any log-reader a working session.
+    if settings.arena_env == "development":
+        logger.info("MAGIC LINK for {}: {}", to_email, magic_url)
+        return True
+    logger.error(
+        "magic-link delivery failed for {} via all configured providers",
+        to_email,
+    )
+    return False
 
 
 async def _send_via_resend(to_email: str, magic_url: str, settings: Settings) -> bool:
@@ -93,11 +101,14 @@ async def _send_via_smtp(to_email: str, magic_url: str, settings: Settings) -> b
     msg.attach(email.mime.text.MIMEText(_html_body(magic_url), "html"))
 
     try:
-        kwargs: dict = {
+        kwargs: dict[str, Any] = {
             "hostname": settings.smtp_host,
             "port": settings.smtp_port,
             "start_tls": settings.smtp_start_tls,
-            "validate_certs": False,
+            # Honour the per-environment cert-validation toggle. Dev /
+            # MailHog (which uses a self-signed cert) opts out via
+            # SMTP_VERIFY_CERTS=false; staging / prod default to True.
+            "validate_certs": settings.smtp_verify_certs,
         }
         if settings.smtp_username:
             kwargs["username"] = settings.smtp_username

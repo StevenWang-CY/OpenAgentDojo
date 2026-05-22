@@ -107,7 +107,10 @@ export function ProfileView({ handle }: ProfileViewProps) {
   // guard is what narrows it for the JSX below.
   if (!profile) return null;
 
-  const earnedIds = new Set(profile.badges.map((b) => b.id));
+  // We only have the EARNED badge list from the backend; ``earnedIds`` would
+  // therefore equal the full ``badges`` set, making BadgeGrid's "not yet
+  // earned" branch unreachable. Drop the earned-set so the grid renders only
+  // what the user has actually earned.
 
   return (
     <main className="mx-auto max-w-5xl space-y-10 px-6 py-12">
@@ -125,7 +128,7 @@ export function ProfileView({ handle }: ProfileViewProps) {
         >
           Badges ({profile.badges.length})
         </h2>
-        <BadgeGrid badges={profile.badges} earnedIds={earnedIds} />
+        <BadgeGrid badges={profile.badges} />
       </section>
 
       <section aria-labelledby="history-heading">

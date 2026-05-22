@@ -18,4 +18,8 @@ class UserRead(BaseModel):
     github_login: str | None = None
     created_at: datetime
     last_login_at: datetime | None = None
-    csrf_token: str | None = None
+    # ``/auth/me`` always sets a CSRF token (either the existing cookie or a
+    # freshly minted one — see ``_build_me_response``). The schema reflects
+    # that: making it required prevents FE call sites from defensively
+    # branching on a value that the BE guarantees.
+    csrf_token: str

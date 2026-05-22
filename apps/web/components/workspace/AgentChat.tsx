@@ -20,10 +20,6 @@ interface AgentChatProps {
   onSubmit?(text: string): Promise<void> | void;
   /** Apply the patch proposed in a given turn. */
   onApplyPatch?(turnId: string): Promise<void> | void;
-  /** Disables the composer (e.g. during M2 when wiring isn't ready). */
-  disabled?: boolean;
-  /** Banner shown above the composer when the chat is a visual shell. */
-  pendingNote?: string;
   className?: string;
 }
 
@@ -32,10 +28,12 @@ export function AgentChat({
   contextPaths,
   onSubmit,
   onApplyPatch,
-  disabled,
-  pendingNote,
   className,
 }: AgentChatProps) {
+  // The composer is always active in shipped surfaces; the legacy
+  // ``disabled`` / ``pendingNote`` props were a holdover from the pre-M4
+  // visual shell and were never wired up by any caller.
+  const disabled = false;
   const [draft, setDraft] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -82,12 +80,6 @@ export function AgentChat({
       </ScrollArea>
 
       <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-        {pendingNote ? (
-          <p className="mb-2 rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-muted)] px-2 py-1 text-[11px] text-[var(--color-muted-foreground)]">
-            {pendingNote}
-          </p>
-        ) : null}
-
         {contextPaths.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1 text-[11px]">
             <span className="text-[var(--color-muted-foreground)]">Context:</span>
@@ -129,11 +121,7 @@ export function AgentChat({
               }
             }}
             rows={3}
-            placeholder={
-              disabled
-                ? "Agent chat is wired up in M4. For now, this is a visual shell."
-                : "Ask the agent to investigate, fix, or add a regression test. Cmd/Ctrl+Enter to send."
-            }
+            placeholder="Ask the agent to investigate, fix, or add a regression test. Cmd/Ctrl+Enter to send."
             className="resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-3 py-2 font-mono text-xs leading-relaxed transition-colors duration-150 ease-macos focus-visible:outline-none focus-visible:border-[var(--color-ring)] focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)] disabled:cursor-not-allowed disabled:opacity-60"
           />
           <div className="flex flex-wrap items-center justify-between gap-2">

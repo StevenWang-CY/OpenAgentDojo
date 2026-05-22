@@ -77,6 +77,29 @@ def _truncated_payload(event_type: str, original_size_bytes: int) -> dict[str, A
     }
 
 
+def _reset_redis_cache() -> None:
+    """Drop the cached Redis client so the next ``get_redis`` rebuilds it.
+
+    Called from the publish/emit paths when we see a connection-level error so
+    a transient Redis blip (rolling restart, brief network partition) doesn't
+    pin a dead client forever — the very next call rebuilds and recovers.
+    """
+    global _redis_client  # noqa: PLW0603
+    _redis_client = None
+
+
+def _is_redis_transport_error(exc: BaseException) -> bool:
+    """True when ``exc`` is a Redis connection/timeout error worth resetting on.
+
+    Imported lazily so the runtime doesn't pull ``redis`` at module import.
+    """
+    try:
+        from redis import exceptions as redis_exc  # type: ignore
+    except Exception:  # pragma: no cover — redis missing entirely
+        return False
+    return isinstance(exc, (redis_exc.ConnectionError, redis_exc.TimeoutError))
+
+
 async def get_redis() -> Any | None:
     """Return a lazily-created async Redis client, or None if unavailable."""
     global _redis_client  # noqa: PLW0603
@@ -106,6 +129,31 @@ async def get_redis() -> Any | None:
         return None
 
 
+async def close_redis() -> None:
+    """Close + drop the cached Redis client.
+
+    Wired into the FastAPI lifespan shutdown so the API process tears the
+    connection down cleanly instead of leaving a dangling socket.
+    """
+    global _redis_client  # noqa: PLW0603
+    client = _redis_client
+    _redis_client = None
+    if client is None:
+        return
+    try:
+        aclose = getattr(client, "aclose", None)
+        if aclose is not None:
+            await aclose()
+        else:  # pragma: no cover — older redis-py releases
+            close = getattr(client, "close", None)
+            if close is not None:
+                result = close()
+                if asyncio.iscoroutine(result):
+                    await result
+    except Exception as exc:
+        logger.debug("redis client close failed (ignored): {}", exc)
+
+
 async def _publish(redis: Any, channel: str, message: str) -> bool:
     """Publish ``message`` to ``channel``. Returns True on success."""
     try:
@@ -114,6 +162,10 @@ async def _publish(redis: Any, channel: str, message: str) -> bool:
     except Exception as exc:
         event_publish_failures_total.labels(reason="publish_error").inc()
         logger.warning("Redis publish failed for {}: {}", channel, exc)
+        # Connection-level failures must invalidate the cached client so the
+        # next call rebuilds against a (presumably-recovered) Redis.
+        if _is_redis_transport_error(exc):
+            _reset_redis_cache()
         return False
 
 

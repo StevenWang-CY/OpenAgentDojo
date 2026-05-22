@@ -50,9 +50,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if path in _EXEMPT_PATHS:
             return await call_next(request)
 
-        # WebSocket upgrade requests are GET, but keep an explicit guard.
-        if path.startswith("/ws/"):
-            return await call_next(request)
+        # WS upgrades are GET so the unsafe-method gate already covers them;
+        # the previous blanket /ws/ exemption was dead code that would have
+        # silently bypassed CSRF if any future POST /ws/... route landed.
 
         settings = get_settings()
         if not validate_csrf(request, settings):

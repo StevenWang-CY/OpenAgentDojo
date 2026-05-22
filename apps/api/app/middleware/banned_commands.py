@@ -84,8 +84,10 @@ class BannedCommandsMiddleware(BaseHTTPMiddleware):
                         content={"detail": "request body too large"},
                     )
             except ValueError:
-                # Garbage Content-Length — let the downstream handler reject.
-                pass
+                return JSONResponse(
+                    status_code=400,
+                    content={"detail": "invalid Content-Length header"},
+                )
 
         # Read the body once and re-inject so the downstream handler still sees it.
         try:
@@ -163,7 +165,13 @@ async def _emit_flag(session_id: uuid.UUID, command: str, pattern: str) -> None:
             session_id=session_id,
             event_type="validator.flag",
             payload={
-                "reason": "banned_command",
+                # Canonical shape consumed by the FE Timeline + safety
+                # scorer: every validator.flag carries ``kind`` (machine-
+                # readable category) and ``message`` (human-readable
+                # one-liner). ``pattern`` and ``command`` ride along as
+                # diagnostics.
+                "kind": "banned_command",
+                "message": f"blocked dangerous shell pattern: {pattern}",
                 "pattern": pattern,
                 "command": command[:500],
             },

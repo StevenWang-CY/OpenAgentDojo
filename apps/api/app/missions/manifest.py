@@ -78,6 +78,10 @@ class AgentConfig(BaseModel):
     # consumed by the deterministic agent intent classifier (see §8).
     intents_file: str | None = None
     applies_when: AgentAppliesWhen = Field(default_factory=AgentAppliesWhen)
+    # ``auto`` is advisory today — patches still require the user to call
+    # ``POST /sessions/{id}/patches/{turn_id}/apply``. Honouring auto-apply
+    # is tracked separately so we don't ship a public field whose semantics
+    # diverge from the implementation. Keep the literal set narrow.
     apply_mode: Literal["on_user_confirm", "auto"] = "on_user_confirm"
 
 
@@ -254,7 +258,7 @@ class MissionManifest(BaseModel):
     scoring_weights: ScoringWeights
     reward_signals: RewardSignals = Field(default_factory=RewardSignals)
 
-    expected_diff_lines_p50: int = 20
+    expected_diff_lines_p50: int = Field(default=20, gt=0)
     # Default False so a half-written mission can't accidentally ship to the
     # public catalog. Each curated mission must opt in explicitly (P2-B2).
     published: bool = False

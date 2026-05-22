@@ -107,6 +107,10 @@ const commandRun: CommandRun = {
   created_at: "2025-05-21T10:01:00Z",
   stdout: "all green",
   stderr: "",
+  // stdio_truncated landed alongside the Wave 1 schema bump on the BE; the
+  // FE consumes the flag to render a "(truncated)" pill next to the output
+  // pane. Fixture defaults to false because this sample produced sub-cap output.
+  stdio_truncated: false,
 };
 
 const unifiedDiff: UnifiedDiff = {

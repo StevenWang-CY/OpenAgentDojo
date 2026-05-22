@@ -77,12 +77,6 @@
         "title": "AgentTurnResponse",
         "type": "object"
       },
-      "ApplyPatchBody": {
-        "description": "POST body for ``/sessions/{id}/patches/{turn_id}/apply``.\n\nCurrently empty; reserved so the endpoint can accept driver overrides\n(e.g. dry-run) without a breaking-change later. We previously declared\n``dry_run: bool`` but nothing in the agent service consumed it (P1-B9)\n— the field was published as a public contract through the OpenAPI\nschema with no implementation backing it, which is worse than no\nfield at all. Removed; clients sending an empty body still pass schema\nvalidation.",
-        "properties": {},
-        "title": "ApplyPatchBody",
-        "type": "object"
-      },
       "CommandBody": {
         "properties": {
           "category": {
@@ -98,6 +92,8 @@
             "type": "string"
           },
           "command": {
+            "maxLength": 8192,
+            "minLength": 1,
             "title": "Command",
             "type": "string"
           }
@@ -109,7 +105,7 @@
         "type": "object"
       },
       "CommandRunResponse": {
-        "description": "Response returned after running a command in the sandbox.",
+        "description": "Response returned after running a command in the sandbox.\n\n``stdout``/``stderr`` are truncated by the route handler to\n:data:`MAX_STDIO_BYTES` and ``stdio_truncated`` is set when the tail was\ntrimmed so the FE can show a hint.",
         "properties": {
           "category": {
             "default": "other",
@@ -128,9 +124,16 @@
             "type": "string"
           },
           "created_at": {
-            "default": "",
-            "title": "Created At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
           },
           "duration_ms": {
             "anyOf": [
@@ -166,6 +169,11 @@
             "default": "",
             "title": "Stderr",
             "type": "string"
+          },
+          "stdio_truncated": {
+            "default": false,
+            "title": "Stdio Truncated",
+            "type": "boolean"
           },
           "stdout": {
             "default": "",
@@ -276,7 +284,7 @@
         "type": "object"
       },
       "FileContent": {
-        "description": "`GET /sessions/{id}/file` response body.\n\nThe frontend type mirror lives in\n``packages/shared-types/src/api.ts`` and is generated from this model\nvia ``openapi-typescript``. The binary-safe ``base64`` encoding is\ndeclared up-front so future binary reads do not require a schema\nmigration.",
+        "description": "`GET /sessions/{id}/file` response body.\n\nThe frontend type mirror lives in\n``packages/shared-types/src/api.ts`` and is generated from this model\nvia ``openapi-typescript``. ``encoding`` reports whether the file was\nsafe to decode as UTF-8 (``\"utf-8\"``) or had to be returned as\nbase64-encoded bytes for binary content (``\"base64\"``).",
         "properties": {
           "content": {
             "title": "Content",
@@ -311,6 +319,8 @@
       "FileRevertBody": {
         "properties": {
           "path": {
+            "maxLength": 512,
+            "minLength": 1,
             "title": "Path",
             "type": "string"
           }
@@ -370,10 +380,13 @@
       "FileWriteBody": {
         "properties": {
           "content": {
+            "maxLength": 5000000,
             "title": "Content",
             "type": "string"
           },
           "path": {
+            "maxLength": 512,
+            "minLength": 1,
             "title": "Path",
             "type": "string"
           }
@@ -735,7 +748,7 @@
         "type": "object"
       },
       "PromptBody": {
-        "description": "POST body for ``/sessions/{id}/prompts``.",
+        "description": "POST body for ``/sessions/{id}/prompts``.\n\nBounded at 20k characters — anything beyond is pathological for a\nsupervision prompt and would balloon DB rows + WS event payloads.",
         "properties": {
           "context": {
             "anyOf": [
@@ -748,6 +761,7 @@
             ]
           },
           "text": {
+            "maxLength": 20000,
             "minLength": 1,
             "title": "Text",
             "type": "string"
@@ -1095,9 +1109,20 @@
             "type": "string"
           },
           "hidden_test_results": {
-            "additionalProperties": true,
-            "title": "Hidden Test Results",
-            "type": "object"
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Hidden Test Results"
           },
           "id": {
             "format": "uuid",
@@ -1130,14 +1155,36 @@
             "type": "integer"
           },
           "validator_results": {
-            "additionalProperties": true,
-            "title": "Validator Results",
-            "type": "object"
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Validator Results"
           },
           "visible_test_results": {
-            "additionalProperties": true,
-            "title": "Visible Test Results",
-            "type": "object"
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Visible Test Results"
           }
         },
         "required": [
@@ -1161,6 +1208,7 @@
             "type": "integer"
           },
           "occurred_at": {
+            "format": "date-time",
             "title": "Occurred At",
             "type": "string"
           },
@@ -1205,15 +1253,8 @@
             "type": "string"
           },
           "csrf_token": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Csrf Token"
+            "title": "Csrf Token",
+            "type": "string"
           },
           "display_name": {
             "anyOf": [
@@ -1274,7 +1315,8 @@
         "required": [
           "id",
           "email",
-          "created_at"
+          "created_at",
+          "csrf_token"
         ],
         "title": "UserRead",
         "type": "object"
@@ -1474,27 +1516,6 @@
           }
         },
         "summary": "Return the authenticated user",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
-    "/api/v1/me": {
-      "get": {
-        "operationId": "get_me_alias_api_v1_me_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UserRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Return the authenticated user (top-level alias)",
         "tags": [
           "auth"
         ]
@@ -2011,12 +2032,14 @@
             }
           },
           {
-            "description": "Absolute or workspace-relative path to the file",
+            "description": "Workspace-relative path to the file",
             "in": "query",
             "name": "path",
             "required": true,
             "schema": {
-              "description": "Absolute or workspace-relative path to the file",
+              "description": "Workspace-relative path to the file",
+              "maxLength": 512,
+              "minLength": 1,
               "title": "Path",
               "type": "string"
             }
@@ -2144,6 +2167,7 @@
     },
     "/api/v1/sessions/{session_id}/patches/{turn_id}/apply": {
       "post": {
+        "description": "Apply the agent-proposed patch for ``turn_id``.\n\nTakes no request body — the (turn_id, session_id) tuple in the URL is\nthe only input. The previous ``ApplyPatchBody`` placeholder model was\nremoved (P1-B9): nothing consumed it and publishing an empty schema as\npart of the public OpenAPI surface led FE generators to mint a useless\ntype alias.",
         "operationId": "post_apply_patch_api_v1_sessions__session_id__patches__turn_id__apply_post",
         "parameters": [
           {
@@ -2167,23 +2191,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/ApplyPatchBody"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Body"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "content": {
@@ -2206,7 +2213,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Apply the agent patch for a specific turn",
+        "summary": "Apply the agent patch for a specific turn (no request body)",
         "tags": [
           "agent"
         ]
@@ -2311,7 +2318,7 @@
     },
     "/api/v1/sessions/{session_id}/submit": {
       "post": {
-        "description": "Trigger the grading pipeline for a session.\n\nReturns 202 Accepted with the ``SubmissionRead`` once grading completes.",
+        "description": "Trigger the grading pipeline for a session.\n\nReturns 200 with the final ``SubmissionRead`` once grading completes\n(the call blocks until the runner returns; see ``sessions/submit.py``).",
         "operationId": "post_submit_api_v1_sessions__session_id__submit_post",
         "parameters": [
           {
@@ -2326,7 +2333,7 @@
           }
         ],
         "responses": {
-          "202": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2539,7 +2546,7 @@
     },
     "/healthz/ready": {
       "get": {
-        "description": "Full readiness check with bounded per-probe timeouts.\n\nReturns HTTP 200 when both the DB and Redis are reachable. When either\nfails we return the same JSON body with HTTP 503 so load balancers and\nKubernetes can de-list the pod. ``s3_ok`` is treated as best-effort and\ndoes NOT force 503 — object storage is not on the request hot-path for\nevery endpoint, and a transient S3 hiccup shouldn't take traffic away\nfrom the API.",
+        "description": "Full readiness check with bounded per-probe timeouts.\n\nReturns HTTP 200 when the DB, Redis, and sandbox runtime are reachable.\nWhen any of those three fail we return the same JSON body with HTTP 503\nso load balancers and Kubernetes can de-list the pod. ``s3_ok`` is\ntreated as best-effort and does NOT force 503 — object storage is not on\nthe request hot-path for every endpoint, and a transient S3 hiccup\nshouldn't take traffic away from the API.",
         "operationId": "healthz_ready_healthz_ready_get",
         "responses": {
           "200": {

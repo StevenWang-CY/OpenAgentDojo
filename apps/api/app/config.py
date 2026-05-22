@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_password: str | None = None
     smtp_start_tls: bool = False
+    # Verify server TLS certificates when STARTTLS is in play. Off by default
+    # so local dev with MailHog (self-signed cert) keeps working; flipped on
+    # automatically for staging/production via ``_validate_for_environment``.
+    smtp_verify_certs: bool = False
     # Share-token JWT signing secret. Falls back to ``session_secret`` for dev
     # so an existing .env keeps working; staging/production should set their
     # own dedicated value.
@@ -163,6 +167,8 @@ class Settings(BaseSettings):
         "allow_dev_auth",
         "provision_in_process",
         "feature_llm_narration",
+        "smtp_start_tls",
+        "smtp_verify_certs",
         mode="before",
     )
     @classmethod
@@ -223,7 +229,7 @@ class Settings(BaseSettings):
         return [h.strip() for h in raw.split(",") if h.strip()]
 
     @model_validator(mode="after")
-    def _validate_for_environment(self) -> Settings:
+    def _validate_for_environment(self) -> Settings:  # noqa: PLR0912 — flat list of fail-loud invariants; splitting would hide the surface
         """Hard production/staging guardrails — fail boot on insecure config."""
         if self.arena_env not in {"staging", "production"}:
             return self
@@ -273,6 +279,22 @@ class Settings(BaseSettings):
         if not hosts or hosts == ["*"]:
             raise ValueError(
                 "ALLOWED_HOSTS must be set explicitly (no wildcard) in staging/production"
+            )
+
+        # ---- SANDBOX_DRIVER=local is unsafe in staging/production ----
+        # ``local`` shells out without container isolation. Operators must
+        # opt in to ``docker`` explicitly outside development.
+        if self.sandbox_driver != "docker":
+            raise ValueError(
+                "SANDBOX_DRIVER must be 'docker' in staging/production "
+                "(the 'local' driver has no isolation)"
+            )
+
+        # ---- SMTP TLS verification must be on ----
+        if self.smtp_host and self.smtp_host != "localhost" and not self.smtp_verify_certs:
+            raise ValueError(
+                "SMTP_VERIFY_CERTS must be true in staging/production "
+                "(otherwise STARTTLS is open to passive MITM)"
             )
 
         return self

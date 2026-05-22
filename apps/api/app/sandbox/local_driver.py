@@ -343,17 +343,17 @@ class LocalSandboxDriver(SandboxDriver):
         diff = await self.diff_from_initial(handle)
 
         # --- mount hidden tests BEFORE freezing so we can copy in ---
+        # Canonical (spec §9.3): /grader/hidden_tests/ — kept OUTSIDE the
+        # workspace so the user cannot list, read, or pre-pass them via the
+        # /tree, /file, or shell endpoints. Mission runner scripts MUST
+        # reference the GRADER_DIR env var passed below, not a workspace-
+        # relative path. The previous compat double-mount inside
+        # /workspace/hidden_tests/ was an information-disclosure hole.
         hidden_dir = manifest_folder / "hidden_tests" if manifest_folder is not None else None
         if hidden_dir is not None and hidden_dir.is_dir():
-            # Canonical (spec §9.3): /grader/hidden_tests/.
             target = handle.workdir / "grader" / "hidden_tests"
             target.mkdir(parents=True, exist_ok=True)
             shutil.copytree(hidden_dir, target, dirs_exist_ok=True)
-            # Compat: also expose under /workspace/hidden_tests/ so missions
-            # that reference ``hidden_tests/runner.sh`` directly keep working.
-            workspace_dest = handle.workdir / "hidden_tests"
-            workspace_dest.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(hidden_dir, workspace_dest, dirs_exist_ok=True)
 
         # NOTE: The spec says to mark the workspace read-only before running
         # tests, but real test runners (vitest, jest) need write access to
@@ -415,13 +415,18 @@ class LocalSandboxDriver(SandboxDriver):
 
     @staticmethod
     def _hidden_command(mission: Any) -> str:
+        # Default runner lives under the /grader mount (outside the user
+        # workspace) so the user cannot pre-pass it. We accept the legacy
+        # ``hidden_tests/...`` workspace-relative path in mission YAMLs and
+        # rewrite it to the canonical $GRADER_DIR-prefixed form so authors
+        # don't need to migrate every mission.yaml at once. The rewrite is
+        # word-boundary-aware so commands that already point at the
+        # canonical ``grader/hidden_tests/...`` path pass through unchanged.
+        default_cmd = 'bash "$GRADER_DIR/runner.sh"'
         hidden = getattr(mission, "hidden_tests", None)
-        if hidden is None:
-            return "bash hidden_tests/runner.sh"
-        return (
-            getattr(hidden, "command", "bash hidden_tests/runner.sh")
-            or "bash hidden_tests/runner.sh"
-        )
+        raw = getattr(hidden, "command", default_cmd) if hidden is not None else default_cmd
+        raw = raw or default_cmd
+        return _re.sub(r'(?<![\w/])hidden_tests/', '"$GRADER_DIR"/', raw)
 
     async def _run_test_phase(
         self,
