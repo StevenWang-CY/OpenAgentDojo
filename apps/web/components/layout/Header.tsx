@@ -62,12 +62,14 @@ export function Header({ showCta = true }: HeaderProps) {
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
         <Link
           href="/"
-          className="inline-flex items-baseline gap-1.5 text-sm font-semibold tracking-tight"
+          className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight"
         >
-          <BrandMark className="translate-y-[2px]" />
-          <span>OpenAgentDojo</span>
-          <span className="ml-1 font-mono text-xs font-normal tracking-normal text-[var(--color-muted-foreground)]">
-            · supervisor training
+          <BrandMark size={22} />
+          <span className="inline-flex items-baseline gap-1.5">
+            <span>OpenAgentDojo</span>
+            <span className="font-mono text-xs font-normal tracking-normal text-[var(--color-muted-foreground)]">
+              · supervisor training
+            </span>
           </span>
         </Link>
 

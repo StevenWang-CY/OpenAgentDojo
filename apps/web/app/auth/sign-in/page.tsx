@@ -8,6 +8,7 @@ import { ApiError, auth } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { track } from "@/lib/telemetry";
 import { Input } from "@/components/ui/Input";
+import { BrandMark } from "@/components/layout/BrandMark";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -70,12 +71,14 @@ export default function SignInPage() {
           />
           <Link
             href="/"
-            className="inline-flex items-baseline gap-1.5 text-sm font-semibold tracking-tight"
+            className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight"
           >
-            <BrandMark />
-            <span>OpenAgentDojo</span>
-            <span className="font-mono text-xs font-normal text-[var(--color-muted-foreground)]">
-              · supervisor training
+            <BrandMark size={22} />
+            <span className="inline-flex items-baseline gap-1.5">
+              <span>OpenAgentDojo</span>
+              <span className="font-mono text-xs font-normal text-[var(--color-muted-foreground)]">
+                · supervisor training
+              </span>
             </span>
           </Link>
 
@@ -201,14 +204,5 @@ export default function SignInPage() {
         </section>
       </div>
     </main>
-  );
-}
-
-function BrandMark() {
-  return (
-    <span
-      aria-hidden
-      className="relative inline-block size-3.5 translate-y-0.5 bg-[var(--color-foreground)] before:absolute before:inset-[3px] before:bg-[var(--color-primary)] before:content-['']"
-    />
   );
 }

@@ -25,9 +25,9 @@ export function MarketingFooter() {
         <div>
           <Link
             href="/"
-            className="inline-flex items-baseline gap-1.5 text-sm font-semibold tracking-tight"
+            className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight"
           >
-            <BrandMark className="translate-y-[2px]" />
+            <BrandMark size={22} />
             OpenAgentDojo
           </Link>
           <p className="mt-3 max-w-[320px] text-pretty text-[13px] text-[var(--color-muted-foreground)]">
