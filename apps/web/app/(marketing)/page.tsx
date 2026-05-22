@@ -5,9 +5,9 @@ import { SampleReport } from "@/components/marketing/SampleReport";
 import { ScenarioCarousel } from "@/components/marketing/ScenarioCarousel";
 
 export const metadata: Metadata = {
-  title: "Hello, OpenAgentDojo",
+  title: "OpenAgentDojo — supervisor training",
   description:
-    "Learn to supervise AI coding agents inside real repositories. Pick a mission, prompt the agent, catch the wrong patch.",
+    "Patches that look right, aren't. Train the eye that catches them. A dojo for developers learning to supervise AI coding agents on real repositories — graded deterministically on the process, not just the patch.",
 };
 
 export default function LandingPage() {
