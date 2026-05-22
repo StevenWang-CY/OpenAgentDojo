@@ -17,21 +17,27 @@ interface ScoreRadarProps {
   className?: string;
 }
 
+/**
+ * Monochrome, hairline-grid radar across the seven supervision dimensions.
+ * Drops the heavy primary-blue fill used in earlier passes — the chart now
+ * reads as a quiet geometric panel that supports the dimension breakdown
+ * sitting next to it, rather than competing for attention.
+ *
+ * Labels are intentionally lowercase + monospace to match the structural
+ * mono treatment used across eyebrows, kv lists, and brief artifacts on
+ * the marketing surface.
+ */
 const LABELS: Record<keyof ScoreBreakdown, string> = {
-  final_correctness: "Correctness",
-  verification: "Verification",
-  agent_review: "Agent review",
-  prompt_quality: "Prompt",
-  context_selection: "Context",
-  safety: "Safety",
-  diff_minimality: "Minimality",
+  final_correctness: "correctness",
+  verification: "verification",
+  agent_review: "agent review",
+  prompt_quality: "prompt",
+  context_selection: "context",
+  safety: "safety",
+  diff_minimality: "minimality",
 };
 
 export function ScoreRadar({ dimensions, className }: ScoreRadarProps) {
-  // Wrap recharts in a boundary because the chart code touches the DOM
-  // measurement APIs and has historically crashed on certain browser-quirk
-  // edge cases (e.g. zero-sized containers in older Safari). Falling back
-  // to a textual table keeps the dimensions readable + accessible.
   return (
     <RadarErrorBoundary fallback={<ScoreRadarFallback dimensions={dimensions} />}>
       <ScoreRadarChart dimensions={dimensions} className={className} />
@@ -52,36 +58,62 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
 
   return (
     <div className={className} aria-label="Score across seven supervision dimensions">
-      <ResponsiveContainer width="100%" height={320}>
-        <RadarChart data={data} outerRadius="75%">
-          <PolarGrid stroke="var(--color-border)" />
+      <ResponsiveContainer width="100%" height={260}>
+        <RadarChart data={data} outerRadius="72%">
+          <PolarGrid
+            stroke="var(--color-border)"
+            strokeWidth={1}
+            radialLines={true}
+          />
           <PolarAngleAxis
             dataKey="dimension"
-            tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }}
+            tick={{
+              fill: "var(--color-muted-foreground)",
+              fontSize: 10.5,
+              fontFamily:
+                "'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
+              letterSpacing: "0.04em",
+            }}
           />
           <PolarRadiusAxis
             angle={90}
             domain={[0, 100]}
-            tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
+            tick={{
+              fill: "var(--color-muted-foreground)",
+              fontSize: 9,
+              fontFamily:
+                "'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
+              opacity: 0.7,
+            }}
+            tickCount={5}
           />
           <Radar
             name="Score"
             dataKey="value"
-            stroke="var(--color-primary)"
-            fill="var(--color-primary)"
-            fillOpacity={0.18}
+            stroke="var(--color-foreground)"
+            strokeWidth={1.25}
+            fill="var(--color-foreground)"
+            fillOpacity={0.08}
+            dot={{
+              r: 2.5,
+              stroke: "var(--color-foreground)",
+              strokeWidth: 1.25,
+              fill: "var(--color-surface)",
+            }}
             isAnimationActive
           />
           <Tooltip
             contentStyle={{
               backgroundColor: "var(--color-surface)",
               border: "1px solid var(--color-border)",
-              borderRadius: 8,
-              fontSize: 12,
+              borderRadius: 6,
+              fontSize: 11,
+              fontFamily:
+                "'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
             }}
             formatter={(value: number, _name, entry) => {
               const payload = entry.payload as { raw: number; max: number };
-              return [`${payload.raw} / ${payload.max}`, "Score"];
+              return [`${payload.raw} / ${payload.max}`, "score"];
             }}
           />
         </RadarChart>
@@ -109,15 +141,21 @@ function ScoreRadarFallback({ dimensions }: { dimensions: ScoreBreakdown }) {
     >
       <thead>
         <tr className="text-[var(--color-muted-foreground)]">
-          <th scope="col" className="pb-2 font-medium">Dimension</th>
-          <th scope="col" className="pb-2 text-right font-medium">Score</th>
-          <th scope="col" className="pb-2 text-right font-medium">%</th>
+          <th scope="col" className="pb-2 font-medium">
+            Dimension
+          </th>
+          <th scope="col" className="pb-2 text-right font-medium">
+            Score
+          </th>
+          <th scope="col" className="pb-2 text-right font-medium">
+            %
+          </th>
         </tr>
       </thead>
       <tbody>
         {rows.map((row) => (
           <tr key={row.label} className="border-t border-[var(--color-border)]">
-            <td className="py-1.5">{row.label}</td>
+            <td className="py-1.5 font-mono">{row.label}</td>
             <td className="py-1.5 text-right tabular-nums">
               {row.score} / {row.max}
             </td>
@@ -132,7 +170,6 @@ function ScoreRadarFallback({ dimensions }: { dimensions: ScoreBreakdown }) {
 /**
  * Tiny inline error boundary scoped to the radar chart. Implemented as a
  * class component because hooks can't catch errors from descendant renders.
- * We avoid `react-error-boundary` to keep the dependency surface lean.
  */
 interface RadarErrorBoundaryProps {
   fallback: React.ReactNode;
@@ -154,8 +191,6 @@ class RadarErrorBoundary extends React.Component<
   }
 
   override componentDidCatch(error: unknown): void {
-    // Visible in DevTools so we can investigate browser-specific recharts
-    // failures without users having to file an issue.
     console.error("[score-radar] chart render failed; using text fallback", error);
   }
 

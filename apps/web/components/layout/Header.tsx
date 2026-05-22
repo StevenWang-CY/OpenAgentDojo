@@ -4,13 +4,14 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Compass, LogOut, Moon, Sun, User as UserIcon } from "lucide-react";
+import { LogOut, Moon, Sun, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, auth } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useTheme } from "@/stores/themeStore";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "./BrandMark";
 
 interface HeaderProps {
   showCta?: boolean;
@@ -61,19 +62,12 @@ export function Header({ showCta = true }: HeaderProps) {
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
         <Link
           href="/"
-          className="flex items-center gap-2 text-sm font-semibold tracking-tight"
+          className="inline-flex items-baseline gap-1.5 text-sm font-semibold tracking-tight"
         >
-          <span
-            aria-hidden
-            className="grid size-7 place-items-center rounded-md bg-[var(--color-primary)] text-[var(--color-primary-foreground)] shadow-soft"
-          >
-            <Compass className="size-4" />
-          </span>
-          <span>
-            OpenAgentDojo
-            <span className="ml-1 font-normal text-[var(--color-muted-foreground)]">
-              · Agent Supervisor
-            </span>
+          <BrandMark className="translate-y-[2px]" />
+          <span>OpenAgentDojo</span>
+          <span className="ml-1 font-mono text-xs font-normal tracking-normal text-[var(--color-muted-foreground)]">
+            · supervisor training
           </span>
         </Link>
 
@@ -132,16 +126,9 @@ export function Header({ showCta = true }: HeaderProps) {
             )}
           </Button>
           {meQuery.isLoading ? (
-            // Reserve the user-area width while the /me request is in flight
-            // so the header doesn't reflow (and we don't briefly show a
-            // "Sign in" button to a returning user before the cookie is
-            // resolved).
-            <Skeleton className="h-8 w-24 rounded-full" />
+            <Skeleton className="h-8 w-24 rounded-md" />
           ) : user ? (
             <>
-              {/* Profile pill: only render when we actually have a handle so
-                  we don't ship a link that loops back to /missions. The
-                  Sign-out CTA is still available either way. */}
               {handle ? (
                 <Link
                   href={`/profile/${handle}`}
@@ -149,7 +136,10 @@ export function Header({ showCta = true }: HeaderProps) {
                   data-testid="header-handle"
                 >
                   <UserIcon className="size-3.5" aria-hidden />
-                  @{handle}
+                  <span>
+                    <span className="text-[var(--color-muted-foreground)]">@</span>
+                    {handle}
+                  </span>
                 </Link>
               ) : null}
               <Button

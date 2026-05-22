@@ -3,29 +3,26 @@
 import * as React from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ChevronLeft, ChevronRight, Clock } from "lucide-react";
-import type { Mission } from "@arena/shared-types";
+import type { Difficulty, Mission } from "@arena/shared-types";
 import { ApiError, listMissions } from "@/lib/api";
-import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
-import { DifficultyBadge } from "@/components/catalog/DifficultyBadge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { formatEstimatedMinutes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /**
- * Horizontally-scrolling marketing strip of every published mission. Used on
- * the landing page so visitors can scan all 10 scenarios at a glance.
+ * Mission roster — dense, table-like list of every published mission with
+ * the ``failure_mode_id`` made first-class (the actual differentiator
+ * between scenarios, previously buried under a generic short_description).
  *
- * Fallback semantics: the static FALLBACK_MISSIONS list is shown ONLY when the
- * backend is unreachable (network failure / 5xx). A reachable backend that
- * returns an empty mission list is treated as the truthful state — we render
- * a real empty state rather than substituting the hardcoded preview, so
- * marketing visitors never see fake clickable cards that 404 on click.
+ * Replaces the old horizontally-scrolling "carousel" of cards. We keep the
+ * exported name ``ScenarioCarousel`` so the marketing page import path
+ * stays stable, but the visual is intentionally not a carousel any more.
+ *
+ * Offline / preview semantics match the previous component: the static
+ * fallback list fires only when the API is unreachable, never when it
+ * returned an empty catalog (we render a real empty state instead).
  */
 export function ScenarioCarousel() {
-  const scrollerRef = React.useRef<HTMLUListElement | null>(null);
-
   const { data, isLoading, error, isError } = useQuery({
     queryKey: ["missions"],
     queryFn: ({ signal }) => listMissions(signal),
@@ -36,143 +33,143 @@ export function ScenarioCarousel() {
   });
 
   const apiUnreachable = isError && (!data || data.length === 0);
-  const missions: Mission[] = data && data.length > 0
-    ? data
-    : apiUnreachable
-      ? FALLBACK_MISSIONS
-      : [];
-  const offline = !isLoading && (error || (data && data.length === 0));
-  const reachableButEmpty = !isLoading && !isError && data && data.length === 0;
-
-  function scrollBy(direction: 1 | -1) {
-    const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollBy({ left: direction * Math.max(320, el.clientWidth * 0.75), behavior: "smooth" });
-  }
+  const missions: Mission[] =
+    data && data.length > 0 ? data : apiUnreachable ? FALLBACK_MISSIONS : [];
+  const reachableButEmpty =
+    !isLoading && !isError && data && data.length === 0;
 
   return (
     <section
       aria-labelledby="scenarios-heading"
-      className="mx-auto max-w-6xl px-6 py-20"
+      id="missions"
+      className="border-b border-[var(--color-border)]"
     >
-      <header className="flex items-end justify-between gap-4">
-        <div className="max-w-2xl">
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-muted-foreground)]">
-            Mission catalog
-          </p>
-          <h2
-            id="scenarios-heading"
-            className="mt-2 text-3xl font-semibold tracking-tight"
-          >
-            Ten scenarios. Ten distinct failure modes.
-          </h2>
-          <p className="mt-3 text-[var(--color-muted-foreground)]">
-            Each mission is a real repository with a deliberately-flawed agent
-            patch. Pick a category that looks uncomfortable.
-          </p>
-        </div>
-        <div className="hidden items-center gap-1 sm:flex">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => scrollBy(-1)}
-            aria-label="Scroll carousel left"
-          >
-            <ChevronLeft className="size-4" aria-hidden />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => scrollBy(1)}
-            aria-label="Scroll carousel right"
-          >
-            <ChevronRight className="size-4" aria-hidden />
-          </Button>
-        </div>
-      </header>
-
-      {isLoading ? (
-        <div className="mt-8 flex gap-4 overflow-hidden">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-44 w-72 shrink-0 rounded-xl" />
-          ))}
-        </div>
-      ) : reachableButEmpty ? (
-        <div className="mt-10 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-10 text-center text-sm text-[var(--color-muted-foreground)]">
-          The catalog is empty. Missions will appear here as soon as content
-          ships.
-        </div>
-      ) : (
-        <ul
-          ref={scrollerRef}
-          role="list"
-          aria-label="Mission carousel"
-          className="mt-8 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-4 [scrollbar-width:thin]"
-        >
-          {missions.map((mission) => (
-            <li
-              key={mission.id}
-              className="w-72 shrink-0 snap-start"
-            >
-              <ScenarioCard mission={mission} preview={apiUnreachable} />
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {offline ? (
-        <p className="mt-2 text-[11px] text-[var(--color-muted-foreground)]">
-          Showing a preview catalog — connect the backend to see live mission
-          metadata.
+      <div className="mx-auto max-w-6xl px-6 py-24">
+        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
+          // mission catalog
         </p>
-      ) : null}
+        <h2
+          id="scenarios-heading"
+          className="mt-2 max-w-[700px] text-3xl font-semibold tracking-tight"
+        >
+          Ten scenarios. Ten distinct failure modes.
+        </h2>
+        <p className="mt-3 max-w-[620px] text-[var(--color-muted-foreground)]">
+          Each row is a real repository with a deliberately-flawed agent
+          patch and a hidden failure mode. Pick a category that looks
+          uncomfortable.
+        </p>
+
+        {isLoading ? (
+          <div className="mt-10 space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 w-full rounded-md" />
+            ))}
+          </div>
+        ) : reachableButEmpty ? (
+          <div className="mt-10 rounded-[10px] border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-10 text-center text-sm text-[var(--color-muted-foreground)]">
+            The catalog is empty. Missions will appear here as soon as content
+            ships.
+          </div>
+        ) : (
+          <div className="mt-10 overflow-hidden rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <RosterHeader />
+            <ul role="list" className="divide-y divide-[var(--color-border)]">
+              {missions.map((m, i) => (
+                <li key={m.id}>
+                  <MissionRow
+                    mission={m}
+                    index={i}
+                    preview={apiUnreachable}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {apiUnreachable ? (
+          <p className="mt-2 text-[11px] text-[var(--color-muted-foreground)]">
+            Showing a preview catalog — connect the backend to see live mission
+            metadata.
+          </p>
+        ) : null}
+      </div>
     </section>
   );
 }
 
-function ScenarioCard({ mission, preview = false }: { mission: Mission; preview?: boolean }) {
-  // When the backend is unreachable we render preview cards that are
-  // visually identical but non-clickable — a click would route to a 404
-  // mission detail because no catalog row exists yet.
-  const baseClasses = cn(
-    "group flex h-full flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-soft",
-    preview
-      ? "cursor-default opacity-90"
-      : "transition-all duration-180 ease-macos hover:-translate-y-0.5 hover:shadow-elevated"
+/* ── Row chrome ───────────────────────────────────────────────────────── */
+
+function RosterHeader() {
+  return (
+    <div className="grid grid-cols-[56px_1fr_56px_40px] items-center gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-5 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.08em] text-[var(--color-muted-foreground)] sm:grid-cols-[56px_1.6fr_1fr_80px_80px_40px]">
+      <span>id</span>
+      <span>mission</span>
+      <span className="hidden sm:inline">category</span>
+      <span className="text-right">level</span>
+      <span className="hidden text-right sm:inline">est</span>
+      <span />
+    </div>
   );
+}
+
+function MissionRow({
+  mission,
+  index,
+  preview,
+}: {
+  mission: Mission;
+  index: number;
+  preview: boolean;
+}) {
+  const baseClasses =
+    "group grid grid-cols-[56px_1fr_56px_40px] items-center gap-4 px-5 py-4 transition-colors duration-150 sm:grid-cols-[56px_1.6fr_1fr_80px_80px_40px] " +
+    (preview ? "cursor-default" : "hover:bg-[var(--color-muted)]");
+  const indexLabel = String(index + 1).padStart(2, "0");
+  const failureMode = mission.failure_mode_id;
+
   const body = (
     <>
-      <div className="flex items-center justify-between">
-        <Badge tone="outline" className="font-mono text-[10px] tracking-normal">
-          {mission.category}
-        </Badge>
-        {preview ? (
-          <Badge tone="outline" className="text-[10px]">
-            preview
-          </Badge>
-        ) : (
-          <DifficultyBadge difficulty={mission.difficulty} />
-        )}
+      <span className="font-mono text-xs text-[var(--color-muted-foreground)]">
+        {indexLabel}
+      </span>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium tracking-tight">
+          {mission.title}
+        </div>
+        {failureMode ? (
+          <div className="mt-0.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+            failure_mode ·{" "}
+            <b className="font-medium text-[var(--color-warning)]">
+              {failureMode}
+            </b>
+          </div>
+        ) : null}
       </div>
-      <p className="line-clamp-2 text-sm font-semibold tracking-tight">
-        {mission.title}
-      </p>
-      <p className="line-clamp-2 text-xs text-[var(--color-muted-foreground)]">
-        {mission.short_description}
-      </p>
-      <div className="mt-auto flex items-center justify-between border-t border-[var(--color-border)] pt-3 text-[11px] text-[var(--color-muted-foreground)]">
-        <span className="inline-flex items-center gap-1">
-          <Clock className="size-3" aria-hidden />
-          {formatEstimatedMinutes(mission.estimated_minutes)}
-        </span>
-        {preview ? null : (
-          <span className="inline-flex items-center gap-1 text-[var(--color-primary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-            Start <ArrowRight className="size-3" aria-hidden />
-          </span>
+      <div className="hidden font-mono text-[11px] text-[var(--color-muted-foreground)] sm:block">
+        {mission.category}
+      </div>
+      <div
+        className={cn(
+          "text-right font-mono text-[11px] uppercase tracking-[0.04em]",
+          DIFFICULTY_COLOR[mission.difficulty]
         )}
+      >
+        {mission.difficulty}
+      </div>
+      <div className="hidden text-right font-mono text-xs text-[var(--color-muted-foreground)] sm:block">
+        {formatEstimatedMinutes(mission.estimated_minutes)}
+      </div>
+      <div
+        aria-hidden
+        className="text-right font-mono text-[var(--color-muted-foreground)] transition-[transform,color] duration-150 group-hover:translate-x-0.5 group-hover:text-[var(--color-foreground)]"
+      >
+        →
       </div>
     </>
   );
+
   if (preview) {
     return (
       <div
@@ -190,6 +187,12 @@ function ScenarioCard({ mission, preview = false }: { mission: Mission; preview?
     </Link>
   );
 }
+
+const DIFFICULTY_COLOR: Record<Difficulty, string> = {
+  beginner: "text-[var(--color-success)]",
+  intermediate: "text-[var(--color-warning)]",
+  advanced: "text-[var(--color-danger)]",
+};
 
 /** Frozen preview for offline / pre-seed environments. Mirrors §14 missions. */
 const FALLBACK_MISSIONS: Mission[] = [

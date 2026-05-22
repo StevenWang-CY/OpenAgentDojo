@@ -1,96 +1,125 @@
-"use client";
-
 import Link from "next/link";
-import { ArrowRight, Sparkles } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { ApiError, listMissions } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 
+/**
+ * The seven rubric dimensions and their point weights — mirrors the backend's
+ * single-source-of-truth at ``apps/api/app/grading/dimensions.py``. Kept as a
+ * literal here (rather than a runtime fetch) because the marketing page must
+ * render on a cold server with no backend reachable. A contract test pins
+ * the values so they stay in sync; bump both sides together on a re-balance.
+ */
+const RUBRIC: ReadonlyArray<{ name: string; pts: number }> = [
+  { name: "Correctness", pts: 30 },
+  { name: "Verification", pts: 15 },
+  { name: "Agent review", pts: 15 },
+  { name: "Prompt", pts: 10 },
+  { name: "Context", pts: 10 },
+  { name: "Safety", pts: 10 },
+  { name: "Minimality", pts: 10 },
+];
+const RUBRIC_TOTAL = RUBRIC.reduce((sum, d) => sum + d.pts, 0);
+
 export function Hero() {
-  // Reuse the same useQuery key as ScenarioCarousel so React Query
-  // serves the same response from the cache and we don't double-fetch.
-  const { data } = useQuery({
-    queryKey: ["missions"],
-    queryFn: ({ signal }) => listMissions(signal),
-    retry: (failureCount, e) => {
-      if (e instanceof ApiError && e.status === 0) return false;
-      return failureCount < 1;
-    },
-    staleTime: 60_000,
-  });
-  const missionCount = Array.isArray(data) ? data.length : null;
   return (
     <section
       aria-labelledby="hero-heading"
       className="relative isolate overflow-hidden border-b border-[var(--color-border)]"
     >
-      {/* Subtle layered gradient backdrop — soft enough to read text crisply. */}
+      {/* Subtle grid backdrop — discipline, not decoration. Mask-faded so it
+          never competes with the type. */}
       <div
         aria-hidden
-        className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,_oklch(from_var(--color-primary)_l_c_h/0.18),_transparent_60%)]"
-      />
-      <div
-        aria-hidden
-        className="absolute inset-x-0 -top-24 -z-10 h-72 bg-[radial-gradient(ellipse_at_center,_oklch(from_var(--color-accent)_l_c_h/0.18),_transparent_70%)] blur-3xl"
+        className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_right,_oklch(from_var(--color-foreground)_l_c_h/0.04)_1px,_transparent_1px),_linear-gradient(to_bottom,_oklch(from_var(--color-foreground)_l_c_h/0.04)_1px,_transparent_1px)] bg-[size:56px_56px] [mask-image:radial-gradient(ellipse_at_top,_black_30%,_transparent_75%)]"
       />
 
-      <div className="mx-auto flex max-w-5xl flex-col items-center px-6 py-24 text-center sm:py-32">
-        <span className="inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs font-medium text-[var(--color-muted-foreground)] shadow-soft">
-          <Sparkles className="size-3.5 text-[var(--color-primary)]" aria-hidden />
-          Hybrid-simulation training for AI supervisors
-        </span>
+      <div className="mx-auto max-w-6xl px-6 pt-20 pb-16 sm:pt-24">
+        <p className="font-mono text-xs text-[var(--color-muted-foreground)]">
+          <span className="text-[var(--color-primary)]">//</span> supervision
+          training · OpenAgentDojo v1
+        </p>
 
         <h1
           id="hero-heading"
-          className="mt-6 text-balance text-4xl font-semibold tracking-tight sm:text-5xl"
+          className="mt-4 max-w-[820px] text-balance text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl md:text-[52px]"
         >
-          <span className="text-[var(--color-foreground)]">Hello, OpenAgentDojo.</span>
-          <span className="block text-2xl font-normal text-[var(--color-muted-foreground)] sm:text-3xl">
-            Learn to supervise coding agents that quietly get it wrong.
-          </span>
+          Patches that look right, aren&rsquo;t.
+          <br />
+          <em className="font-medium not-italic text-[var(--color-muted-foreground)]">
+            Train the eye that catches them.
+          </em>
         </h1>
 
-        <p className="mt-6 max-w-2xl text-balance text-base text-[var(--color-muted-foreground)] sm:text-lg">
+        <p className="mt-5 max-w-[620px] text-base leading-relaxed text-pretty text-[var(--color-muted-foreground)] sm:text-[17px]">
           Real repositories. A deliberately-flawed agent. Hidden tests that
-          punish lazy review. OpenAgentDojo grades the <em>process</em> of supervision
-          — prompting, context, diff review, verification, correction — not
-          just the final patch.
+          punish lazy review. OpenAgentDojo grades the{" "}
+          <em className="rounded-sm bg-[oklch(from_var(--color-warning)_l_c_h/0.18)] px-1 not-italic text-[var(--color-foreground)]">
+            process
+          </em>{" "}
+          of supervision &mdash; prompting, context, diff review,
+          verification, correction &mdash; not just the final patch.
         </p>
 
-        <div className="mt-9 flex flex-col items-center gap-3 sm:flex-row">
-          <Button asChild size="lg">
+        <div className="mt-7 flex flex-wrap items-center gap-3">
+          <Button asChild>
             <Link href="/missions">
-              Browse Missions
-              <ArrowRight className="size-4" />
+              Browse missions
+              <span aria-hidden className="transition-transform duration-150 ease-macos group-hover:translate-x-0.5">
+                →
+              </span>
             </Link>
           </Button>
-          <Button asChild size="lg" variant="secondary">
+          <Button asChild variant="secondary">
             <Link href="/auth/sign-in">Create account</Link>
           </Button>
         </div>
 
-        <dl className="mt-12 grid grid-cols-1 gap-6 text-sm sm:grid-cols-3">
-          {[
-            {
-              label: "Curated missions",
-              value: missionCount === null ? "—" : String(missionCount),
-            },
-            { label: "Rubric dimensions", value: "7" },
-            { label: "Deterministic grading", value: "Always" },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-left shadow-soft"
-            >
-              <dt className="text-xs uppercase tracking-wide text-[var(--color-muted-foreground)]">
-                {item.label}
-              </dt>
-              <dd className="mt-1 text-xl font-semibold tracking-tight">
-                {item.value}
-              </dd>
-            </div>
-          ))}
-        </dl>
+        {/* Rubric strip — replaces the 3 stat-cards. Shows the actual product
+            (the deterministic 100-point scoring surface). */}
+        <div
+          role="group"
+          aria-label={`The ${RUBRIC_TOTAL}-point supervision rubric`}
+          className="mt-14 overflow-hidden rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-soft"
+        >
+          <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-4 py-2.5">
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--color-muted-foreground)]">
+              the {RUBRIC_TOTAL}-point rubric
+            </span>
+            <span className="font-mono text-xs text-[var(--color-muted-foreground)]">
+              deterministic · zero LLM on the grading path ·{" "}
+              <b className="font-semibold text-[var(--color-foreground)]">
+                = {RUBRIC_TOTAL} pts
+              </b>
+            </span>
+          </div>
+          <ul className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7">
+            {RUBRIC.map((dim, idx) => (
+              <li
+                key={dim.name}
+                className={
+                  // Right-border between cells, suppressed on the last item
+                  // in the visible row. The grid changes at sm/lg breakpoints
+                  // so we lean on Tailwind's :nth-child arithmetic for the
+                  // mid-row dividers; the last-of-type rule wipes the very
+                  // last cell unconditionally.
+                  "border-t border-[var(--color-border)] px-4 py-4 sm:[&:nth-child(4n)]:border-r-0 lg:[&:nth-child(4n)]:border-r lg:[&:nth-child(7)]:border-r-0 " +
+                  (idx % 2 === 1 ? "border-r-0 sm:border-r" : "border-r") +
+                  " border-[var(--color-border)] sm:[&:nth-child(-n+4)]:border-t-0 lg:[&:nth-child(-n+7)]:border-t-0"
+                }
+              >
+                <div className="font-mono text-[22px] font-semibold leading-none tracking-tight text-[var(--color-foreground)]">
+                  {dim.pts}
+                  <span className="text-sm font-normal text-[var(--color-muted-foreground)]">
+                    {" "}
+                    /{dim.pts}
+                  </span>
+                </div>
+                <div className="mt-1.5 text-[13px] text-[var(--color-muted-foreground)]">
+                  {dim.name}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </section>
   );

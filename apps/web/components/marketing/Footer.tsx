@@ -1,16 +1,16 @@
 import Link from "next/link";
-import { Compass, ExternalLink, Github } from "lucide-react";
+import { BrandMark } from "@/components/layout/BrandMark";
 
 // The status page is an in-app route at `/status` that proxies the API's
-// `/status` JSON endpoint and renders it server-side. Using the internal
-// route lets us keep the user inside our domain (and our theming) while still
-// surfacing live backend health.
+// `/status` JSON endpoint and renders it server-side.
 const STATUS_URL = "/status";
+const GITHUB_URL = "https://github.com/StevenWang-CY/OpenAgentDojo";
 
 /**
  * Marketing footer for the public landing page. Distinct from the in-app
- * `<layout/Footer>` (which adapts to the signed-in user); this one is purely
- * content + outbound links.
+ * `<layout/Footer>` (which adapts to the signed-in user). Adds a fourth
+ * column ("Determinism") that surfaces the two technical promises the
+ * project is built around — they are the actual product differentiator.
  */
 export function MarketingFooter() {
   return (
@@ -21,23 +21,19 @@ export function MarketingFooter() {
       <h2 id="marketing-footer-heading" className="sr-only">
         Site footer
       </h2>
-      <div className="mx-auto grid max-w-6xl gap-8 px-6 py-12 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-[1.6fr_1fr_1fr_1fr]">
         <div>
           <Link
             href="/"
-            className="inline-flex items-center gap-2 text-sm font-semibold tracking-tight"
+            className="inline-flex items-baseline gap-1.5 text-sm font-semibold tracking-tight"
           >
-            <span
-              aria-hidden
-              className="grid size-7 place-items-center rounded-md bg-[var(--color-primary)] text-[var(--color-primary-foreground)] shadow-soft"
-            >
-              <Compass className="size-4" />
-            </span>
+            <BrandMark className="translate-y-[2px]" />
             OpenAgentDojo
           </Link>
-          <p className="mt-3 max-w-sm text-xs text-[var(--color-muted-foreground)]">
-            A simulator for developers learning to supervise AI coding agents
-            on real repositories. Built around process, not output.
+          <p className="mt-3 max-w-[320px] text-pretty text-[13px] text-[var(--color-muted-foreground)]">
+            A browser-based dojo for developers learning to supervise AI
+            coding agents on real repositories. Built around process, not
+            output.
           </p>
         </div>
 
@@ -47,25 +43,29 @@ export function MarketingFooter() {
         </FooterColumn>
 
         <FooterColumn title="Project">
-          <FooterLink
-            href="https://github.com/StevenWang-CY/OpenAgentDojo"
-            external
-          >
-            <Github className="size-3.5" aria-hidden /> GitHub
-            <ExternalLink className="size-3 opacity-60" aria-hidden />
+          <FooterLink href={GITHUB_URL} external>
+            GitHub ↗
           </FooterLink>
           <FooterLink href={STATUS_URL}>Status</FooterLink>
         </FooterColumn>
+
+        <FooterColumn title="Determinism">
+          <li className="text-[var(--color-muted-foreground)]">
+            No LLM on the grading path
+          </li>
+          <li className="text-[var(--color-muted-foreground)]">
+            Replays are byte-identical
+          </li>
+        </FooterColumn>
       </div>
       <div className="border-t border-[var(--color-border)]">
-        <div className="mx-auto flex max-w-6xl flex-col gap-2 px-6 py-5 text-xs text-[var(--color-muted-foreground)] sm:flex-row sm:items-center sm:justify-between">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 py-5 text-xs text-[var(--color-muted-foreground)]">
           <p>
             &copy; {new Date().getFullYear()} OpenAgentDojo. All rights
             reserved.
           </p>
-          <p>
-            Built with care to make AI supervision a learnable skill, not a
-            vibe.
+          <p className="font-mono">
+            supervision is a learnable skill, not a vibe.
           </p>
         </div>
       </div>
@@ -82,10 +82,10 @@ function FooterColumn({
 }) {
   return (
     <div>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
+      <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
         {title}
       </p>
-      <ul className="mt-3 space-y-2 text-sm">{children}</ul>
+      <ul className="mt-3.5 space-y-2.5 text-sm">{children}</ul>
     </div>
   );
 }

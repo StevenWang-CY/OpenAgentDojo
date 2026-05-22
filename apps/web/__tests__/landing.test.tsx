@@ -28,23 +28,34 @@ vi.mock("next/link", () => ({
 }));
 
 describe("landing page", () => {
-  it("renders the Hello, OpenAgentDojo hero", () => {
+  it("renders the redesigned hero headline", () => {
     renderWithClient(<LandingPage />);
+    // The headline mixes a curly apostrophe and a <br> so we match the
+    // unambiguous opening phrase rather than the full string.
     expect(
-      screen.getByRole("heading", { level: 1, name: /Hello, OpenAgentDojo/i })
+      screen.getByRole("heading", {
+        level: 1,
+        name: /Patches that look right/i,
+      })
     ).toBeInTheDocument();
   });
 
   it("links to the missions catalog", () => {
     renderWithClient(<LandingPage />);
-    const cta = screen.getByRole("link", { name: /Browse Missions/i });
+    const cta = screen.getByRole("link", { name: /Browse missions/i });
     expect(cta).toHaveAttribute("href", "/missions");
   });
 
-  it("describes what the platform does", () => {
+  it("describes what the platform grades", () => {
     renderWithClient(<LandingPage />);
-    expect(
-      screen.getByText(/supervise coding agents/i)
-    ).toBeInTheDocument();
+    // The subhead is broken across an inline <em> so we walk up and
+    // match on the rolled-up text. `getAllByText` because every ancestor
+    // also satisfies the predicate; we only need at least one hit.
+    const matches = screen.getAllByText((_, node) => {
+      if (!node) return false;
+      const text = node.textContent ?? "";
+      return /grades the\s+process\s+of\s+supervision/i.test(text);
+    });
+    expect(matches.length).toBeGreaterThan(0);
   });
 });
