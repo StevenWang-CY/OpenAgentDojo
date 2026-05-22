@@ -1,76 +1,82 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Clock } from "lucide-react";
 import type { Mission } from "@arena/shared-types";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Badge } from "@/components/ui/Badge";
 import { DifficultyBadge } from "./DifficultyBadge";
-import { formatEstimatedMinutes } from "@/lib/format";
 import { track } from "@/lib/telemetry";
 
 interface MissionCardProps {
   mission: Mission;
+  /**
+   * 1-indexed position of this card in the catalog. Rendered as `01`, `02`, …
+   * Purely visual; not the mission's persistent id.
+   */
+  index?: number;
 }
 
-export function MissionCard({ mission }: MissionCardProps) {
+export function MissionCard({ mission, index }: MissionCardProps) {
   const href = `/missions/${mission.id}` as const;
+  const indexLabel =
+    typeof index === "number" ? String(index).padStart(2, "0") : null;
+  const skillSummary = (mission.skills_tested ?? []).slice(0, 2).join(" · ");
   return (
-    <Card className="group relative flex h-full flex-col transition-shadow duration-200 ease-macos hover:shadow-elevated focus-within:shadow-elevated">
-      <CardHeader>
-        <div className="flex items-start justify-between gap-2">
-          <Badge tone="outline" className="font-mono text-[10px] tracking-normal">
-            {mission.category}
-          </Badge>
-          <DifficultyBadge difficulty={mission.difficulty} />
-        </div>
-        <CardTitle className="mt-2">
-          <Link
-            href={href}
-            onClick={() =>
-              track("mission_viewed", {
-                mission_id: mission.id,
-                category: mission.category,
-                difficulty: mission.difficulty,
-                source: "catalog_card",
-              })
-            }
-            className="after:absolute after:inset-0 after:content-[''] focus-visible:outline-none"
-          >
-            {mission.title}
-          </Link>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex-1 text-sm text-[var(--color-muted-foreground)]">
-        <p className="line-clamp-3">{mission.short_description}</p>
-      </CardContent>
-      <CardFooter className="flex items-center justify-between border-t border-[var(--color-border)] pt-4">
-        <div className="flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)]">
-          <Clock className="size-3.5" aria-hidden />
-          <span>{formatEstimatedMinutes(mission.estimated_minutes)}</span>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
-          {mission.skills_tested.slice(0, 2).map((skill) => (
-            <span
-              key={skill}
-              className="rounded-md bg-[var(--color-muted)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-muted-foreground)]"
-            >
-              {skill}
+    <Link
+      href={href}
+      onClick={() =>
+        track("mission_viewed", {
+          mission_id: mission.id,
+          category: mission.category,
+          difficulty: mission.difficulty,
+          source: "catalog_card",
+        })
+      }
+      className="group grid grid-rows-[auto_1fr_auto] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] transition-colors duration-150 ease-macos hover:bg-[var(--color-surface-elevated)] focus-visible:bg-[var(--color-surface-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
+    >
+      <div className="flex items-center justify-between px-4 pt-3">
+        <span className="font-mono text-[11px] text-[var(--color-muted-foreground)]">
+          {indexLabel ? (
+            <>
+              {indexLabel}{" "}
+              <span className="ml-1 border-l border-[var(--color-border-strong)] pl-2 text-[var(--color-foreground)]">
+                {mission.category}
+              </span>
+            </>
+          ) : (
+            <span className="text-[var(--color-foreground)]">
+              {mission.category}
             </span>
-          ))}
-          {(mission.skills_tested?.length ?? 0) > 2 ? (
-            <span className="text-[10px] text-[var(--color-muted-foreground)]">
-              +{(mission.skills_tested?.length ?? 0) - 2}
-            </span>
-          ) : null}
-        </div>
-      </CardFooter>
-      <span
-        aria-hidden
-        className="pointer-events-none absolute right-4 top-4 text-[var(--color-muted-foreground)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
-      >
-        <ArrowUpRight className="size-4" />
-      </span>
-    </Card>
+          )}
+        </span>
+        <DifficultyBadge difficulty={mission.difficulty} />
+      </div>
+
+      <div className="px-4 pt-3 pb-4">
+        <p className="text-[15px] font-semibold leading-snug tracking-tight">
+          {mission.title}
+        </p>
+        <p className="mt-1.5 line-clamp-2 text-[13px] leading-normal text-[var(--color-muted-foreground)]">
+          {mission.short_description}
+        </p>
+        <p className="mt-3 truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
+          failure_mode ·{" "}
+          <b className="font-medium text-[var(--color-warning)]">
+            {mission.failure_mode_id}
+          </b>
+        </p>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-2.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+        <span>
+          ~{mission.estimated_minutes}m
+          {skillSummary ? <> · {skillSummary}</> : null}
+        </span>
+        <span
+          aria-hidden
+          className="transition-[transform,color] duration-150 group-hover:translate-x-0.5 group-hover:text-[var(--color-foreground)]"
+        >
+          →
+        </span>
+      </div>
+    </Link>
   );
 }

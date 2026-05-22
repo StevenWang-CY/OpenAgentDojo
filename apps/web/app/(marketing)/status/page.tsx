@@ -1,14 +1,7 @@
 import type { Metadata } from "next";
-import { Badge } from "@/components/ui/Badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/Card";
 import { env } from "@/lib/env";
 import { formatUtcDateTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = {
   title: "Status — OpenAgentDojo",
@@ -16,25 +9,8 @@ export const metadata: Metadata = {
     "Real-time health of the OpenAgentDojo API, database, queue, and object storage.",
 };
 
-// Always render at request time — status is by definition not cacheable.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-// ---------------------------------------------------------------------------
-// Backend contract — owned by the API agent.
-//
-// The current public endpoint lives at `GET ${API_BASE}/status` (root-mounted,
-// no `/api/v1` prefix) and returns the documented shape below. This file is
-// defensive about that contract:
-//
-//   - it falls back to `/api/v1/status` if the root path 404s, since the spec
-//     for this work item lists `/api/v1/status` as the eventual location;
-//   - it renders whatever subset of `components` the API returns, so the page
-//     keeps working as new components are added (e.g. `sandbox_pool`, `workers`);
-//   - on any 5xx / network error it shows a single "API offline" card instead
-//     of throwing — the status page itself must never be a single point of
-//     failure.
-// ---------------------------------------------------------------------------
 
 type ComponentStatus = "operational" | "degraded" | "down";
 
@@ -47,7 +23,6 @@ interface ComponentCheck {
 interface StatusPayload {
   status: ComponentStatus;
   components?: Record<string, ComponentCheck>;
-  // Some backends emit `checks` instead of `components`; we accept either.
   checks?: Record<string, ComponentCheck | boolean>;
   version?: string;
   env?: string;
@@ -60,11 +35,10 @@ type FetchOutcome =
   | { kind: "offline"; reason: string };
 
 async function fetchStatus(): Promise<FetchOutcome> {
-  // Try the canonical path first, then fall back to the /api/v1 variant in
-  // case the backend ever re-mounts the route there. We never throw — every
-  // branch returns a typed FetchOutcome.
-  const candidates = [`${env.apiBaseUrl}/status`, `${env.apiBaseUrl}/api/v1/status`];
-
+  const candidates = [
+    `${env.apiBaseUrl}/status`,
+    `${env.apiBaseUrl}/api/v1/status`,
+  ];
   let lastReason = "no response";
   for (const url of candidates) {
     try {
@@ -74,7 +48,7 @@ async function fetchStatus(): Promise<FetchOutcome> {
       });
       if (res.status === 404) {
         lastReason = `404 from ${url}`;
-        continue; // try next candidate
+        continue;
       }
       if (res.status >= 500) {
         lastReason = `${res.status} from ${url}`;
@@ -93,12 +67,10 @@ async function fetchStatus(): Promise<FetchOutcome> {
   return { kind: "offline", reason: lastReason };
 }
 
-function normaliseComponents(payload: StatusPayload): Array<[string, ComponentCheck]> {
-  // Prefer `components` (current backend contract). Fall back to `checks`
-  // for forward-compat with the spec's eventual shape `{ db, redis, … }`.
-  if (payload.components) {
-    return Object.entries(payload.components);
-  }
+function normaliseComponents(
+  payload: StatusPayload,
+): Array<[string, ComponentCheck]> {
+  if (payload.components) return Object.entries(payload.components);
   if (payload.checks) {
     return Object.entries(payload.checks).map(([name, value]) => {
       if (typeof value === "boolean") {
@@ -111,31 +83,67 @@ function normaliseComponents(payload: StatusPayload): Array<[string, ComponentCh
   return [];
 }
 
-const TONE_BY_STATUS: Record<ComponentStatus, "success" | "warning" | "danger"> = {
-  operational: "success",
-  degraded: "warning",
-  down: "danger",
+const ROW_KLASS: Record<ComponentStatus, string> = {
+  operational: "",
+  degraded: "is-degraded",
+  down: "is-down",
 };
-
-const LABEL_BY_STATUS: Record<ComponentStatus, string> = {
+const LAMP_KLASS: Record<ComponentStatus, string> = {
+  operational: "bg-[var(--color-success)]",
+  degraded: "bg-[var(--color-warning)]",
+  down: "bg-[var(--color-danger)]",
+};
+const WORD_KLASS: Record<ComponentStatus, string> = {
+  operational: "text-[var(--color-success)]",
+  degraded: "text-[var(--color-warning)]",
+  down: "text-[var(--color-danger)]",
+};
+const PULSE_KLASS = LAMP_KLASS;
+const PULSE_RING: Record<ComponentStatus, string> = {
+  operational:
+    "shadow-[0_0_0_4px_oklch(from_var(--color-success)_l_c_h/0.18)]",
+  degraded:
+    "shadow-[0_0_0_4px_oklch(from_var(--color-warning)_l_c_h/0.18)]",
+  down: "shadow-[0_0_0_4px_oklch(from_var(--color-danger)_l_c_h/0.18)]",
+};
+const OVERALL_HEADLINE: Record<ComponentStatus, string> = {
+  operational: "All systems normal.",
+  degraded: "One or more components are degraded.",
+  down: "Major outage in progress.",
+};
+const OVERALL_WORD: Record<ComponentStatus, string> = {
   operational: "Operational",
   degraded: "Degraded",
   down: "Down",
 };
 
 function componentLabel(name: string): string {
-  // Render snake_case keys as human-readable titles.
-  return name
-    .split(/[_\s]+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+  return name.toLowerCase().replace(/[\s]+/g, "_");
+}
+
+function componentDescription(name: string): string | null {
+  const map: Record<string, string> = {
+    api: "FastAPI · uvicorn",
+    postgres: "primary + read replica",
+    redis: "RQ broker + cache",
+    sandbox_pool: "docker daemon · session containers",
+    object_storage: "MinIO replay bucket",
+    workers: "RQ workers · grading queue",
+  };
+  return map[name.toLowerCase()] ?? null;
 }
 
 function formatChecked(iso?: string): string | null {
   if (!iso) return null;
-  const formatted = formatUtcDateTime(iso);
-  return formatted === "—" ? null : formatted;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    const formatted = formatUtcDateTime(iso);
+    return formatted === "—" ? null : formatted;
+  }
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 function formatUptime(seconds?: number): string | null {
@@ -154,33 +162,23 @@ export default async function StatusPage() {
   const renderedAt = new Date();
 
   return (
-    <section className="mx-auto w-full max-w-3xl px-6 py-16">
-      <header className="mb-8 space-y-2">
-        <h1 className="text-3xl font-semibold tracking-tight">System status</h1>
-        <p className="text-sm text-[var(--color-muted-foreground)]">
-          Live health of the OpenAgentDojo API and its dependencies. Refresh the page
-          for a fresh probe — this page is never cached.
-        </p>
-      </header>
+    <section className="mx-auto w-full max-w-3xl px-6 py-14">
+      <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
+        <span className="text-[var(--color-primary)]">{"//"}</span> system
+        status
+      </p>
+      <h1 className="mt-1.5 text-3xl font-semibold tracking-tight">
+        {outcome.kind === "offline"
+          ? "API offline."
+          : OVERALL_HEADLINE[outcome.payload.status ?? "operational"]}
+      </h1>
+      <p className="mt-2.5 max-w-2xl text-[var(--color-muted-foreground)]">
+        Live health of the OpenAgentDojo API and its dependencies. Refresh
+        the page for a fresh probe — this page is never cached.
+      </p>
 
       {outcome.kind === "offline" ? (
-        <Card aria-live="polite">
-          <CardHeader className="flex flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>API offline</CardTitle>
-              <CardDescription>
-                Could not reach the status endpoint at{" "}
-                <code className="font-mono">{env.apiBaseUrl}</code>.
-              </CardDescription>
-            </div>
-            <Badge tone="danger">Down</Badge>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-[var(--color-muted-foreground)]">
-              {outcome.reason}
-            </p>
-          </CardContent>
-        </Card>
+        <OfflineState reason={outcome.reason} baseUrl={env.apiBaseUrl} />
       ) : (
         <OverallAndComponents
           payload={outcome.payload}
@@ -204,103 +202,98 @@ function OverallAndComponents({
 
   return (
     <>
-      <Card className="mb-6" aria-live="polite">
-        <CardHeader className="flex flex-row items-start justify-between gap-4">
-          <div>
-            <CardTitle>Overall</CardTitle>
-            <CardDescription>
-              {overall === "operational"
-                ? "All systems normal."
-                : overall === "degraded"
-                  ? "One or more components are degraded — service may be slower or partially affected."
-                  : "Major outage in progress."}
-            </CardDescription>
-          </div>
-          <Badge tone={TONE_BY_STATUS[overall]}>{LABEL_BY_STATUS[overall]}</Badge>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-3 text-sm text-[var(--color-muted-foreground)] sm:grid-cols-4">
-            {payload.version && (
-              <div>
-                <dt className="uppercase tracking-wide text-[10px]">Version</dt>
-                <dd className="font-mono text-[var(--color-foreground)]">
-                  {payload.version}
-                </dd>
-              </div>
+      <div
+        aria-live="polite"
+        className="mt-7 flex flex-col gap-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7"
+      >
+        <span className="inline-flex items-center gap-2.5 text-[17px] font-semibold tracking-tight">
+          <span
+            aria-hidden
+            className={cn(
+              "size-2.5 rounded-full",
+              PULSE_KLASS[overall],
+              PULSE_RING[overall],
             )}
-            {payload.env && (
-              <div>
-                <dt className="uppercase tracking-wide text-[10px]">Env</dt>
-                <dd className="text-[var(--color-foreground)]">{payload.env}</dd>
-              </div>
-            )}
-            {uptime && (
-              <div>
-                <dt className="uppercase tracking-wide text-[10px]">Uptime</dt>
-                <dd className="text-[var(--color-foreground)]">{uptime}</dd>
-              </div>
-            )}
-            <div>
-              <dt className="uppercase tracking-wide text-[10px]">Checked</dt>
-              <dd className="text-[var(--color-foreground)]">
-                {formatUtcDateTime(renderedAt)}
-              </dd>
-            </div>
-          </dl>
-        </CardContent>
-      </Card>
+          />
+          {OVERALL_WORD[overall]}
+        </span>
+        <dl className="grid grid-cols-2 gap-6 font-mono sm:grid-cols-4 sm:gap-7">
+          {payload.version ? (
+            <Meta label="version" value={payload.version} />
+          ) : null}
+          {payload.env ? <Meta label="env" value={payload.env} /> : null}
+          {uptime ? <Meta label="uptime" value={uptime} /> : null}
+          <Meta label="checked" value={formatUtcDateTime(renderedAt)} />
+        </dl>
+      </div>
 
-      <div className="grid gap-3">
+      <div className="mt-4 overflow-hidden rounded-lg border border-[var(--color-border)]">
         {components.length === 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>No components reported</CardTitle>
-              <CardDescription>
-                The API is reachable but did not return any component checks.
-              </CardDescription>
-            </CardHeader>
-          </Card>
+          <p className="bg-[var(--color-surface)] px-5 py-6 text-center font-mono text-xs text-[var(--color-muted-foreground)]">
+            {"// no components reported."}
+          </p>
         ) : (
           components.map(([name, check]) => {
             const status = (check.status ?? "operational") as ComponentStatus;
             const checked = formatChecked(check.checked_at);
+            const desc = componentDescription(name);
             return (
-              <Card key={name} aria-label={`Status: ${componentLabel(name)}`}>
-                <CardHeader className="flex flex-row items-center justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-sm">
-                      {componentLabel(name)}
-                    </CardTitle>
-                    {checked && (
-                      <CardDescription className="text-xs">
-                        Last checked {checked}
-                      </CardDescription>
-                    )}
-                  </div>
-                  <Badge tone={TONE_BY_STATUS[status]}>
-                    {LABEL_BY_STATUS[status]}
-                  </Badge>
-                </CardHeader>
-                {check.message && (
-                  <CardContent>
-                    <p className="text-sm text-[var(--color-muted-foreground)]">
-                      {check.message}
-                    </p>
-                  </CardContent>
+              <div
+                key={name}
+                aria-label={`Status: ${componentLabel(name)}`}
+                className={cn(
+                  "grid items-center gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3.5 last:border-b-0 sm:px-5",
+                  ROW_KLASS[status],
                 )}
-              </Card>
+                style={{
+                  gridTemplateColumns:
+                    "12px minmax(0,1fr) 140px minmax(0,120px)",
+                }}
+              >
+                <span
+                  aria-hidden
+                  className={cn("size-2 rounded-full", LAMP_KLASS[status])}
+                />
+                <p className="truncate font-mono text-[13px] font-medium">
+                  {componentLabel(name)}
+                  {desc ? (
+                    <span className="ml-2 font-normal text-[var(--color-muted-foreground)]">
+                      {desc}
+                    </span>
+                  ) : null}
+                </p>
+                <p className="font-mono text-[11px] text-[var(--color-muted-foreground)]">
+                  {checked ?? "—"}
+                </p>
+                <p
+                  className={cn(
+                    "text-right font-mono text-[11px] uppercase tracking-[0.08em]",
+                    WORD_KLASS[status],
+                  )}
+                >
+                  {status}
+                </p>
+                {check.message ? (
+                  <p
+                    className="col-span-full pl-7 font-mono text-[11px] text-[var(--color-muted-foreground)]"
+                    style={{ gridColumn: "1 / -1" }}
+                  >
+                    {check.message}
+                  </p>
+                ) : null}
+              </div>
             );
           })
         )}
       </div>
 
-      {payload.links && Object.keys(payload.links).length > 0 && (
-        <p className="mt-6 text-xs text-[var(--color-muted-foreground)]">
-          Operator probes:{" "}
+      {payload.links && Object.keys(payload.links).length > 0 ? (
+        <p className="mt-5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+          operator probes:{" "}
           {Object.entries(payload.links).map(([label, href], i, arr) => (
             <span key={label}>
               <a
-                className="font-mono underline-offset-2 hover:underline"
+                className="underline underline-offset-2 hover:text-[var(--color-foreground)]"
                 href={`${env.apiBaseUrl}${href}`}
               >
                 {label}
@@ -309,7 +302,52 @@ function OverallAndComponents({
             </span>
           ))}
         </p>
-      )}
+      ) : null}
     </>
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="font-mono text-[10.5px] uppercase tracking-[0.08em] text-[var(--color-muted-foreground)]">
+        {label}
+      </dt>
+      <dd className="mt-0.5 font-mono text-[13px]">{value}</dd>
+    </div>
+  );
+}
+
+function OfflineState({
+  reason,
+  baseUrl,
+}: {
+  reason: string;
+  baseUrl: string;
+}) {
+  return (
+    <div
+      aria-live="polite"
+      className="mt-7 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-5"
+    >
+      <span className="inline-flex items-center gap-2.5 text-[17px] font-semibold tracking-tight">
+        <span
+          aria-hidden
+          className={cn(
+            "size-2.5 rounded-full",
+            PULSE_KLASS.down,
+            PULSE_RING.down,
+          )}
+        />
+        Down
+      </span>
+      <p className="mt-2 text-sm text-[var(--color-muted-foreground)]">
+        Could not reach the status endpoint at{" "}
+        <code className="font-mono">{baseUrl}</code>.
+      </p>
+      <p className="mt-1.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+        {reason}
+      </p>
+    </div>
   );
 }

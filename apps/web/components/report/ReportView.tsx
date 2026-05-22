@@ -4,16 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import {
-  AlertCircle,
-  Award,
-  CheckCircle2,
-  Copy,
-  Loader2,
-  Share2,
-  Trophy,
-  XCircle,
-} from "lucide-react";
+import { AlertCircle, Copy, Loader2, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, getReport, getTimeline, shareReport } from "@/lib/api";
 import type { ScoreReport } from "@arena/shared-types";
@@ -25,12 +16,6 @@ import { DimensionBreakdown } from "@/components/report/DimensionBreakdown";
 import { IdealSolution } from "@/components/report/IdealSolution";
 import { TimelineReplay } from "@/components/report/TimelineReplay";
 
-/**
- * The seven rubric dimensions that the radar + breakdown components both
- * index unconditionally. If a wire payload is missing any key, we must
- * bail out before render to avoid a `Cannot read properties of undefined`
- * crash.
- */
 const REQUIRED_DIMENSIONS = [
   "final_correctness",
   "verification",
@@ -42,7 +27,7 @@ const REQUIRED_DIMENSIONS = [
 ] as const;
 
 function hasAllDimensions(
-  dimensions: ScoreReport["dimensions"] | undefined | null
+  dimensions: ScoreReport["dimensions"] | undefined | null,
 ): dimensions is ScoreReport["dimensions"] {
   if (!dimensions || typeof dimensions !== "object") return false;
   for (const key of REQUIRED_DIMENSIONS) {
@@ -54,22 +39,9 @@ function hasAllDimensions(
 
 interface ReportViewProps {
   submissionId: string;
-  /**
-   * Optional share token forwarded by the server wrapper after reading
-   * `searchParams.share`. We re-read it on the client too (for client-side
-   * navigation) so a direct link with `?share=…` still authorises the fetch.
-   */
   share?: string | null;
 }
 
-/**
- * Client-side report renderer. Owns:
- *   - React Query fetch of `getReport` with full loading / 404 / error / retry states.
- *   - The "share" CTA that mints a public link via `POST /reports/{id}/share`.
- *   - Conditional timeline replay (also tries `getTimeline` against the session id).
- *
- * The server wrapper handles `generateMetadata` so the OG card stays SSR.
- */
 export function ReportView({ submissionId, share = null }: ReportViewProps) {
   const searchParams = useSearchParams();
   const effectiveShare = share ?? searchParams?.get("share") ?? null;
@@ -83,8 +55,6 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
     },
   });
 
-  // Timeline replay is optional: backend may or may not have backfilled.
-  // We key by session_id once we have the submission.
   const sessionId = reportQuery.data?.session_id;
   const timelineQuery = useQuery({
     queryKey: ["timeline", sessionId],
@@ -93,11 +63,6 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
     retry: false,
   });
 
-  // Fire `report_viewed` exactly once per submission id, once the payload
-  // is in hand. We don't want to fire on every refetch. `passed` is only
-  // meaningful when the rubric actually graded — for half-graded
-  // submissions (the F4 null-guard branch below) `missed` is `undefined`
-  // and we report `passed: null` rather than misleadingly emitting `true`.
   const reportedRef = React.useRef<string | null>(null);
   const total = reportQuery.data?.total_score;
   const missed = reportQuery.data?.score_report?.missed_failure_mode;
@@ -135,151 +100,101 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
   }
 
   const submission = reportQuery.data;
-  if (!submission) {
-    return <NotFoundState submissionId={submissionId} />;
-  }
-
-  // Defensive: the backend may return a `Submission` with a null
-  // `score_report` if grading aborted partway through (e.g. validators
-  // crashed). The TS type asserts presence — but JSON over the wire can
-  // still be `null` for half-graded rows, so we narrow at runtime.
+  if (!submission) return <NotFoundState submissionId={submissionId} />;
   const report = submission.score_report as ScoreReport | null | undefined;
   if (!report) {
     return (
       <ReportErrorState reason="Submission failed before grading completed." />
     );
   }
-  // The radar + breakdown components index `dimensions` by every rubric key
-  // unconditionally; if even one is missing they'll throw on render. Guard
-  // here so a malformed wire payload degrades to a clear error state instead
-  // of a white-screen crash.
   if (!hasAllDimensions(report.dimensions)) {
     return <ReportErrorState reason="Score report is incomplete." />;
   }
-  // `missed_failure_mode` may legitimately be undefined on partially graded
-  // submissions; treat that as "did not pass" since we can't claim success.
+
   const passed = report.missed_failure_mode === false;
   const events = timelineQuery.data ?? [];
 
   return (
     <main
-      className="mx-auto max-w-4xl space-y-8 px-6 py-12"
+      className="mx-auto max-w-4xl px-6 py-10"
       aria-labelledby="report-heading"
     >
+      <p className="inline-flex items-center gap-2 font-mono text-xs text-[var(--color-muted-foreground)]">
+        <Link
+          href="/missions"
+          className="transition-colors hover:text-[var(--color-foreground)]"
+        >
+          ← missions
+        </Link>
+        <span aria-hidden className="opacity-50">/</span>
+        <span className="text-[var(--color-foreground)]">
+          report · {submissionId.slice(0, 12)}
+          {submissionId.length > 12 ? "…" : ""}
+        </span>
+      </p>
+
       <ReportHeader
         submissionId={submissionId}
         totalScore={submission.total_score}
         passed={passed}
+        hiddenTestsPassed={countHiddenTestsPassed(report)}
+        hiddenTestsTotal={countHiddenTestsTotal(report)}
       />
 
-      {/* Radar */}
-      <section
-        aria-labelledby="radar-heading"
-        className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-soft"
-      >
-        <h2
-          id="radar-heading"
-          className="text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-        >
-          Performance overview
-        </h2>
-        <ScoreRadar dimensions={report.dimensions} className="mt-4" />
-      </section>
-
-      {/* Dimension cards */}
-      <section
-        aria-labelledby="breakdown-heading"
-        className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-soft"
-      >
-        <h2
-          id="breakdown-heading"
-          className="mb-4 text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-        >
-          Dimension breakdown
-        </h2>
-        <DimensionBreakdown dimensions={report.dimensions} />
-      </section>
+      <Section title="performance overview" id="performance-heading">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-center">
+          <div className="-mx-2 lg:mx-0">
+            <ScoreRadar
+              dimensions={report.dimensions}
+              aria-labelledby="performance-heading"
+            />
+          </div>
+          <DimensionBreakdown dimensions={report.dimensions} />
+        </div>
+      </Section>
 
       {report.strengths.length > 0 ? (
-        <BulletSection
-          id="strengths-heading"
-          title="Strengths"
-          items={report.strengths}
-          icon={
-            <CheckCircle2
-              className="mt-0.5 size-4 shrink-0 text-[var(--color-success)]"
-              aria-hidden
-            />
-          }
-        />
+        <Section title="strengths">
+          <BulletList items={report.strengths} kind="ok" />
+        </Section>
       ) : null}
 
       {report.weaknesses.length > 0 ? (
-        <BulletSection
-          id="weaknesses-heading"
-          title="Areas to improve"
-          items={report.weaknesses}
-          icon={
-            <XCircle
-              className="mt-0.5 size-4 shrink-0 text-[var(--color-danger)]"
-              aria-hidden
-            />
-          }
-        />
+        <Section title="areas to improve">
+          <BulletList items={report.weaknesses} kind="bad" />
+        </Section>
       ) : null}
 
-      {/* Badges */}
       {report.badges_earned.length > 0 ? (
-        <section
-          aria-labelledby="badges-heading"
-          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-soft"
-        >
-          <h2
-            id="badges-heading"
-            className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-          >
-            Badges earned
-          </h2>
-          <ul className="flex flex-wrap gap-2" data-testid="badges-strip">
+        <Section title="badges earned">
+          <ul className="flex flex-wrap gap-1.5" data-testid="badges-strip">
             {report.badges_earned.map((badge) => (
               <li key={badge}>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[oklch(from_var(--color-accent)_l_c_h/0.15)] px-3 py-1 text-xs font-medium text-[var(--color-foreground)]">
-                  <Award
-                    className="size-3.5 text-[var(--color-accent)]"
-                    aria-hidden
-                  />
+                <span className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border-strong)] px-2.5 py-1 font-mono text-[11px]">
+                  <b className="font-medium text-[var(--color-primary)]">+</b>
                   {badge}
                 </span>
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       ) : null}
 
-      {/* Timeline replay */}
       {events.length > 0 ? (
-        <section
-          aria-labelledby="timeline-heading"
-          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-soft"
-        >
-          <h2
-            id="timeline-heading"
-            className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-          >
-            Supervision timeline
-          </h2>
+        <Section title="supervision timeline">
           <TimelineReplay events={events} />
-        </section>
+        </Section>
       ) : null}
 
-      {/* Ideal solution */}
       {submission.ideal_solution ? (
-        <IdealSolution markdown={submission.ideal_solution} />
+        <Section title="ideal solution">
+          <IdealSolution markdown={submission.ideal_solution} />
+        </Section>
       ) : null}
 
-      <footer className="flex justify-center pb-8">
+      <footer className="mt-10 flex justify-start">
         <Button asChild variant="secondary">
-          <Link href="/missions">Back to missions</Link>
+          <Link href="/missions">← Back to missions</Link>
         </Button>
       </footer>
     </main>
@@ -290,14 +205,18 @@ function ReportHeader({
   submissionId,
   totalScore,
   passed,
+  hiddenTestsPassed,
+  hiddenTestsTotal,
 }: {
   submissionId: string;
   totalScore: number;
   passed: boolean;
+  hiddenTestsPassed: number | null;
+  hiddenTestsTotal: number | null;
 }) {
   const [sharing, setSharing] = React.useState(false);
   const [sharedExpiresAt, setSharedExpiresAt] = React.useState<string | null>(
-    null
+    null,
   );
 
   async function handleShare() {
@@ -311,13 +230,11 @@ function ReportHeader({
         await navigator.clipboard.writeText(result.share_url);
         toast.success("Share link copied to clipboard.");
       } catch {
-        // Clipboard rejected (Safari without user gesture, etc.) — still tell
-        // the user the URL so they can copy it manually.
         toast.message(`Share URL: ${result.share_url}`);
       }
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : "Failed to mint share link."
+        err instanceof ApiError ? err.message : "Failed to mint share link.",
       );
     } finally {
       setSharing(false);
@@ -326,42 +243,47 @@ function ReportHeader({
 
   return (
     <header
-      className="flex flex-col items-center gap-4 text-center"
+      className="mt-3 grid grid-cols-1 items-center gap-6 border-b border-[var(--color-border)] py-7 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-8"
       data-testid="report-header"
     >
-      <Trophy className="size-8 text-[var(--color-primary)]" aria-hidden />
       <h1
         id="report-heading"
-        className="text-3xl font-bold tracking-tight"
+        aria-label={`Score ${totalScore} out of 100`}
+        className="font-mono text-[80px] font-semibold leading-none tracking-[-0.04em] tabular-nums"
       >
-        Your Score:{" "}
-        <span className="text-[var(--color-primary)]">{totalScore}</span>
-        <span className="text-[var(--color-muted-foreground)]">/100</span>
+        {totalScore}
+        <span className="ml-1 text-[26px] font-medium text-[var(--color-muted-foreground)]">
+          {" "}
+          / 100
+        </span>
       </h1>
-      <div className="flex items-center gap-2">
-        {passed ? (
-          <>
-            <CheckCircle2
-              className="size-4 text-[var(--color-success)]"
-              aria-hidden
-            />
-            <span className="text-sm font-medium text-[var(--color-success)]">
-              Failure mode identified
-            </span>
-          </>
-        ) : (
-          <>
-            <XCircle
-              className="size-4 text-[var(--color-danger)]"
-              aria-hidden
-            />
-            <span className="text-sm font-medium text-[var(--color-danger)]">
-              Failure mode missed
-            </span>
-          </>
-        )}
+
+      <div className="min-w-0 font-mono text-xs text-[var(--color-muted-foreground)]">
+        <p className="uppercase tracking-[0.08em]">
+          submission ·{" "}
+          <span className="text-[var(--color-foreground)]">{submissionId}</span>
+        </p>
+        <p
+          className={
+            "mt-1.5 inline-flex items-center gap-2 text-sm font-medium " +
+            (passed
+              ? "text-[var(--color-success)]"
+              : "text-[var(--color-danger)]")
+          }
+        >
+          <span aria-hidden className="font-mono font-semibold">
+            {passed ? "✓" : "✕"}
+          </span>
+          {passed ? "Failure mode identified" : "Failure mode missed"}
+        </p>
+        {hiddenTestsPassed != null && hiddenTestsTotal != null ? (
+          <p className="mt-1.5">
+            {hiddenTestsPassed} / {hiddenTestsTotal} hidden tests passing
+          </p>
+        ) : null}
       </div>
-      <div className="flex flex-col items-center gap-1">
+
+      <div className="flex flex-col items-end gap-1.5">
         <Button
           type="button"
           variant="secondary"
@@ -377,86 +299,78 @@ function ReportHeader({
           {sharing ? "Generating link…" : "Share report"}
           {!sharing ? <Copy className="size-3 opacity-60" aria-hidden /> : null}
         </Button>
-        {sharedExpiresAt ? (
-          <p className="text-[11px] text-[var(--color-muted-foreground)]">
-            Link expires {formatShareExpiry(sharedExpiresAt)}
-          </p>
-        ) : (
-          <p className="text-[11px] text-[var(--color-muted-foreground)]">
-            Share links last 30 days
-          </p>
-        )}
+        <p className="font-mono text-[10.5px] text-[var(--color-muted-foreground)]">
+          {sharedExpiresAt
+            ? `link expires ${formatShareExpiry(sharedExpiresAt)}`
+            : "share links last 30 days"}
+        </p>
       </div>
     </header>
   );
 }
 
-/**
- * Format the share-token expiry as a friendly "in 30 days" / "on Jun 20"
- * label. We bias toward a relative form for near-term ranges so users see at
- * a glance how long they have before re-minting.
- */
-function formatShareExpiry(iso: string): string {
-  const target = new Date(iso);
-  if (Number.isNaN(target.getTime())) return "in ~30 days";
-  const deltaMs = target.getTime() - Date.now();
-  const days = Math.round(deltaMs / (24 * 60 * 60 * 1000));
-  if (days <= 0) return "soon";
-  if (days <= 14) return `in ${days} day${days === 1 ? "" : "s"}`;
-  try {
-    return `on ${target.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    })}`;
-  } catch {
-    return `in ${days} days`;
-  }
-}
-
-function BulletSection({
-  id,
+function Section({
   title,
-  items,
-  icon,
+  id,
+  children,
 }: {
-  id: string;
   title: string;
-  items: string[];
-  icon: React.ReactNode;
+  id?: string;
+  children: React.ReactNode;
 }) {
   return (
     <section
       aria-labelledby={id}
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-soft"
+      className="border-b border-[var(--color-border)] py-7 last:border-b-0"
     >
       <h2
         id={id}
-        className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
+        className="mb-4 font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
       >
+        {"// "}
         {title}
       </h2>
-      <ul className="space-y-1.5">
-        {items.map((s, i) => (
-          <li key={i} className="flex items-start gap-2 text-sm">
-            {icon}
-            {s}
-          </li>
-        ))}
-      </ul>
+      {children}
     </section>
+  );
+}
+
+function BulletList({
+  items,
+  kind,
+}: {
+  items: string[];
+  kind: "ok" | "bad";
+}) {
+  const glyph = kind === "ok" ? "✓" : "✕";
+  const klass =
+    kind === "ok"
+      ? "text-[var(--color-success)]"
+      : "text-[var(--color-danger)]";
+  return (
+    <ul className="grid gap-1.5 text-sm">
+      {items.map((s, i) => (
+        <li
+          key={i}
+          className="grid grid-cols-[18px_minmax(0,1fr)] items-start gap-2"
+        >
+          <span aria-hidden className={`font-mono font-semibold ${klass}`}>
+            {glyph}
+          </span>
+          <span>{s}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
 function ReportSkeleton() {
   return (
-    <main className="mx-auto max-w-4xl space-y-8 px-6 py-12">
-      <div className="flex flex-col items-center gap-3">
-        <Skeleton className="h-10 w-72" />
-        <Skeleton className="h-4 w-40" />
-      </div>
-      <Skeleton className="h-80 rounded-xl" />
-      <Skeleton className="h-64 rounded-xl" />
-      <Skeleton className="h-40 rounded-xl" />
+    <main className="mx-auto max-w-4xl space-y-6 px-6 py-10">
+      <Skeleton className="h-4 w-40" />
+      <Skeleton className="h-28 rounded-lg" />
+      <Skeleton className="h-72 rounded-lg" />
+      <Skeleton className="h-40 rounded-lg" />
     </main>
   );
 }
@@ -509,19 +423,13 @@ function ErrorState({
   );
 }
 
-/**
- * Shown when a `Submission` row exists but `score_report` is missing — i.e.
- * the grading pipeline aborted before the rubric was emitted. The state is
- * terminal (no retry CTA) because the submission can't be re-graded; the
- * user's path forward is to start a fresh mission attempt.
- */
 function ReportErrorState({ reason }: { reason: string }) {
   return (
     <main
       className="mx-auto max-w-2xl px-6 py-16"
       aria-labelledby="report-error-heading"
     >
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center shadow-soft">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
         <AlertCircle
           className="mx-auto size-6 text-[var(--color-muted-foreground)]"
           aria-hidden
@@ -541,4 +449,36 @@ function ReportErrorState({ reason }: { reason: string }) {
       </div>
     </main>
   );
+}
+
+function formatShareExpiry(iso: string): string {
+  const target = new Date(iso);
+  if (Number.isNaN(target.getTime())) return "in ~30 days";
+  const deltaMs = target.getTime() - Date.now();
+  const days = Math.round(deltaMs / (24 * 60 * 60 * 1000));
+  if (days <= 0) return "soon";
+  if (days <= 14) return `in ${days} day${days === 1 ? "" : "s"}`;
+  try {
+    return `on ${target.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    })}`;
+  } catch {
+    return `in ${days} days`;
+  }
+}
+
+function countHiddenTestsPassed(report: ScoreReport): number | null {
+  const sig = report.dimensions?.final_correctness?.signals?.find((s) =>
+    /hidden tests? passed/i.test(s),
+  );
+  const m = sig?.match(/(\d+)\s*\/\s*(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+function countHiddenTestsTotal(report: ScoreReport): number | null {
+  const sig = report.dimensions?.final_correctness?.signals?.find((s) =>
+    /hidden tests? passed/i.test(s),
+  );
+  const m = sig?.match(/(\d+)\s*\/\s*(\d+)/);
+  return m ? Number(m[2]) : null;
 }

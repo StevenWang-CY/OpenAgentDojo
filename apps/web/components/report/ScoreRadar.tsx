@@ -17,16 +17,6 @@ interface ScoreRadarProps {
   className?: string;
 }
 
-/**
- * Monochrome, hairline-grid radar across the seven supervision dimensions.
- * Drops the heavy primary-blue fill used in earlier passes — the chart now
- * reads as a quiet geometric panel that supports the dimension breakdown
- * sitting next to it, rather than competing for attention.
- *
- * Labels are intentionally lowercase + monospace to match the structural
- * mono treatment used across eyebrows, kv lists, and brief artifacts on
- * the marketing surface.
- */
 const LABELS: Record<keyof ScoreBreakdown, string> = {
   final_correctness: "correctness",
   verification: "verification",
@@ -37,9 +27,14 @@ const LABELS: Record<keyof ScoreBreakdown, string> = {
   diff_minimality: "minimality",
 };
 
+const MONO_STACK =
+  '"JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace';
+
 export function ScoreRadar({ dimensions, className }: ScoreRadarProps) {
   return (
-    <RadarErrorBoundary fallback={<ScoreRadarFallback dimensions={dimensions} />}>
+    <RadarErrorBoundary
+      fallback={<ScoreRadarFallback dimensions={dimensions} />}
+    >
       <ScoreRadarChart dimensions={dimensions} className={className} />
     </RadarErrorBoundary>
   );
@@ -57,21 +52,23 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
   });
 
   return (
-    <div className={className} aria-label="Score across seven supervision dimensions">
-      <ResponsiveContainer width="100%" height={260}>
+    <div
+      className={className}
+      aria-label="Score across seven supervision dimensions"
+    >
+      <ResponsiveContainer width="100%" height={300}>
         <RadarChart data={data} outerRadius="72%">
           <PolarGrid
             stroke="var(--color-border)"
             strokeWidth={1}
-            radialLines={true}
+            gridType="polygon"
           />
           <PolarAngleAxis
             dataKey="dimension"
             tick={{
               fill: "var(--color-muted-foreground)",
               fontSize: 10.5,
-              fontFamily:
-                "'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
+              fontFamily: MONO_STACK,
               letterSpacing: "0.04em",
             }}
           />
@@ -81,11 +78,11 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
             tick={{
               fill: "var(--color-muted-foreground)",
               fontSize: 9,
-              fontFamily:
-                "'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
+              fontFamily: MONO_STACK,
               opacity: 0.7,
             }}
             tickCount={5}
+            stroke="transparent"
           />
           <Radar
             name="Score"
@@ -96,9 +93,9 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
             fillOpacity={0.08}
             dot={{
               r: 2.5,
+              fill: "var(--color-surface)",
               stroke: "var(--color-foreground)",
               strokeWidth: 1.25,
-              fill: "var(--color-surface)",
             }}
             isAnimationActive
           />
@@ -107,9 +104,8 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
               backgroundColor: "var(--color-surface)",
               border: "1px solid var(--color-border)",
               borderRadius: 6,
-              fontSize: 11,
-              fontFamily:
-                "'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, Menlo, Monaco, Consolas, monospace",
+              fontSize: 12,
+              fontFamily: MONO_STACK,
             }}
             formatter={(value: number, _name, entry) => {
               const payload = entry.payload as { raw: number; max: number };
@@ -122,11 +118,6 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
   );
 }
 
-/**
- * Textual fallback rendered when the recharts chart fails. Mirrors the
- * radar's information so the user still sees per-dimension scores — and is
- * accessibility-friendlier than the chart for screen-reader users.
- */
 function ScoreRadarFallback({ dimensions }: { dimensions: ScoreBreakdown }) {
   const rows = (Object.keys(LABELS) as (keyof ScoreBreakdown)[]).map((key) => {
     const dim = dimensions[key];
@@ -154,7 +145,10 @@ function ScoreRadarFallback({ dimensions }: { dimensions: ScoreBreakdown }) {
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={row.label} className="border-t border-[var(--color-border)]">
+          <tr
+            key={row.label}
+            className="border-t border-[var(--color-border)]"
+          >
             <td className="py-1.5 font-mono">{row.label}</td>
             <td className="py-1.5 text-right tabular-nums">
               {row.score} / {row.max}
@@ -167,10 +161,6 @@ function ScoreRadarFallback({ dimensions }: { dimensions: ScoreBreakdown }) {
   );
 }
 
-/**
- * Tiny inline error boundary scoped to the radar chart. Implemented as a
- * class component because hooks can't catch errors from descendant renders.
- */
 interface RadarErrorBoundaryProps {
   fallback: React.ReactNode;
   children: React.ReactNode;
@@ -191,7 +181,10 @@ class RadarErrorBoundary extends React.Component<
   }
 
   override componentDidCatch(error: unknown): void {
-    console.error("[score-radar] chart render failed; using text fallback", error);
+    console.error(
+      "[score-radar] chart render failed; using text fallback",
+      error,
+    );
   }
 
   override render(): React.ReactNode {

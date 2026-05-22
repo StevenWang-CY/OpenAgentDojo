@@ -11,30 +11,34 @@ interface CategoryChipsProps {
 }
 
 const CATEGORY_LABEL: Record<MissionCategory, string> = {
-  auth: "Auth",
-  testing: "Testing",
-  security: "Security",
-  frontend: "Frontend",
-  api: "API",
-  database: "Database",
-  refactoring: "Refactoring",
-  "agent-safety": "Agent safety",
-  review: "Review",
-  debugging: "Debugging",
+  auth: "auth",
+  testing: "testing",
+  security: "security",
+  frontend: "frontend",
+  api: "api",
+  database: "database",
+  refactoring: "refactoring",
+  "agent-safety": "agent-safety",
+  review: "review",
+  debugging: "debugging",
 };
 
-export function CategoryChips({ available, active, onChange }: CategoryChipsProps) {
+export function CategoryChips({
+  available,
+  active,
+  onChange,
+}: CategoryChipsProps) {
   const options: ("all" | MissionCategory)[] = ["all", ...available];
 
   return (
     <div
-      className="flex flex-wrap items-center gap-2"
+      className="inline-flex flex-wrap items-center gap-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-[3px]"
       role="tablist"
       aria-label="Filter missions by category"
     >
       {options.map((opt) => {
         const isActive = opt === active;
-        const label = opt === "all" ? "All categories" : CATEGORY_LABEL[opt];
+        const label = opt === "all" ? "all" : CATEGORY_LABEL[opt];
         return (
           <button
             key={opt}
@@ -43,11 +47,11 @@ export function CategoryChips({ available, active, onChange }: CategoryChipsProp
             aria-selected={isActive}
             onClick={() => onChange(opt)}
             className={cn(
-              "rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-150 ease-macos",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2",
+              "rounded-md px-3 py-1.5 font-mono text-xs transition-colors duration-150 ease-macos",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]",
               isActive
-                ? "border-[var(--color-primary)] bg-[oklch(from_var(--color-primary)_l_c_h/0.15)] text-[var(--color-primary)]"
-                : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-muted-foreground)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-foreground)]"
+                ? "bg-[var(--color-foreground)] text-[var(--color-background)]"
+                : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]",
             )}
           >
             {label}

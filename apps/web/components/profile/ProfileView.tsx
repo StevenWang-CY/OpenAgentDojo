@@ -16,11 +16,6 @@ interface ProfileViewProps {
   handle: string;
 }
 
-/**
- * Client view for `/profile/[handle]`. Open to anyone, even signed-out users.
- * 404 from the backend renders an empathic "no such profile" state, not a
- * generic error toast.
- */
 export function ProfileView({ handle }: ProfileViewProps) {
   const profileQuery = useQuery({
     queryKey: ["profile", handle],
@@ -31,8 +26,6 @@ export function ProfileView({ handle }: ProfileViewProps) {
     },
   });
 
-  // Fire `profile_viewed` once per handle on first successful load. We pass
-  // only the handle — never the user's email or any PII from the response.
   const trackedHandleRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (profileQuery.data && trackedHandleRef.current !== handle) {
@@ -44,9 +37,9 @@ export function ProfileView({ handle }: ProfileViewProps) {
   if (profileQuery.isLoading) {
     return (
       <main className="mx-auto max-w-5xl space-y-8 px-6 py-12">
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <Skeleton className="h-40 w-full rounded-xl" />
-        <Skeleton className="h-64 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-lg" />
+        <Skeleton className="h-40 w-full rounded-lg" />
+        <Skeleton className="h-64 w-full rounded-lg" />
       </main>
     );
   }
@@ -102,44 +95,62 @@ export function ProfileView({ handle }: ProfileViewProps) {
   }
 
   const profile = profileQuery.data;
-  // `profile` is guaranteed defined here (loading + error branches both return
-  // above), but useQuery's generic still types it as `T | undefined` — the
-  // guard is what narrows it for the JSX below.
   if (!profile) return null;
 
-  // We only have the EARNED badge list from the backend; ``earnedIds`` would
-  // therefore equal the full ``badges`` set, making BadgeGrid's "not yet
-  // earned" branch unreachable. Drop the earned-set so the grid renders only
-  // what the user has actually earned.
-
   return (
-    <main className="mx-auto max-w-5xl space-y-10 px-6 py-12">
-      <section
-        className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-soft"
-        aria-labelledby="profile-header"
-      >
+    <main
+      className="mx-auto max-w-5xl px-6 pt-12 pb-16"
+      aria-labelledby="profile-header"
+    >
+      <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
+        <span className="text-[var(--color-primary)]">{"//"}</span> public
+        profile
+      </p>
+
+      <section className="mt-3" aria-labelledby="profile-header">
         <ProfileHeader profile={profile} />
       </section>
 
-      <section aria-labelledby="badges-heading">
-        <h2
-          id="badges-heading"
-          className="mb-4 text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-        >
-          Badges ({profile.badges.length})
-        </h2>
-        <BadgeGrid badges={profile.badges} />
-      </section>
+      <SectionHeading
+        title="badges earned"
+        count={`${profile.badges.length} earned`}
+        id="badges-heading"
+      />
+      <BadgeGrid badges={profile.badges} />
 
-      <section aria-labelledby="history-heading">
-        <h2
-          id="history-heading"
-          className="mb-4 text-sm font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
-        >
-          Mission history
-        </h2>
-        <MissionHistoryTable items={profile.history} />
-      </section>
+      <SectionHeading
+        title="mission history"
+        count={`${profile.history.length} session${profile.history.length === 1 ? "" : "s"}`}
+        id="history-heading"
+      />
+      <MissionHistoryTable items={profile.history} />
     </main>
+  );
+}
+
+function SectionHeading({
+  title,
+  count,
+  id,
+}: {
+  title: string;
+  count?: string;
+  id?: string;
+}) {
+  return (
+    <div className="mt-12 flex items-baseline justify-between border-b border-[var(--color-border)] pb-2.5">
+      <h2
+        id={id}
+        className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
+      >
+        {"// "}
+        {title}
+      </h2>
+      {count ? (
+        <p className="font-mono text-[11px] text-[var(--color-muted-foreground)]">
+          {count}
+        </p>
+      ) : null}
+    </div>
   );
 }

@@ -8,26 +8,26 @@ interface ProfileHeaderProps {
 export function ProfileHeader({ profile }: ProfileHeaderProps) {
   const name = profile.display_name ?? profile.handle;
   return (
-    <header className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
-      <div
-        aria-hidden
-        className="grid size-14 place-items-center rounded-xl bg-[var(--color-primary)] text-lg font-semibold uppercase text-[var(--color-primary-foreground)] shadow-soft"
-      >
-        {initials(name)}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-muted-foreground)]">
-          Public profile
+    <header className="flex flex-col items-start gap-6 border-b border-[var(--color-border)] pb-7 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0">
+        <h1
+          id="profile-header"
+          className="break-all font-mono text-[44px] font-medium leading-none tracking-tight sm:text-[56px]"
+        >
+          <span className="text-[var(--color-muted-foreground)]">@</span>
+          {profile.handle}
+        </h1>
+        <p className="mt-3 text-base font-semibold tracking-tight">
+          {name === profile.handle ? "—" : name}
         </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">{name}</h1>
-        <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
-          @{profile.handle} · joined {formatDate(profile.joined_at)}
+        <p className="mt-1 font-mono text-xs text-[var(--color-muted-foreground)]">
+          joined {formatDate(profile.joined_at)}
         </p>
       </div>
-      <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <Stat label="Missions" value={profile.total_missions} />
-        <Stat label="Best score" value={profile.best_score ?? "—"} />
-        <Stat label="Badges" value={profile.badges.length} />
+      <dl className="grid grid-cols-3 items-end gap-9">
+        <Stat label="missions" value={profile.total_missions} />
+        <Stat label="best score" value={profile.best_score ?? "—"} />
+        <Stat label="badges" value={profile.badges.length} />
       </dl>
     </header>
   );
@@ -35,23 +35,13 @@ export function ProfileHeader({ profile }: ProfileHeaderProps) {
 
 function Stat({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-center">
-      <dt className="text-[10px] uppercase tracking-wide text-[var(--color-muted-foreground)]">
+    <div>
+      <dd className="font-mono text-[28px] font-semibold leading-none tracking-tight tabular-nums">
+        {value}
+      </dd>
+      <dt className="mt-1.5 font-mono text-[10.5px] uppercase tracking-[0.1em] text-[var(--color-muted-foreground)]">
         {label}
       </dt>
-      <dd className="text-lg font-semibold tracking-tight">{value}</dd>
     </div>
   );
-}
-
-function initials(name: string): string {
-  // Treat dot/dash/underscore/whitespace as word separators so handle-style
-  // names ("jane.doe", "jane-doe", "jane_doe") render two-letter initials
-  // instead of one.
-  return name
-    .split(/[\s._-]+/)
-    .map((part) => part[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("");
 }

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { Loader2, Play } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, createSession } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
@@ -93,9 +93,16 @@ export function StartMissionButton({ missionId }: StartMissionButtonProps) {
       {mutation.isPending ? (
         <Loader2 className="size-4 animate-spin" aria-hidden />
       ) : (
-        <Play className="size-4" aria-hidden />
+        <span aria-hidden className="font-mono text-[13px] leading-none">
+          ▶
+        </span>
       )}
       {mutation.isPending ? "Starting…" : "Start mission"}
+      {!mutation.isPending ? (
+        <span aria-hidden className="ml-1 opacity-70">
+          →
+        </span>
+      ) : null}
     </Button>
   );
 }
