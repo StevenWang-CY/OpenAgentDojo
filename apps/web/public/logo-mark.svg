@@ -1,0 +1,49 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 200 200"
+  fill="none"
+  role="img"
+  aria-label="OpenAgentDojo"
+>
+  <!-- translate(-624, -738) maps the reference mark's bbox-center (724, 838)
+       to the viewBox center (100, 100). Mark spans x=14..186 horizontally
+       and y=31..170 vertically — centered in both axes. -->
+  <g transform="translate(-624, -738)">
+    <!-- Octagonal frame: outer + inner cut-out via even-odd fill -->
+    <path
+      fill="#13171D"
+      fill-rule="evenodd"
+      d="M 686 769 L 763 769 L 793 799 L 793 845 L 763 875 L 686 875 L 656 845 L 656 799 Z
+         M 692 784 L 757 784 L 778 805 L 778 839 L 757 860 L 692 860 L 671 839 L 671 805 Z"
+    />
+
+    <!-- Left chevron < — stroked path, mitered apex -->
+    <path
+      d="M 706 797 L 687 822 L 706 847"
+      stroke="#0A45F5"
+      stroke-width="8"
+      fill="none"
+      stroke-linejoin="miter"
+      stroke-linecap="butt"
+    />
+
+    <!-- Pipe | — vertical rect -->
+    <rect x="720" y="797" width="8" height="50" fill="#0A45F5" />
+
+    <!-- Right chevron > — stroked path, mitered apex -->
+    <path
+      d="M 742 797 L 761 822 L 742 847"
+      stroke="#0A45F5"
+      stroke-width="8"
+      fill="none"
+      stroke-linejoin="miter"
+      stroke-linecap="butt"
+    />
+
+    <!-- Pedestal: upper bar (narrower) -->
+    <rect x="660" y="880" width="128" height="11" fill="#13171D" />
+
+    <!-- Pedestal: lower bar (wider) -->
+    <rect x="638" y="897" width="172" height="11" fill="#13171D" />
+  </g>
+</svg>

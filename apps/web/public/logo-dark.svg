@@ -1,0 +1,65 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 1040 240"
+  fill="none"
+  role="img"
+  aria-label="OpenAgentDojo · supervisor training"
+>
+  <!-- Mark — dark-background variant. Dark navy elements are swapped for
+       a light off-white so the lockup retains contrast on dark surfaces. -->
+  <g transform="translate(10, 10) scale(0.94) translate(-617, -735)">
+    <path
+      fill="#F4F4F5"
+      fill-rule="evenodd"
+      d="M 686 769 L 763 769 L 793 799 L 793 845 L 763 875 L 686 875 L 656 845 L 656 799 Z
+         M 692 784 L 757 784 L 778 805 L 778 839 L 757 860 L 692 860 L 671 839 L 671 805 Z"
+    />
+    <path
+      d="M 706 797 L 687 822 L 706 847"
+      stroke="#4F7EFF"
+      stroke-width="8"
+      fill="none"
+      stroke-linejoin="miter"
+      stroke-linecap="butt"
+    />
+    <rect x="720" y="797" width="8" height="50" fill="#4F7EFF" />
+    <path
+      d="M 742 797 L 761 822 L 742 847"
+      stroke="#4F7EFF"
+      stroke-width="8"
+      fill="none"
+      stroke-linejoin="miter"
+      stroke-linecap="butt"
+    />
+    <rect x="660" y="880" width="128" height="11" fill="#F4F4F5" />
+    <rect x="638" y="897" width="172" height="11" fill="#F4F4F5" />
+  </g>
+
+  <g transform="translate(300, 0)">
+    <text
+      x="0"
+      y="125"
+      font-size="100"
+      font-weight="700"
+      letter-spacing="-1"
+      font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, 'Helvetica Neue', Arial, sans-serif"
+    >
+      <tspan fill="#F4F4F5">Open</tspan><tspan fill="#4F7EFF">Agent</tspan><tspan fill="#F4F4F5">Dojo</tspan>
+    </text>
+
+    <g transform="translate(0, 178)">
+      <line x1="0" y1="0" x2="80" y2="0" stroke="#4F7EFF" stroke-width="2" />
+      <text
+        x="360"
+        y="6"
+        text-anchor="middle"
+        font-size="20"
+        letter-spacing="8"
+        font-weight="500"
+        fill="#94A3B8"
+        font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, 'Helvetica Neue', Arial, sans-serif"
+      >SUPERVISOR TRAINING</text>
+      <line x1="640" y1="0" x2="720" y2="0" stroke="#4F7EFF" stroke-width="2" />
+    </g>
+  </g>
+</svg>

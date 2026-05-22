@@ -1,30 +1,53 @@
-# OpenAgentDojo
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/logo-dark.svg">
+    <img src="apps/web/public/logo.svg" alt="OpenAgentDojo — supervisor training" width="640">
+  </picture>
+</p>
 
-A browser-based simulator that teaches developers to **supervise AI coding agents** inside real repositories. The platform grades the *process* of supervision — prompting, context selection, diff review, verification, correction, safety — not only the final patch.
+<p align="center">
+  <strong>A browser-based simulator that teaches developers to supervise AI coding agents inside real repositories.</strong><br>
+  <sub>The platform grades the <em>process</em> — prompting, context selection, diff review, verification, correction, safety — not just the final patch.</sub>
+</p>
 
-> See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the engineering source-of-truth. See [CONTEXT.md](CONTEXT.md) for the domain glossary.
+<p align="center">
+  <a href="IMPLEMENTATION_PLAN.md">Implementation plan</a> ·
+  <a href="CONTEXT.md">Domain glossary</a> ·
+  <a href="docs/">Docs</a> ·
+  <a href="missions/">Missions</a>
+</p>
 
-## What it does
+<p align="center">
+  <img alt="Stack" src="https://img.shields.io/badge/stack-Next.js%2015%20·%20FastAPI%20·%20Postgres%2016-0A45F5?style=flat-square">
+  <img alt="Language" src="https://img.shields.io/badge/typescript-5.6-13171D?style=flat-square">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.12-13171D?style=flat-square">
+  <img alt="Status" src="https://img.shields.io/badge/status-MVP%20complete-0A45F5?style=flat-square">
+</p>
 
-1. You pick a Mission (e.g. *"Auth cookie expiration is broken"*).
-2. The platform spins up a real repo in an in-browser sandbox.
-3. You prompt a deliberately-flawed agent. It applies a real (but subtly wrong) patch.
-4. You verify, review, correct, and submit.
-5. Hidden tests + structural validators score your **supervision quality** on a 100-point rubric.
-6. You earn badges and a shareable skill profile.
+---
 
-## Tech stack (locked)
+## How it works
 
-- **Frontend:** Next.js 15 (App Router) + React 19 + TypeScript 5.6 + Tailwind 4 + shadcn/ui
-- **Backend:** FastAPI (Python 3.12) + SQLAlchemy 2.x async + Alembic
-- **Data:** Postgres 16, Redis 7 + RQ
-- **Sandboxes:** Docker (rootless) per session, with a `local` subprocess fallback for laptops
-- **Editor:** Monaco; **Terminal:** xterm.js over WebSocket
-- **LLM (optional narration only):** Claude `claude-haiku-4-5` via AWS Bedrock — see [keys.md](keys.md) and [IMPLEMENTATION_PLAN.md §16.A](IMPLEMENTATION_PLAN.md)
+1. **Pick a mission.** Each one is a real repository with a deliberately-flawed agent patch waiting for you (e.g. *"Auth cookie expiration is broken"*).
+2. **Inspect, prompt, review.** The platform spins up an in-browser sandbox, you prompt the agent, it applies a patch that *looks* right but isn't.
+3. **Verify and correct.** Run the visible tests. Read the diff. Push back on the agent. Submit when you're confident.
+4. **Get graded on the process.** Hidden tests plus structural validators score your supervision quality on a 100-point rubric across seven dimensions.
+5. **Earn badges, build a shareable skill profile.**
 
-## Quickstart (local dev)
+## Tech stack
 
-Prereqs: `pnpm@9+`, `node@20+`, `python@3.12+`, `uv`, `docker` + `docker compose`.
+| Layer | Choice |
+| --- | --- |
+| **Frontend** | Next.js 15 (App Router) · React 19 · TypeScript 5.6 · Tailwind 4 · shadcn/ui |
+| **Backend** | FastAPI · Python 3.12 · SQLAlchemy 2.x async · Alembic |
+| **Data** | Postgres 16 · Redis 7 + RQ |
+| **Sandboxes** | Docker (rootless) per session · `local` subprocess fallback for laptops |
+| **Editor / terminal** | Monaco · xterm.js over WebSocket |
+| **LLM (narration only)** | Claude `claude-haiku-4-5` via AWS Bedrock — never on grading hot paths |
+
+## Quickstart
+
+> Prereqs: `pnpm@9+`, `node@20+`, `python@3.12+`, `uv`, `docker` + `docker compose`.
 
 ### Full stack via docker compose (recommended)
 
@@ -35,20 +58,23 @@ docker compose up                            # api, web, postgres, redis, minio,
 
 The API container's entrypoint runs `alembic upgrade head` and the mission
 loader before booting uvicorn, so the catalog is ready by the time `/healthz`
-returns 200. Open <http://localhost:3000>, hit
-<http://localhost:8000/api/v1/missions> to see Mission 01.
+returns 200. Then:
+
+- Web → <http://localhost:3000>
+- API health → <http://localhost:8000/healthz>
+- Mission catalog → <http://localhost:8000/api/v1/missions>
 
 ### Manual (no docker)
 
 ```bash
-# 1. Clone + install
+# 1. Install
 pnpm install
 cd apps/api && uv sync && cd ../..
 
 # 2. Bring up Postgres / Redis / MinIO
 pnpm compose:up
 
-# 3. Run migrations + seed Mission 01
+# 3. Run migrations + seed the mission catalog
 cd apps/api
 uv run alembic upgrade head
 uv run python -m app.missions.loader  # scans /missions, upserts the catalog
@@ -60,8 +86,6 @@ cd apps/api && uv run uvicorn app.main:app --reload --port 8000
 # 5. Run frontend (in another terminal)
 pnpm --filter @arena/web dev
 ```
-
-Then open <http://localhost:3000>. Visit <http://localhost:8000/healthz> to confirm the API is up, and <http://localhost:8000/api/v1/missions> to see the seeded mission catalog.
 
 ### Local-without-Docker fallback
 
@@ -90,7 +114,7 @@ cd apps/api && uv run pytest
 
 ## Project status
 
-MVP complete — milestones M0–M8 (bootstrap, data layer, sandbox, workspace UI, agent service, grading engine, mission content, public profile/landing, hardening) have all shipped. The platform now provisions sandboxes, runs the deterministic agent, grades the 100-point supervision rubric, and renders public profiles. See [IMPLEMENTATION_PLAN.md §17](IMPLEMENTATION_PLAN.md) for the milestone breakdown.
+MVP complete — milestones M0–M8 (bootstrap, data layer, sandbox, workspace UI, agent service, grading engine, mission content, public profile/landing, hardening) have all shipped. The platform provisions sandboxes, runs the deterministic agent, grades the 100-point supervision rubric, and renders public profiles. See [IMPLEMENTATION_PLAN.md §17](IMPLEMENTATION_PLAN.md) for the milestone breakdown.
 
 ## Security
 
@@ -102,3 +126,9 @@ MVP complete — milestones M0–M8 (bootstrap, data layer, sandbox, workspace U
 ## License
 
 Internal MVP — not for redistribution.
+
+<br>
+
+<p align="center">
+  <sub>Built for engineers who'd rather review the diff than trust the demo.</sub>
+</p>

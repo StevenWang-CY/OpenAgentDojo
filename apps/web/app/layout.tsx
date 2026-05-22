@@ -24,7 +24,9 @@ export const metadata: Metadata = {
     title: "OpenAgentDojo",
   },
   icons: {
-    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    icon: [{ url: "/logo-mark.svg", type: "image/svg+xml" }],
+    shortcut: [{ url: "/logo-mark.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/logo-mark.svg", type: "image/svg+xml" }],
   },
 };
 
