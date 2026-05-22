@@ -111,9 +111,7 @@ def _csrf_kwargs() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_post_prompt_returns_response_and_emits_events(
-    client, db_engine
-) -> None:
+async def test_post_prompt_returns_response_and_emits_events(client, db_engine) -> None:
     """Happy path: fix-intent prompt → AgentTurn row + 3 events."""
     await _bind_app_engine_to(db_engine)
     user_id, session_id = await _seed_mission_user_session(db_engine)
@@ -139,20 +137,22 @@ async def test_post_prompt_returns_response_and_emits_events(
 
     async with session_module.AsyncSessionLocal() as db:
         turn = (
-            await db.execute(
-                select(AgentTurn).where(AgentTurn.session_id == session_id)
-            )
+            await db.execute(select(AgentTurn).where(AgentTurn.session_id == session_id))
         ).scalar_one()
         assert turn.user_prompt.startswith("Please fix")
         assert turn.applied_patch is None
 
         events = (
-            await db.execute(
-                select(SupervisionEvent)
-                .where(SupervisionEvent.session_id == session_id)
-                .order_by(SupervisionEvent.id)
+            (
+                await db.execute(
+                    select(SupervisionEvent)
+                    .where(SupervisionEvent.session_id == session_id)
+                    .order_by(SupervisionEvent.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         types = [e.event_type for e in events]
         assert "prompt.submitted" in types
         assert "agent.responded" in types
@@ -173,9 +173,7 @@ async def test_post_prompt_returns_response_and_emits_events(
 
 
 @pytest.mark.asyncio
-async def test_post_prompt_unknown_intent_skips_patch_proposed(
-    client, db_engine
-) -> None:
+async def test_post_prompt_unknown_intent_skips_patch_proposed(client, db_engine) -> None:
     """Non-fix intents do NOT emit ``patch.proposed``."""
     await _bind_app_engine_to(db_engine)
     user_id, session_id = await _seed_mission_user_session(db_engine)
@@ -196,9 +194,7 @@ async def test_post_prompt_unknown_intent_skips_patch_proposed(
             e.event_type
             for e in (
                 await db.execute(
-                    select(SupervisionEvent).where(
-                        SupervisionEvent.session_id == session_id
-                    )
+                    select(SupervisionEvent).where(SupervisionEvent.session_id == session_id)
                 )
             )
             .scalars()

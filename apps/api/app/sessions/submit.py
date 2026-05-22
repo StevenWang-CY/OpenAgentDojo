@@ -34,6 +34,7 @@ from app.missions.loader import MissionLoader
 from app.missions.resolver import MissionFolderNotFoundError, resolve_mission_dir
 from app.models.session import SessionRow
 from app.models.submission import Submission
+from app.observability import submissions_score_histogram, submissions_total
 from app.schemas.submission import SubmissionRead
 
 # Terminal statuses that should reject a new submit with 409.
@@ -52,9 +53,7 @@ def _find_manifest_folder(settings: Any, mission_id: str) -> Path:
     # Submit additionally requires the mission.yaml to be present — without it
     # there's nothing for the loader to read.
     if not (folder / "mission.yaml").exists():
-        raise LookupError(
-            f"mission folder for '{mission_id}' has no mission.yaml under {folder}"
-        )
+        raise LookupError(f"mission folder for '{mission_id}' has no mission.yaml under {folder}")
     return folder
 
 
@@ -178,6 +177,7 @@ async def submit_session(
         ) from exc
 
     runner = GradingRunner(settings)
+    mission_id = str(session.mission_id)
     try:
         submission, _result = await runner.run_and_persist(
             db=db,
@@ -191,6 +191,10 @@ async def submit_session(
         # Stub a Submission row so GET /submission returns 200 instead of 404,
         # with the failure surfaced via session.status='error' (P1-B17).
         await _ensure_failed_stub(db, session_id, reason=f"timeout: {exc}")
+        # ``outcome="timeout"`` is split out from the generic ``failed`` bucket
+        # so the SLO dashboard can distinguish wall-clock-budget hits (an
+        # operational signal) from pipeline crashes (a bug signal) — P2-B13.
+        submissions_total.labels(mission_id=mission_id, outcome="timeout").inc()
         raise HTTPException(
             status_code=504,
             detail=f"grading exceeded budget: {exc}",
@@ -198,10 +202,14 @@ async def submit_session(
     except Exception as exc:
         logger.exception("[submit] grading pipeline failed for session {}", session_id)
         await _ensure_failed_stub(db, session_id, reason=f"pipeline_error: {exc}")
+        submissions_total.labels(mission_id=mission_id, outcome="failed").inc()
         raise HTTPException(
             status_code=500,
             detail=f"grading pipeline error: {exc}",
         ) from exc
+
+    submissions_total.labels(mission_id=mission_id, outcome="graded").inc()
+    submissions_score_histogram.labels(mission_id=mission_id).observe(submission.total_score)
 
     logger.info(
         "[submit] session {} graded — score={}",
@@ -268,9 +276,7 @@ async def _ensure_failed_stub(
         # Another writer raced us — clear the failed tx so a follow-up SELECT
         # works, then surface None so the caller can continue with its
         # original exception.
-        logger.warning(
-            "[submit] failure stub insert raced for {}: {}", session_id, exc
-        )
+        logger.warning("[submit] failure stub insert raced for {}: {}", session_id, exc)
         try:
             await db.rollback()
         except Exception as inner_exc:  # pragma: no cover — defensive

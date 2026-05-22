@@ -1,8 +1,8 @@
 packages:
   - "apps/web"
   - "packages/*"
-  - "missions/_shared/repos/fullstack-auth-demo"
-  - "missions/_shared/repos/fullstack-auth-demo/backend"
-  - "missions/_shared/repos/fullstack-auth-demo/frontend"
-  - "missions/_shared/repos/data-api-demo"
-  - "missions/_shared/repos/data-api-demo/frontend"
+# NOTE: missions/_shared/repos/* are intentionally NOT workspace members.
+# They install standalone (each pack has its own pnpm-workspace.yaml +
+# pnpm-lock.yaml) so the sandbox provisioner can copytree(symlinks=True)
+# without dragging in symlinks that point to this monorepo's .pnpm store.
+# See apps/api/app/sandbox/local_driver.py:provision.

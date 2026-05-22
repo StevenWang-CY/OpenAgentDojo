@@ -11,6 +11,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 
+// Intentionally loose: a `local@host.tld` shape covers the vast majority of
+// real-world typos without re-implementing RFC 5322. The backend is the
+// authoritative validator; this is a UX-only fast path.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export default function SignInPage() {
   const [email, setEmail] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
@@ -19,13 +24,32 @@ export default function SignInPage() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!email.trim() || submitting) return;
+    if (submitting) return;
+    const trimmed = email.trim();
+    // Empty (or whitespace-only) input is the most common form-submission
+    // mistake; reject it loudly so users aren't left wondering why nothing
+    // happened. We use the same error surface as the rest of the form.
+    if (!trimmed) {
+      const message = "Please enter a valid email address.";
+      setError(message);
+      toast.error(message);
+      return;
+    }
     // RFC 5321 caps the total email length at 254 octets; rejecting before
     // we touch the API gives the user a clearer error than waiting for a
     // 422 from the backend, and saves a roundtrip on obviously malformed
     // pastes (e.g. a 5KB JWT pasted by mistake).
-    if (email.trim().length > 254) {
+    if (trimmed.length > 254) {
       const message = "Email is too long.";
+      setError(message);
+      toast.error(message);
+      return;
+    }
+    // Cheap structural sanity check — the backend will still do the real
+    // validation, but a clear in-form error beats a generic 422 from the
+    // API for obvious typos like missing "@" or missing TLD.
+    if (!EMAIL_PATTERN.test(trimmed)) {
+      const message = "Please enter a valid email address.";
       setError(message);
       toast.error(message);
       return;
@@ -58,7 +82,7 @@ export default function SignInPage() {
     <main className="flex min-h-dvh items-center justify-center px-6 py-12">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>Sign in to Arena</CardTitle>
+          <CardTitle>Sign in to OpenAgentDojo</CardTitle>
           <CardDescription>
             We&rsquo;ll email you a one-time sign-in link. No passwords.
           </CardDescription>
@@ -84,7 +108,11 @@ export default function SignInPage() {
               </Button>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <form
+              onSubmit={handleSubmit}
+              noValidate
+              className="flex flex-col gap-4"
+            >
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="email">Email address</Label>
                 <Input
@@ -110,7 +138,7 @@ export default function SignInPage() {
                   {error}
                 </p>
               ) : null}
-              <Button type="submit" disabled={submitting || !email.trim()}>
+              <Button type="submit" disabled={submitting}>
                 {submitting ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                 ) : (
@@ -122,7 +150,7 @@ export default function SignInPage() {
           )}
         </CardContent>
         <CardContent className="border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-muted-foreground)]">
-          By signing in you agree to use Arena&rsquo;s sandboxes responsibly.
+          By signing in you agree to use OpenAgentDojo&rsquo;s sandboxes responsibly.
           <span className="block mt-2">
             <Link
               href="/"

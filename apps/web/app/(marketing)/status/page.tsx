@@ -10,9 +10,9 @@ import {
 import { env } from "@/lib/env";
 
 export const metadata: Metadata = {
-  title: "Status — Arena",
+  title: "Status — OpenAgentDojo",
   description:
-    "Real-time health of the Arena API, database, queue, and object storage.",
+    "Real-time health of the OpenAgentDojo API, database, queue, and object storage.",
 };
 
 // Always render at request time — status is by definition not cacheable.
@@ -163,7 +163,7 @@ export default async function StatusPage() {
       <header className="mb-8 space-y-2">
         <h1 className="text-3xl font-semibold tracking-tight">System status</h1>
         <p className="text-sm text-[var(--color-muted-foreground)]">
-          Live health of the Arena API and its dependencies. Refresh the page
+          Live health of the OpenAgentDojo API and its dependencies. Refresh the page
           for a fresh probe — this page is never cached.
         </p>
       </header>

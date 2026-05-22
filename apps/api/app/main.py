@@ -118,7 +118,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="AgentSupervisor Arena API",
+        title="OpenAgentDojo API",
         version=__version__,
         docs_url="/docs",
         redoc_url=None,

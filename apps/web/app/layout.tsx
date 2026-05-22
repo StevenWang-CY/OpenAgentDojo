@@ -6,22 +6,22 @@ import "./globals.css";
 export const metadata: Metadata = {
   metadataBase: new URL(env.appUrl),
   title: {
-    default: "AgentSupervisor Arena",
-    template: "%s · AgentSupervisor Arena",
+    default: "OpenAgentDojo",
+    template: "%s · OpenAgentDojo",
   },
   description:
-    "Learn to supervise AI coding agents inside real repositories. AgentSupervisor Arena grades the process — not just the patch.",
-  applicationName: "AgentSupervisor Arena",
-  authors: [{ name: "Arena Team" }],
+    "Learn to supervise AI coding agents inside real repositories. OpenAgentDojo grades the process — not just the patch.",
+  applicationName: "OpenAgentDojo",
+  authors: [{ name: "OpenAgentDojo Team" }],
   openGraph: {
-    title: "AgentSupervisor Arena",
+    title: "OpenAgentDojo",
     description:
       "A browser-based simulator that teaches developers to supervise AI coding agents inside real repositories.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "AgentSupervisor Arena",
+    title: "OpenAgentDojo",
   },
   icons: {
     icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],

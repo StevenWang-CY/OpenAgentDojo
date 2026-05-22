@@ -58,9 +58,7 @@ def _targeted_test_command(manifest: Any) -> str:
     on the command string against ``reward_signals.verification.require_targeted_test``.
     Embedding the literal pattern as a `-k` selector guarantees a hit.
     """
-    pattern = getattr(
-        manifest.reward_signals.verification, "require_targeted_test", None
-    ) or "unit"
+    pattern = getattr(manifest.reward_signals.verification, "require_targeted_test", None) or "unit"
     return f"pnpm test -- -k {pattern}"
 
 
@@ -234,9 +232,7 @@ def build_ideal_submission(manifest: Any, folder: Path) -> ScoringInputs:
 
     # Compose a strong prompt that hits prompt_quality's must_include +
     # bonus_keywords + scope phrase + test/regression mention.
-    must_include = list(manifest.reward_signals.prompt_quality.must_include_any) or [
-        "root cause"
-    ]
+    must_include = list(manifest.reward_signals.prompt_quality.must_include_any) or ["root cause"]
     bonus = list(manifest.reward_signals.prompt_quality.bonus_keywords)[:3]
     prompt_text = (
         "Reproduce the failure mode locally first, then deliver the "
@@ -454,9 +450,7 @@ def _synthesize_validators_for_agent_patch(
     return results
 
 
-def _run_forbidden_changes(
-    diff: ParsedDiff, validator: Any, folder: Path
-) -> ValidatorResult:
+def _run_forbidden_changes(diff: ParsedDiff, validator: Any, folder: Path) -> ValidatorResult:
     """Invoke the real forbidden_changes validator with a permissive fs_reader.
 
     The agent patch we ship is the canonical one — if it trips a rule, it'll

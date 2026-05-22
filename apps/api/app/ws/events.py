@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
 from app.models.supervision_event import SupervisionEvent
+from app.sessions.events import _MAX_EVENT_BYTES as _EMIT_MAX_EVENT_BYTES
 from app.sessions.events import get_redis
 from app.ws.auth import verify_ws_token
 
@@ -38,11 +39,13 @@ _GRADED_CLOSE_REASON = "graded"
 # Fallback poll cadence used only when Redis is unavailable on connect.
 _FALLBACK_POLL_INTERVAL_S = 1.0
 
-# Hard upper bound on a single event payload pushed over WS. Anything larger
-# almost always means a runaway log dump in ``payload`` — fan-out keeps the
-# event envelope but replaces the body with a "truncated" marker so the FE
-# can still cursor past the row without OOM'ing on receive.
-_MAX_EVENT_BYTES = 65_536  # 64 KiB
+# Defence-in-depth wire-size cap. Truncation is normally applied at *emit*
+# time in :mod:`app.sessions.events` so the DB row and the publish payload
+# agree (P1-B3); this fallback only fires when something bypasses the emitter
+# (e.g. an external publish landed straight on the channel) or a payload's
+# serialised form blew up after the emitter accepted it. Kept tied to the
+# emitter's constant so a future increase to the budget doesn't drift.
+_MAX_EVENT_BYTES = _EMIT_MAX_EVENT_BYTES
 
 
 def _enforce_event_size(message: dict[str, Any]) -> dict[str, Any]:
@@ -50,6 +53,9 @@ def _enforce_event_size(message: dict[str, Any]) -> dict[str, Any]:
 
     Uses ``default=str`` so datetimes / Paths that slipped past the emitter
     still serialise cleanly here.
+
+    In steady state this should be a no-op — the emit-time guard already
+    truncated anything oversized before it hit the channel.
     """
     try:
         serialised = json.dumps(message, default=str)
@@ -66,7 +72,8 @@ def _enforce_event_size(message: dict[str, Any]) -> dict[str, Any]:
     if size <= _MAX_EVENT_BYTES:
         return message
     logger.warning(
-        "events ws: event {} type={} exceeded {}B (size={}B) — sending stub payload",
+        "events ws: event {} type={} exceeded {}B (size={}B) — sending stub payload "
+        "(should have been truncated at emit time)",
         message.get("id"),
         message.get("event_type"),
         _MAX_EVENT_BYTES,
@@ -100,13 +107,21 @@ async def _backfill(session_id: uuid.UUID, last_id: int) -> list[dict[str, Any]]
     Capped at ``_BACKFILL_LIMIT`` rows so a long-lived session doesn't blow
     out the WS frame buffer on reconnect — the client can resume from the
     highest-seen id by setting ``?last_id=``.
+
+    Ordering: ``(occurred_at, id)``. ``occurred_at`` is the causal axis the
+    grading engine and timeline endpoint both honour, so the WS backfill must
+    match — otherwise a clock skew between API workers (or a backfilled event
+    inserted with an earlier ``occurred_at``) would deliver causally-earlier
+    events after later ones, breaking the FE's "play forward" assumption.
+    The ``id`` tiebreaker keeps the order stable when two events share a
+    timestamp (common at flush boundaries).
     """
     async with AsyncSessionLocal() as db:
         stmt = (
             select(SupervisionEvent)
             .where(SupervisionEvent.session_id == session_id)
             .where(SupervisionEvent.id > last_id)
-            .order_by(SupervisionEvent.id)
+            .order_by(SupervisionEvent.occurred_at, SupervisionEvent.id)
             .limit(_BACKFILL_LIMIT)
         )
         result = await db.execute(stmt)

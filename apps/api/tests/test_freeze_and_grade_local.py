@@ -26,9 +26,7 @@ class _FakeMission:
         pack = "__no_such_pack__"
         language_runtime = "node20"
         workdir = "/workspace"
-        test_commands = {
-            "unit": "echo '{\"passed\": 2, \"failed\": 0, \"skipped\": 0}'; exit 0"
-        }
+        test_commands = {"unit": 'echo \'{"passed": 2, "failed": 0, "skipped": 0}\'; exit 0'}
 
     class hidden_tests:  # noqa: N801
         # The runner.sh script we install below prints a JSON envelope.
@@ -79,9 +77,7 @@ async def test_freeze_and_grade_real_pipeline(tmp_path, monkeypatch) -> None:
         await driver.run(handle, ["git", "commit", "-q", "-m", "seed"])
         await driver.write_file(handle, "src.txt", b"hello\nworld\n")
 
-        artifacts = await driver.freeze_and_grade(
-            handle, mission, manifest_folder=manifest_folder
-        )
+        artifacts = await driver.freeze_and_grade(handle, mission, manifest_folder=manifest_folder)
 
         # Diff snapshot present.
         assert "src.txt" in artifacts.diff
@@ -99,7 +95,7 @@ async def test_freeze_and_grade_real_pipeline(tmp_path, monkeypatch) -> None:
         assert hidden["failed"] == 0
 
         # Hidden tests were copied into the sandbox.
-        copied = (handle.workdir / "grader" / "hidden_tests" / "fixture.txt")
+        copied = handle.workdir / "grader" / "hidden_tests" / "fixture.txt"
         assert copied.exists()
         assert copied.read_text() == "mounted"
     finally:

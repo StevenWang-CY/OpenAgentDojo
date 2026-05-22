@@ -10,6 +10,9 @@ def _prod_env(monkeypatch, **overrides) -> None:
     base = {
         "ARENA_ENV": "production",
         "SESSION_SECRET": "a" * 64,
+        # Required in staging/production AND must differ from SESSION_SECRET
+        # (P2-B12). A different alphabet keeps the two demonstrably distinct.
+        "SHARE_TOKEN_SECRET": "b" * 64,
         "RESEND_API_KEY": "re_xxx",
         "S3_ACCESS_KEY_ID": "akid",
         "S3_SECRET_ACCESS_KEY": "secret",
@@ -98,3 +101,55 @@ def test_allow_dev_auth_rejected_in_production(monkeypatch) -> None:
     with pytest.raises(Exception) as exc_info:
         Settings()
     assert "ALLOW_DEV_AUTH" in str(exc_info.value)
+
+
+def test_missing_share_token_secret_rejected_in_production(monkeypatch) -> None:
+    """``SHARE_TOKEN_SECRET`` must be explicit in staging/production (P2-B12).
+
+    Note: the apps/api/.env file ships a dev value for this knob, so
+    ``monkeypatch.delenv`` alone wouldn't clear it (pydantic-settings falls
+    back to the .env file). We explicitly set it to an empty string instead
+    — which is the production failure mode this guard exists to catch.
+    """
+    from app.config import Settings
+
+    _prod_env(monkeypatch, SHARE_TOKEN_SECRET="")
+    with pytest.raises(Exception) as exc_info:
+        Settings()
+    assert "SHARE_TOKEN_SECRET" in str(exc_info.value)
+
+
+def test_share_token_secret_equal_to_session_secret_rejected(monkeypatch) -> None:
+    """Sharing one secret across two trust domains conflates rotation."""
+    from app.config import Settings
+
+    _prod_env(monkeypatch, SHARE_TOKEN_SECRET="a" * 64)  # equal to SESSION_SECRET
+    with pytest.raises(Exception) as exc_info:
+        Settings()
+    assert "SHARE_TOKEN_SECRET" in str(exc_info.value)
+
+
+def test_short_share_token_secret_rejected_in_production(monkeypatch) -> None:
+    """A 16-char share secret is too short to be cryptographically meaningful."""
+    from app.config import Settings
+
+    _prod_env(monkeypatch, SHARE_TOKEN_SECRET="abc123def456")  # < 32 chars
+    with pytest.raises(Exception) as exc_info:
+        Settings()
+    assert "SHARE_TOKEN_SECRET" in str(exc_info.value)
+
+
+def test_share_token_secret_unrequired_in_development(monkeypatch) -> None:
+    """Local dev should still load without ``SHARE_TOKEN_SECRET`` set.
+
+    The strict guard only fires in staging/production — local laptops can
+    leave the share secret unset (or use the apps/api/.env dev fallback)
+    without breaking the boot.
+    """
+    from app.config import Settings
+
+    monkeypatch.setenv("ARENA_ENV", "development")
+    monkeypatch.setenv("SESSION_SECRET", "dev-secret-change-me-32-chars-min-aaaa")
+    monkeypatch.setenv("SHARE_TOKEN_SECRET", "")
+    s = Settings()
+    assert s.arena_env == "development"

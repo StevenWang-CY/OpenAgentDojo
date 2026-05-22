@@ -2,7 +2,7 @@
   "name": "@arena/web",
   "version": "0.1.0",
   "private": true,
-  "description": "AgentSupervisor Arena — Next.js 15 web app (landing, catalog, workspace, report, profile).",
+  "description": "OpenAgentDojo — Next.js 15 web app (landing, catalog, workspace, report, profile).",
   "scripts": {
     "dev": "next dev --port 3000",
     "build": "next build",

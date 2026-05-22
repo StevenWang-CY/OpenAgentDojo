@@ -46,7 +46,7 @@ export async function generateMetadata({
   if (!submission) {
     return {
       title: "Score report",
-      description: "AgentSupervisor Arena — graded supervision attempt.",
+      description: "OpenAgentDojo — graded supervision attempt.",
     };
   }
 
@@ -57,7 +57,7 @@ export async function generateMetadata({
       ? strengths.slice(0, 2).join(" · ")
       : "Process-driven supervision grading across 7 rubric dimensions.";
 
-  const title = `Score ${score}/100 · Arena`;
+  const title = `Score ${score}/100 · OpenAgentDojo`;
   // Preserve the share token on the OG card route so the edge runtime fetch
   // succeeds for unauthenticated viewers loading the public share link.
   const ogImageUrl = new URL(

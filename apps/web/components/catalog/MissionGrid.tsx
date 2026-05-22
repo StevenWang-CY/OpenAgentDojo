@@ -10,6 +10,13 @@ import { CategoryChips } from "./CategoryChips";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Button } from "@/components/ui/Button";
 
+// Skeleton counts: 5 chips ≈ the typical number of seeded mission categories;
+// 6 cards covers the typical 1/2/3-column grid (3 cols × 2 rows) without
+// pushing layout shift when the real data lands. Kept as named constants so
+// the intent is obvious to future readers.
+const SKELETON_CATEGORY_COUNT = 5;
+const SKELETON_CARD_COUNT = 6;
+
 export function MissionGrid() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["missions"],
@@ -36,12 +43,12 @@ export function MissionGrid() {
     return (
       <div>
         <div className="flex flex-wrap gap-2">
-          {Array.from({ length: 5 }).map((_, idx) => (
+          {Array.from({ length: SKELETON_CATEGORY_COUNT }).map((_, idx) => (
             <Skeleton key={idx} className="h-7 w-24 rounded-full" />
           ))}
         </div>
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, idx) => (
+          {Array.from({ length: SKELETON_CARD_COUNT }).map((_, idx) => (
             <Skeleton key={idx} className="h-44 rounded-xl" />
           ))}
         </div>

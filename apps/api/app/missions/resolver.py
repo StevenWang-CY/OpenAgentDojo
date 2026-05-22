@@ -60,20 +60,15 @@ def resolve_mission_dir(missions_root: Path, mission_id: str) -> Path:
         missions_root = Path(missions_root)
 
     if not missions_root.exists() or not missions_root.is_dir():
-        raise MissionFolderNotFoundError(
-            f"missions root does not exist: {missions_root}"
-        )
+        raise MissionFolderNotFoundError(f"missions root does not exist: {missions_root}")
 
     safe = re.escape(mission_id)
     pattern = re.compile(rf"^\d+-{safe}$")
-    numbered = sorted(
-        p for p in missions_root.iterdir() if p.is_dir() and pattern.match(p.name)
-    )
+    numbered = sorted(p for p in missions_root.iterdir() if p.is_dir() and pattern.match(p.name))
     if numbered:
         if len(numbered) > 1:
             raise ValueError(
-                f"ambiguous mission folder for {mission_id!r}: "
-                f"{[p.name for p in numbered]}"
+                f"ambiguous mission folder for {mission_id!r}: {[p.name for p in numbered]}"
             )
         return numbered[0]
 

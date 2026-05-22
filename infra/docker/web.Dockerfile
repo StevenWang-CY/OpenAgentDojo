@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
-# AgentArena web — production image for apps/web (Next.js 15 standalone).
+# OpenAgentDojo web — production image for apps/web (Next.js 15 standalone).
 #
 # Build context MUST be the repository root (uses the pnpm workspace).
 #   docker build -f infra/docker/web.Dockerfile -t agentarena/web:dev .

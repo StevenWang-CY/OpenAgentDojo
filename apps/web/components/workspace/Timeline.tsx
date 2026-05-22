@@ -110,12 +110,12 @@ function render(event: SupervisionEvent): RenderedEvent {
         icon: GitMerge,
         tone: "warning",
         label: "Patch applied",
-        detail: `${event.payload.files_changed} files · +${event.payload.added} / -${event.payload.removed}`,
+        detail: `${event.payload.file_count} files · +${event.payload.added} / -${event.payload.removed}`,
       };
     case "patch.failed": {
       const counts =
-        event.payload.files_changed !== undefined
-          ? ` (${event.payload.files_changed} files · +${event.payload.added ?? 0} / -${event.payload.removed ?? 0})`
+        event.payload.file_count !== undefined
+          ? ` (${event.payload.file_count} files · +${event.payload.added ?? 0} / -${event.payload.removed ?? 0})`
           : "";
       return {
         icon: XCircle,

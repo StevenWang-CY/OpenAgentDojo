@@ -95,4 +95,47 @@ describe("FileTree → POST /context", () => {
     });
     expect(setContext).not.toHaveBeenCalled();
   });
+
+  it("does not flush stale selection to a re-keyed session on unmount", () => {
+    // Mount with sessionA + an outstanding selection toggle that hasn't
+    // been flushed (we unmount before the debounce window elapses).
+    const { rerender, unmount } = render(
+      <FileTree
+        nodes={NODES}
+        sessionId="session-a"
+        selectedContext={[]}
+        onToggleContext={() => {}}
+      />
+    );
+
+    rerender(
+      <FileTree
+        nodes={NODES}
+        sessionId="session-a"
+        selectedContext={["backend/session.ts"]}
+        onToggleContext={() => {}}
+      />
+    );
+
+    // Flip the sessionId via a re-render (the workspace shell does this
+    // when the user navigates to a different session). The mount-time
+    // session id was "session-a" — the unmount flush must NOT post to
+    // "session-b", because that would overwrite the new session's
+    // selection on the backend.
+    rerender(
+      <FileTree
+        nodes={NODES}
+        sessionId="session-b"
+        selectedContext={["backend/session.ts"]}
+        onToggleContext={() => {}}
+      />
+    );
+
+    // Tear down before either debounce window can fire.
+    act(() => {
+      unmount();
+    });
+
+    expect(setContext).not.toHaveBeenCalled();
+  });
 });

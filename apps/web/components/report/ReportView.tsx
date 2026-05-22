@@ -25,6 +25,33 @@ import { DimensionBreakdown } from "@/components/report/DimensionBreakdown";
 import { IdealSolution } from "@/components/report/IdealSolution";
 import { TimelineReplay } from "@/components/report/TimelineReplay";
 
+/**
+ * The seven rubric dimensions that the radar + breakdown components both
+ * index unconditionally. If a wire payload is missing any key, we must
+ * bail out before render to avoid a `Cannot read properties of undefined`
+ * crash.
+ */
+const REQUIRED_DIMENSIONS = [
+  "final_correctness",
+  "verification",
+  "agent_review",
+  "prompt_quality",
+  "context_selection",
+  "safety",
+  "diff_minimality",
+] as const;
+
+function hasAllDimensions(
+  dimensions: ScoreReport["dimensions"] | undefined | null
+): dimensions is ScoreReport["dimensions"] {
+  if (!dimensions || typeof dimensions !== "object") return false;
+  for (const key of REQUIRED_DIMENSIONS) {
+    const dim = (dimensions as Record<string, unknown>)[key];
+    if (!dim || typeof dim !== "object") return false;
+  }
+  return true;
+}
+
 interface ReportViewProps {
   submissionId: string;
   /**
@@ -121,6 +148,13 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
     return (
       <ReportErrorState reason="Submission failed before grading completed." />
     );
+  }
+  // The radar + breakdown components index `dimensions` by every rubric key
+  // unconditionally; if even one is missing they'll throw on render. Guard
+  // here so a malformed wire payload degrades to a clear error state instead
+  // of a white-screen crash.
+  if (!hasAllDimensions(report.dimensions)) {
+    return <ReportErrorState reason="Score report is incomplete." />;
   }
   // `missed_failure_mode` may legitimately be undefined on partially graded
   // submissions; treat that as "did not pass" since we can't claim success.

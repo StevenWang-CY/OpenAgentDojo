@@ -70,7 +70,7 @@ export function Header({ showCta = true }: HeaderProps) {
             <Compass className="size-4" />
           </span>
           <span>
-            Arena
+            OpenAgentDojo
             <span className="ml-1 font-normal text-[var(--color-muted-foreground)]">
               · Agent Supervisor
             </span>

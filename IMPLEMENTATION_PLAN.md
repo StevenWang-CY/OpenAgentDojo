@@ -1,4 +1,4 @@
-# AgentSupervisor Arena — Full Implementation Plan
+# OpenAgentDojo — Full Implementation Plan
 
 > This document is the engineering source-of-truth for the MVP build. It expands the product definition into a buildable, milestone-driven plan with concrete file layouts, schemas, contracts, scoring logic, scenario data, and a build order a coding agent can execute end-to-end.
 
@@ -13,14 +13,14 @@ Conventions:
 - **MUST / SHOULD / MAY** follow RFC 2119 semantics.
 - File paths are repo-relative.
 - All scenarios, scoring weights, and schemas are normative — change them only after updating this document.
-- If you discover an inconsistency between this plan and the product definition (`AgentSupervisor Arena — Ambitious MVP Product Definition`), this plan wins for *implementation* questions; the product definition wins for *intent* questions.
+- If you discover an inconsistency between this plan and the product definition (`OpenAgentDojo — Ambitious MVP Product Definition`), this plan wins for *implementation* questions; the product definition wins for *intent* questions.
 - Determinism is a feature. The product MUST grade the same submission identically on every replay. Anything stochastic (LLM calls, network) goes through a seeded or replayable layer.
 
 ---
 
 ## 1. North-Star Summary
 
-**Product:** AgentSupervisor Arena — a browser-based simulator where developers complete repository missions by supervising a deliberately-flawed coding agent.
+**Product:** OpenAgentDojo — a browser-based simulator where developers complete repository missions by supervising a deliberately-flawed coding agent.
 
 **MVP must ship:**
 
@@ -67,7 +67,7 @@ Conventions:
 ## 3. Repository Layout
 
 ```
-RealRepo Arena/
+OpenAgentDojo/
 ├── apps/
 │   ├── web/                        # Next.js 15 app
 │   │   ├── app/

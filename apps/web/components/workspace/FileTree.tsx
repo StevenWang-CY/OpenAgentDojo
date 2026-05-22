@@ -105,11 +105,18 @@ export function FileTree({
   // an empty dep array so the cleanup runs only on unmount, not on every
   // selection change — that path is owned by the debounced effect above.
   React.useEffect(() => {
+    // Capture the session id we mounted with so the unmount flush can
+    // verify it still matches the live ref. If the parent has since
+    // swapped to a different session id, firing /context for the old
+    // session id would race against the new session's debounced sync and
+    // poison its selection on the backend.
+    const mountedSessionId = sessionId;
     return () => {
       const finalSelectedKey = JSON.stringify(latestSelectedRef.current);
       if (finalSelectedKey === lastSyncedKey.current) return;
       const sid = latestSessionIdRef.current;
       if (!sid) return;
+      if (sid !== mountedSessionId) return;
       lastSyncedKey.current = finalSelectedKey;
       void setContext(sid, {
         files: latestSelectedRef.current,
@@ -120,6 +127,7 @@ export function FileTree({
         /* best-effort — same as the debounced path */
       });
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleToggleContext(path: string): void {

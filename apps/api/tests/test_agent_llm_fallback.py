@@ -23,9 +23,7 @@ from app.observability import REGISTRY
 
 
 def _fallback_count(reason: str) -> float:
-    val = REGISTRY.get_sample_value(
-        "agent_llm_fallback_total", {"reason": reason}
-    )
+    val = REGISTRY.get_sample_value("agent_llm_fallback_total", {"reason": reason})
     return float(val or 0.0)
 
 

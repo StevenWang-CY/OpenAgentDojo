@@ -91,6 +91,13 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   // the brief window before the first connect.
   const [wsStatus, setWsStatus] = React.useState<ReconnectingSocketStatus>("open");
 
+  // Flipped when the backend closes the events stream with code 4404
+  // (session reaped). The shell then renders a terminal "session ended"
+  // view rather than the generic reconnecting banner — there's nothing to
+  // recover, so the only useful affordances are "start a new mission" and
+  // "open your profile".
+  const [sessionEnded, setSessionEnded] = React.useState(false);
+
   // Ref tracks the latest event id we've ingested. The WS reconnect logic
   // reads this synchronously on every connect so the close-and-reopen path
   // picks up the freshest value (vs. a value captured at effect mount).
@@ -258,6 +265,9 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
       onAuthFailure: () => {
         redirectToSignIn();
       },
+      onSessionEnded: () => {
+        setSessionEnded(true);
+      },
       onMessage(ev) {
         if (typeof ev.data !== "string") return;
         try {
@@ -395,7 +405,54 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   }
 
   const session = sessionQuery.data;
-  if (!session) return null;
+  if (!session) {
+    // `useQuery` reports `!isLoading && !error && !data` when the queryFn
+    // resolves to `undefined` (e.g. an unexpected 204 or a fetcher bug).
+    // Returning `null` would leave the user on a blank page with no recovery
+    // path — surface a real error UI instead.
+    return (
+      <FullPageMessage
+        tone="danger"
+        icon={<AlertCircle aria-hidden className="size-6" />}
+        heading="Session unavailable"
+        body="We couldn't load this session. Refresh to try again, or return to your mission list."
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => void sessionQuery.refetch()}
+            >
+              <RefreshCcw className="size-4" aria-hidden /> Refresh
+            </Button>
+            <Button asChild variant="ghost">
+              <Link href="/missions">Back to missions</Link>
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  if (sessionEnded) {
+    return (
+      <FullPageMessage
+        tone="warning"
+        icon={<AlertCircle aria-hidden className="size-6" />}
+        heading="Session ended"
+        body="The backend ended this session. Start a new mission or open your profile to see past attempts."
+        actions={
+          <>
+            <Button asChild>
+              <Link href="/missions">Start a new mission</Link>
+            </Button>
+            <Button asChild variant="ghost">
+              <Link href="/profile/me">Open profile</Link>
+            </Button>
+          </>
+        }
+      />
+    );
+  }
 
   if (status === "provisioning") {
     return (
@@ -454,11 +511,14 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
     const failedEvent = events.find(
       (e) => e.event_type === "submission.failed"
     );
-    const failedPayload = failedEvent?.payload as
+    const erroredEvent = events.find(
+      (e) => e.event_type === "session.errored"
+    );
+    const failedPayload = (failedEvent?.payload ?? erroredEvent?.payload) as
       | { stage?: string; detail?: string }
       | undefined;
     const body = failedPayload
-      ? `${failedPayload.stage ? `${failedPayload.stage}: ` : ""}${failedPayload.detail ?? "Unknown grading error."}`
+      ? `${failedPayload.stage ? `${failedPayload.stage}: ` : ""}${failedPayload.detail ?? "Unknown error."}`
       : "Sandbox provisioning failed. Start a fresh attempt — no progress is lost since the session never went active.";
     return (
       <FullPageMessage
@@ -693,10 +753,22 @@ function isSupervisionEvent(value: unknown): value is SupervisionEvent {
  * The `agent.responded` event has a `response_summary` — enough to display a
  * placeholder turn while the REST POST resolves. Once the actual `AgentTurn`
  * arrives via `submitPrompt` the store dedupes by `turn_index`.
+ *
+ * Returns `null` on a malformed payload so the caller doesn't push a junk
+ * row into the store — the backend ought never to emit this, but a single
+ * bad event from a future schema bump shouldn't be able to break the
+ * chat surface.
  */
 function synthesiseAgentTurn(event: SupervisionEvent): AgentTurn | null {
   if (event.event_type !== "agent.responded") return null;
   const payload = event.payload;
+  if (!isValidAgentRespondedPayload(payload)) {
+    console.warn(
+      "[workspace] dropping malformed agent.responded payload",
+      payload
+    );
+    return null;
+  }
   return {
     id: `synthetic-${event.id}`,
     session_id: event.session_id,
@@ -712,6 +784,24 @@ function synthesiseAgentTurn(event: SupervisionEvent): AgentTurn | null {
     patch_applied_at: null,
     created_at: event.occurred_at,
   };
+}
+
+/**
+ * Narrowing predicate for the `agent.responded` payload. Both fields are
+ * required by the contract — anything else is a bug worth surfacing in
+ * DevTools rather than papering over.
+ */
+function isValidAgentRespondedPayload(value: unknown): value is {
+  turn_index: number;
+  response_summary: string;
+} {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.turn_index === "number" &&
+    Number.isFinite(v.turn_index) &&
+    typeof v.response_summary === "string"
+  );
 }
 
 /** Pull the changed paths out of a unified diff for the ScorePreview hint. */

@@ -41,9 +41,7 @@ def test_compose_worker_drains_provision_queue_only() -> None:
 
 def test_sandbox_worker_dockerfile_drains_provision_queue_only() -> None:
     """The sandbox-worker image CMD names 'provision' and NOT 'sandbox'."""
-    dockerfile = (
-        _REPO_ROOT / "infra/docker/sandbox-worker.Dockerfile"
-    ).read_text(encoding="utf-8")
+    dockerfile = (_REPO_ROOT / "infra/docker/sandbox-worker.Dockerfile").read_text(encoding="utf-8")
     assert "rq worker" in dockerfile
     assert "provision" in dockerfile
     assert "provision sandbox" not in dockerfile

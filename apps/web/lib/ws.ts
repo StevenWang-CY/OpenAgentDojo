@@ -6,9 +6,14 @@ import { ApiError, getWsToken } from "./api";
  * Used by both the xterm terminal bridge and the supervision-event stream.
  *
  * Backend close-code conventions (mirror `apps/api/app/ws/auth.py`):
- *   - 1008 / 4001 / 4003 → fatal (policy / unauthorized / forbidden); do not reconnect.
- *   - 4401              → token expired; re-mint via `getWsToken` then reconnect.
- *   - any other         → backoff + reconnect, up to `maxAttempts`.
+ *   - 1008 / 4001 / 4003 / 4404 → fatal (policy / unauthorized / forbidden /
+ *                                  session reaped); do not reconnect.
+ *   - 4401                       → token expired; re-mint via `getWsToken` then reconnect.
+ *   - any other                  → backoff + reconnect, up to `maxAttempts`.
+ *
+ * 4404 is special-cased: when the backend reaps a session mid-stream, we
+ * fire `onSessionEnded` so the caller can render a "session ended" view
+ * rather than the generic "exhausted" banner.
  */
 
 export type ReconnectingSocketStatus =
@@ -64,6 +69,13 @@ export interface ReconnectingSocketOptions {
    * to "exhausted" and no further reconnects are scheduled.
    */
   onAuthFailure?: () => void;
+  /**
+   * Fired exactly once when the backend closes the socket with code 4404
+   * (session reaped). The socket transitions to "closed" and no further
+   * reconnects are scheduled. Callers can use this to render a terminal
+   * "session ended" view rather than a misleading "reconnecting…" banner.
+   */
+  onSessionEnded?: () => void;
 }
 
 export interface ReconnectingSocketHandle {
@@ -122,7 +134,7 @@ export function createReconnectingSocket(
     maxBackoffMs = 15_000,
     initialBackoffMs = 500,
     heartbeatMs = 25_000,
-    fatalCloseCodes = [1008, 4001, 4003],
+    fatalCloseCodes = [1008, 4001, 4003, 4404],
     maxAttempts = 8,
     sessionId,
     resolveQueryParams,
@@ -133,6 +145,7 @@ export function createReconnectingSocket(
     onStatusChange,
     onAttemptsExhausted,
     onAuthFailure,
+    onSessionEnded,
   } = opts;
 
   const baseUrlNoToken = urlWithoutToken(rawUrl);
@@ -222,6 +235,13 @@ export function createReconnectingSocket(
         return;
       }
       if (fatalCloseCodes.includes(event.code)) {
+        // 4404 ⇒ the session has been reaped on the backend. There's no
+        // value in spamming reconnects; fire the dedicated callback so the
+        // caller can switch to a terminal "session ended" view.
+        if (event.code === 4404) {
+          exhausted = true;
+          onSessionEnded?.();
+        }
         setStatus("closed");
         return;
       }
@@ -244,14 +264,22 @@ export function createReconnectingSocket(
             // A 401 from the token endpoint means the user's cookie session
             // has expired — looping with the old WS token would only burn
             // reconnect attempts. Bail out and let the caller redirect to
-            // sign-in. Network and 5xx errors still get a backoff retry.
+            // sign-in.
             if (err instanceof ApiError && err.status === 401) {
               exhausted = true;
               setStatus("exhausted");
               onAuthFailure?.();
               return;
             }
-            reconnectTimer = setTimeout(connect, backoff());
+            // Anything else (network blip, 5xx) is unexpected on the token
+            // endpoint. Log it for visibility and let the standard backoff
+            // path take over — but funnel through scheduleReconnect so
+            // maxAttempts is honoured and we don't quietly loop forever.
+            console.error(
+              "[ws] token refresh failed; falling back to reconnect",
+              err
+            );
+            scheduleReconnect();
           });
         return;
       }

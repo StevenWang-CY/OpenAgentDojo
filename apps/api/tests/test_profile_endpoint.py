@@ -28,9 +28,7 @@ async def _bind_engine(db_engine):
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return session_module.AsyncSessionLocal
@@ -47,8 +45,13 @@ def _score_report(
 ) -> dict:
     """Build a score_report payload with all 7 rubric dimensions populated."""
     return {
-        "total": final + verification + agent_review + prompt_quality
-        + context_selection + safety + diff_minimality,
+        "total": final
+        + verification
+        + agent_review
+        + prompt_quality
+        + context_selection
+        + safety
+        + diff_minimality,
         "dimensions": {
             "final_correctness": {"score": final, "max": 30, "signals": []},
             "verification": {"score": verification, "max": 20, "signals": []},
@@ -160,9 +163,13 @@ async def _seed_profile(db_engine):
                 hidden_test_results={},
                 validator_results={},
                 score_report=_score_report(
-                    final=20, verification=14, agent_review=10,
-                    prompt_quality=6, context_selection=8,
-                    safety=10, diff_minimality=3,
+                    final=20,
+                    verification=14,
+                    agent_review=10,
+                    prompt_quality=6,
+                    context_selection=8,
+                    safety=10,
+                    diff_minimality=3,
                 ),
                 total_score=80,
             )
@@ -176,9 +183,13 @@ async def _seed_profile(db_engine):
                 hidden_test_results={},
                 validator_results={},
                 score_report=_score_report(
-                    final=28, verification=18, agent_review=14,
-                    prompt_quality=10, context_selection=8,
-                    safety=10, diff_minimality=5,
+                    final=28,
+                    verification=18,
+                    agent_review=14,
+                    prompt_quality=10,
+                    context_selection=8,
+                    safety=10,
+                    diff_minimality=5,
                 ),
                 total_score=92,
             )
@@ -428,9 +439,7 @@ async def test_best_score_and_total_missions(client, db_engine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_malformed_score_report_excluded_and_counted(
-    client, db_engine
-) -> None:
+async def test_malformed_score_report_excluded_and_counted(client, db_engine) -> None:
     """Malformed reports MUST be skipped by the radar and counted in the metric.
 
     P1-5: rather than silently ignore bad ``score_report`` payloads we
@@ -581,12 +590,8 @@ async def test_malformed_score_report_excluded_and_counted(
 
     # And the malformed-report counter incremented for each bad row.
     assert _value("dimensions_missing") == pytest.approx(before_dims_missing + 1)
-    assert _value("score_not_numeric") == pytest.approx(
-        before_score_not_numeric + 1
-    )
-    assert _value("dimension_payload_not_dict") == pytest.approx(
-        before_payload_not_dict + 1
-    )
+    assert _value("score_not_numeric") == pytest.approx(before_score_not_numeric + 1)
+    assert _value("dimension_payload_not_dict") == pytest.approx(before_payload_not_dict + 1)
 
 
 @pytest.mark.asyncio

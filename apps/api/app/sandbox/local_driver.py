@@ -49,14 +49,35 @@ class LocalSandboxDriver(SandboxDriver):
     async def provision(self, mission: Any, session_id: Any) -> SandboxHandle:
         """Create a per-session temp dir, copy pack contents in, git init."""
         sid = uuid.UUID(str(session_id))
-        workdir = Path(tempfile.mkdtemp(prefix=f"arena-{sid}-", dir=str(self.root)))
+        # ``.resolve()`` is load-bearing on macOS — /tmp is a symlink to
+        # /private/tmp, and any later call to ``_resolve`` invokes
+        # ``Path.resolve()`` which canonicalises the prefix. Without this,
+        # the workdir-escape check below fires for ``/workspace`` lookups
+        # ("." resolves to /private/tmp/... while handle.workdir was still
+        # /tmp/..." — different paths even though they point at the same
+        # inode), and the file tree / file-read endpoints all return 500.
+        workdir = Path(tempfile.mkdtemp(prefix=f"arena-{sid}-", dir=str(self.root))).resolve()
 
         repo_pack = self._mission_repo_pack(mission)
         if repo_pack is not None:
             try:
                 pack_root = load_repo_pack(repo_pack)
-                # copytree into existing empty dir — Python 3.8+ supports dirs_exist_ok
-                shutil.copytree(pack_root, workdir, dirs_exist_ok=True)
+                # symlinks=True is load-bearing: pnpm's node_modules layout uses
+                # relative symlinks (backend/node_modules/<dep> → ../../node_modules/
+                # .pnpm/<dep>@<ver>/node_modules/<dep>) that resolve *within* the
+                # pack root. Default (symlinks=False) dereferences them, which
+                # copies fragments of the .pnpm store as real dirs but breaks the
+                # inter-package peer links — vitest then fails to resolve `pathe`
+                # at runtime. Repo packs MUST be installed standalone (their pack
+                # roots are intentionally NOT root-workspace members) so every
+                # symlink target lives inside the pack.
+                shutil.copytree(
+                    pack_root,
+                    workdir,
+                    dirs_exist_ok=True,
+                    symlinks=True,
+                    ignore_dangling_symlinks=True,
+                )
             except RepoPackNotFoundError:
                 # Missing pack is non-fatal for the MVP — the user gets an empty
                 # workspace and the test suite can still exercise the driver.
@@ -108,9 +129,9 @@ class LocalSandboxDriver(SandboxDriver):
     @staticmethod
     def _git_env() -> dict[str, str]:
         env = os.environ.copy()
-        env.setdefault("GIT_AUTHOR_NAME", "Arena Sandbox")
+        env.setdefault("GIT_AUTHOR_NAME", "OpenAgentDojo Sandbox")
         env.setdefault("GIT_AUTHOR_EMAIL", "sandbox@arena.local")
-        env.setdefault("GIT_COMMITTER_NAME", "Arena Sandbox")
+        env.setdefault("GIT_COMMITTER_NAME", "OpenAgentDojo Sandbox")
         env.setdefault("GIT_COMMITTER_EMAIL", "sandbox@arena.local")
         env.setdefault("GIT_CONFIG_GLOBAL", "/dev/null")
         env.setdefault("GIT_CONFIG_SYSTEM", "/dev/null")
@@ -480,24 +501,51 @@ class LocalSandboxDriver(SandboxDriver):
 # --------------------------------------------------------------- helpers
 
 
+_TREE_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        ".pnpm",
+        ".pnpm-store",
+        ".venv",
+        "__pycache__",
+        ".next",
+        "dist",
+        "build",
+        ".turbo",
+    }
+)
+
+
 def _build_tree(base: Path, root: Path) -> FileTreeNode:
-    if base.is_dir():
+    # Use lstat-aware checks so we never descend INTO a symlink (pnpm's
+    # backend/node_modules/<dep> symlinks resolve to dirs inside the pack;
+    # following them would explode the tree from ~50 files into ~50_000).
+    is_symlink = base.is_symlink()
+    if base.is_dir() and not is_symlink:
         node = FileTreeNode(
             path=str(base.relative_to(root)) or ".",
             kind="dir",
         )
         try:
             for child in sorted(base.iterdir()):
-                if child.name == ".git":
+                if child.name in _TREE_SKIP_DIRS:
                     continue
                 node.children.append(_build_tree(child, root))
         except PermissionError:
             pass
         return node
+    # File OR symlink — report as file so the workspace UI can list it; we
+    # avoid following the symlink for `st_size` because the target may
+    # legitimately be missing (dangling) or live outside the workdir.
+    try:
+        size = base.lstat().st_size
+    except (FileNotFoundError, OSError):
+        size = 0
     return FileTreeNode(
         path=str(base.relative_to(root)),
         kind="file",
-        size=base.stat().st_size,
+        size=size,
     )
 
 

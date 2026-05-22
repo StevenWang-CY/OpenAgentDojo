@@ -3,7 +3,7 @@
 import * as React from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, RotateCcw } from "lucide-react";
+import { AlertCircle, Loader2, RefreshCcw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, getFile, revertFile, writeFile } from "@/lib/api";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -233,8 +233,26 @@ export function CodeEditor({
             <Loader2 className="mr-2 size-3.5 animate-spin" aria-hidden /> Loading file…
           </div>
         ) : fileQuery.error ? (
-          <div className="flex h-full items-center justify-center text-xs text-[var(--color-danger)]">
-            Couldn&rsquo;t load this file.
+          <div
+            className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
+            role="alert"
+            data-testid="code-editor-error"
+          >
+            <AlertCircle
+              className="size-5 text-[var(--color-danger)]"
+              aria-hidden
+            />
+            <p className="text-xs text-[var(--color-danger)]">
+              Couldn&rsquo;t load <span className="font-mono">{path}</span>
+            </p>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void fileQuery.refetch()}
+            >
+              <RefreshCcw className="size-3.5" aria-hidden />
+              Retry
+            </Button>
           </div>
         ) : (
           <MonacoEditor

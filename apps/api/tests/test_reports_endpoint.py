@@ -20,9 +20,7 @@ async def _setup(db_engine, mission_id="auth-cookie-expiration"):
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -107,9 +105,7 @@ async def test_owner_can_read_report(client, db_engine) -> None:
     from app.config import get_settings
 
     settings = get_settings()
-    client.cookies.set(
-        settings.session_cookie_name, _make_session_cookie(owner_id)
-    )
+    client.cookies.set(settings.session_cookie_name, _make_session_cookie(owner_id))
     resp = await client.get(f"/api/v1/reports/{submission_id}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -124,9 +120,7 @@ async def test_stranger_gets_403(client, db_engine) -> None:
     from app.config import get_settings
 
     settings = get_settings()
-    client.cookies.set(
-        settings.session_cookie_name, _make_session_cookie(stranger_id)
-    )
+    client.cookies.set(settings.session_cookie_name, _make_session_cookie(stranger_id))
     resp = await client.get(f"/api/v1/reports/{submission_id}")
     assert resp.status_code == 403
 
@@ -141,9 +135,7 @@ async def test_share_token_grants_access(client, db_engine) -> None:
     token, _ = issue_share_token(submission_id, settings)
     # No session cookie — only the share token.
     client.cookies.clear()
-    resp = await client.get(
-        f"/api/v1/reports/{submission_id}?share={token}"
-    )
+    resp = await client.get(f"/api/v1/reports/{submission_id}?share={token}")
     assert resp.status_code == 200, resp.text
     assert resp.json()["id"] == str(submission_id)
 
@@ -152,9 +144,7 @@ async def test_share_token_grants_access(client, db_engine) -> None:
 async def test_bad_share_token_rejected(client, db_engine) -> None:
     _, _, _, submission_id = await _setup(db_engine)
     client.cookies.clear()
-    resp = await client.get(
-        f"/api/v1/reports/{submission_id}?share=this-is-not-a-jwt"
-    )
+    resp = await client.get(f"/api/v1/reports/{submission_id}?share=this-is-not-a-jwt")
     # The route now returns a structured 400 when a share param is present but
     # cannot be validated (clearer than a generic 401 for someone with a
     # malformed link). The detail carries a ``reason`` so the FE can render an
@@ -171,9 +161,7 @@ async def test_owner_can_mint_share_url(client, db_engine) -> None:
     from app.config import get_settings
 
     settings = get_settings()
-    client.cookies.set(
-        settings.session_cookie_name, _make_session_cookie(owner_id)
-    )
+    client.cookies.set(settings.session_cookie_name, _make_session_cookie(owner_id))
 
     csrf = "y" * 64
     client.cookies.set("arena_csrf", csrf)

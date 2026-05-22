@@ -212,9 +212,7 @@ def _csrf_kwargs() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_post_prompt_with_injection_flags_but_does_not_block(
-    client, db_engine
-) -> None:
+async def test_post_prompt_with_injection_flags_but_does_not_block(client, db_engine) -> None:
     """An injection prompt still returns 200 and emits ``validator.flag``."""
     await _bind_app_engine_to(db_engine)
     user_id, session_id = await _seed_mission_user_session(db_engine)
@@ -239,12 +237,16 @@ async def test_post_prompt_with_injection_flags_but_does_not_block(
 
     async with session_module.AsyncSessionLocal() as db:
         events = (
-            await db.execute(
-                select(SupervisionEvent)
-                .where(SupervisionEvent.session_id == session_id)
-                .order_by(SupervisionEvent.id)
+            (
+                await db.execute(
+                    select(SupervisionEvent)
+                    .where(SupervisionEvent.session_id == session_id)
+                    .order_by(SupervisionEvent.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         flags = [e for e in events if e.event_type == "validator.flag"]
         assert len(flags) == 1, [e.event_type for e in events]
         payload = flags[0].payload
@@ -275,9 +277,7 @@ async def test_post_prompt_benign_does_not_emit_flag(client, db_engine) -> None:
             e.event_type
             for e in (
                 await db.execute(
-                    select(SupervisionEvent).where(
-                        SupervisionEvent.session_id == session_id
-                    )
+                    select(SupervisionEvent).where(SupervisionEvent.session_id == session_id)
                 )
             )
             .scalars()
@@ -296,8 +296,10 @@ async def test_post_prompt_detector_error_emits_validator_flag(
 
     The previous behaviour swallowed the exception and silently downgraded
     to "no matches", erasing the security signal from the supervision
-    timeline. P1-4 changes that so a detector crash surfaces as
-    ``kind='prompt_injection_detector_error'``.
+    timeline. P1-B6 raises the log level to WARNING with exc_info and pins
+    the canonical ``reason="prompt_injection_check_failed"`` field in the
+    payload (alongside the legacy ``kind`` for back-compat with the FE +
+    scorer).
     """
     await _bind_app_engine_to(db_engine)
     user_id, session_id = await _seed_mission_user_session(db_engine)
@@ -313,27 +315,48 @@ async def test_post_prompt_detector_error_emits_validator_flag(
 
     monkeypatch.setattr(agent_router, "detect_prompt_injection", _boom)
 
-    resp = await client.post(
-        f"/api/v1/sessions/{session_id}/prompts",
-        json={"text": "Please fix the expired-cookie bug."},
-        **_csrf_kwargs(),
-    )
+    # Capture WARNING-level log lines so we can assert the upgrade from DEBUG.
+    from loguru import logger as _logger
+
+    warning_lines: list[str] = []
+    sink_id = _logger.add(lambda m: warning_lines.append(str(m)), level="WARNING", backtrace=False)
+
+    try:
+        resp = await client.post(
+            f"/api/v1/sessions/{session_id}/prompts",
+            json={"text": "Please fix the expired-cookie bug."},
+            **_csrf_kwargs(),
+        )
+    finally:
+        _logger.remove(sink_id)
+
     # The route still returns 200 — telemetry must never fail the request.
     assert resp.status_code == 200, resp.text
+
+    # A WARNING must have fired for the detector crash (was DEBUG before).
+    assert any(
+        "prompt-injection detector raised" in line and "detector exploded" in line
+        for line in warning_lines
+    ), warning_lines
 
     from app.db import session as session_module
 
     async with session_module.AsyncSessionLocal() as db:
         flags = (
-            await db.execute(
-                select(SupervisionEvent)
-                .where(SupervisionEvent.session_id == session_id)
-                .where(SupervisionEvent.event_type == "validator.flag")
+            (
+                await db.execute(
+                    select(SupervisionEvent)
+                    .where(SupervisionEvent.session_id == session_id)
+                    .where(SupervisionEvent.event_type == "validator.flag")
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(flags) == 1, [f.event_type for f in flags]
         payload = flags[0].payload
         assert payload["kind"] == "prompt_injection_detector_error"
+        assert payload["reason"] == "prompt_injection_check_failed"
         assert "detector exploded" in payload["message"]
         # Truncated to 200 chars max (router slice).
         assert len(payload["message"]) <= 200

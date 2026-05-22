@@ -63,8 +63,13 @@ export function SubmitDialog({
       // Closing the dialog and surfacing a "now grading" toast is enough:
       // `WorkspaceShell` is already polling the session and will navigate
       // to /report/{id} once the status flips to `graded`.
+      //
+      // Hold the toast longer than sonner's 3.5s default so it stays
+      // visible across the WorkspaceShell's status-driven redirect to
+      // the report page — otherwise the user often sees nothing and
+      // wonders whether the click registered.
       setOpen(false);
-      toast.success("Submitted. Grading…");
+      toast.success("Submitted. Grading…", { duration: 7_000 });
     },
     onError(error) {
       const msg =

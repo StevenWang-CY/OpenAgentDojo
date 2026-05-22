@@ -49,9 +49,7 @@ async def cap_setup(client, db_engine, monkeypatch):
     # Share the test engine with the app's session module so the in-process
     # DB writes inside the handler hit the same SQLite as our seed.
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

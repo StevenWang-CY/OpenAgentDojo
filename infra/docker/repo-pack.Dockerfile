@@ -50,7 +50,7 @@ WORKDIR /workspace
 RUN if [ ! -d .git ]; then \
         git init -q \
         && git config user.email "agent@agentarena.dev" \
-        && git config user.name "AgentArena Pack Builder" \
+        && git config user.name "OpenAgentDojo Pack Builder" \
         && git add -A \
         && git commit -q -m "initial: ${PACK_NAME}@${INITIAL_COMMIT}" \
         && git tag "pack-${INITIAL_COMMIT}"; \

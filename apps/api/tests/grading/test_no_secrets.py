@@ -28,9 +28,7 @@ def test_env_var_reference_passes() -> None:
 
 
 def test_placeholder_passes() -> None:
-    diff = (
-        '--- a/.env.example\n+++ b/.env.example\n@@ -1,1 +1,2 @@\n FOO=bar\n+API_KEY=changeme\n'
-    )
+    diff = "--- a/.env.example\n+++ b/.env.example\n@@ -1,1 +1,2 @@\n FOO=bar\n+API_KEY=changeme\n"
     parsed = ParsedDiff(diff)
     result = validate_no_secrets(parsed)
     assert result.passed is True

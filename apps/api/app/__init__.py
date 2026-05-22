@@ -1,3 +1,3 @@
-"""AgentSupervisor Arena — FastAPI backend application package."""
+"""OpenAgentDojo — FastAPI backend application package."""
 
 __version__ = "0.1.0"

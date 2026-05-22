@@ -181,9 +181,7 @@ def test_minimal_diff_requires_full_minimality_and_correctness() -> None:
 
 
 def test_concurrency_debugger_only_for_async_race_mission() -> None:
-    hidden = TestRunResult(
-        suite="hidden", exit_code=0, stdout="", stderr="", passed=4, failed=0
-    )
+    hidden = TestRunResult(suite="hidden", exit_code=0, stdout="", stderr="", passed=4, failed=0)
     out = compute_badges(
         score_report=_score(),
         validator_results=[],

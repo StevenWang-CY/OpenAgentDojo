@@ -160,7 +160,14 @@ async def get_session_endpoint(
 
     mission_row = await get_mission_row(db, row.mission_id)
     if mission_row is None:
-        raise HTTPException(status_code=500, detail="session's mission missing")
+        # A 500 used to fire here, which framed an unrecoverable data-integrity
+        # error to the FE and triggered the global "something went wrong"
+        # banner. In practice this branch only fires when the mission row was
+        # deleted out from under an active session — the session itself still
+        # exists, but the FE has nothing useful to render. 404 is the honest
+        # status code and lets the FE route to the missions index gracefully
+        # (P1-B2).
+        raise HTTPException(status_code=404, detail="Mission not found for session")
     mission_dict = MissionDetail.model_validate(mission_row).model_dump()
     mission_dict.update(_load_mission_manifest_extras(row.mission_id))
     base["mission"] = MissionDetail.model_validate(mission_dict)

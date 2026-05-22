@@ -47,6 +47,43 @@ from app.config import get_settings
 _MAGIC_LINK_PER_EMAIL_LIMIT = 3
 _MAGIC_LINK_PER_EMAIL_WINDOW_S = 900  # 15 minutes
 
+# Fail-open warning throttle.
+#
+# When Redis is unreachable we silently fall back to a per-worker in-memory
+# counter. That trade-off (defence-in-depth, not the only authn surface) is
+# acceptable, but we used to log it at DEBUG and so operators never knew
+# they'd entered the degraded regime. We now emit a WARNING — but at most
+# once per ``_FAIL_OPEN_LOG_THROTTLE_S`` window per process to avoid filling
+# the log shipper on a sustained outage.
+_FAIL_OPEN_LOG_THROTTLE_S = 60.0
+# Map of "context tag" (typically the failure reason) to the monotonic
+# timestamp of the most recent WARNING we emitted for it. We use ``monotonic``
+# so a wall-clock skew can't suppress legitimate warnings.
+_LAST_FAIL_OPEN_WARN: dict[str, float] = {}
+
+
+def _log_fail_open(tag: str, exc: BaseException) -> None:
+    """Emit a throttled WARNING when we slip into the in-memory fallback.
+
+    Rate-limiting is fail-open by design (it's defence-in-depth), but an
+    operator must still know they're running degraded so they can investigate.
+    The throttle key is the caller-supplied ``tag`` so a hit-path failure
+    and a probe-path failure don't mute each other.
+    """
+    now = time.monotonic()
+    last = _LAST_FAIL_OPEN_WARN.get(tag, 0.0)
+    if now - last < _FAIL_OPEN_LOG_THROTTLE_S:
+        return
+    _LAST_FAIL_OPEN_WARN[tag] = now
+    logger.warning(
+        "[rate_limit] redis unavailable — falling back to in-memory counter "
+        "({}). Per-worker only; cross-worker traffic will not be rate limited "
+        "until redis recovers. Last error: {}",
+        tag,
+        exc,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rule table.
 # ---------------------------------------------------------------------------
@@ -179,7 +216,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 await ping_result
             self._redis = client
         except Exception as exc:
-            logger.debug("rate-limit redis unavailable, using in-memory: {}", exc)
+            # Throttled WARNING so the operator sees the degraded mode
+            # without filling the log shipper on a sustained outage (P2-B11).
+            _log_fail_open("probe", exc)
             self._redis = None
         return self._redis
 
@@ -218,7 +257,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             results = await asyncio.wait_for(pipe.execute(), timeout=2.0)
             return int(results[0])
         except (TimeoutError, Exception) as exc:
-            logger.warning("rate-limit redis hit failed, falling back: {}", exc)
+            # Throttled per-process WARNING — see ``_log_fail_open`` docstring.
+            # We deliberately keep the immediate (non-throttled) ``warning``
+            # nuance off here so a flapping redis doesn't drown the logs.
+            _log_fail_open("hit", exc)
             return self._memory.hit(bucket_key, window_s)
 
     async def dispatch(
@@ -256,13 +298,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             email = await self._peek_magic_link_email(request)
             if email is not None:
                 email_hash = hashlib.sha256(email.encode("utf-8")).hexdigest()
-                email_window = int(
-                    time.time() // _MAGIC_LINK_PER_EMAIL_WINDOW_S
-                )
+                email_window = int(time.time() // _MAGIC_LINK_PER_EMAIL_WINDOW_S)
                 email_key = f"rl:magic:email:{email_hash}:{email_window}"
-                email_count = await self._count(
-                    email_key, _MAGIC_LINK_PER_EMAIL_WINDOW_S
-                )
+                email_count = await self._count(email_key, _MAGIC_LINK_PER_EMAIL_WINDOW_S)
                 if email_count > _MAGIC_LINK_PER_EMAIL_LIMIT:
                     return JSONResponse(
                         status_code=429,

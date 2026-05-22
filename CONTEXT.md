@@ -1,4 +1,4 @@
-# AgentSupervisor Arena — Domain Glossary & Conventions
+# OpenAgentDojo — Domain Glossary & Conventions
 
 Single source of truth for the load-bearing nouns and conventions used across code, UI, and docs. Keep it tight — when a new term emerges, add it here first, then use it consistently.
 

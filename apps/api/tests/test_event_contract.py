@@ -68,7 +68,6 @@ async def test_session_errored_payload_shape(db_engine) -> None:
     sid = await _setup(db_engine)
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
-
     async with factory() as db:
         emitter = EventEmitter(db=db, redis_client=None)
         await emitter.emit(
@@ -97,7 +96,6 @@ async def test_session_abandoned_payload_shape(db_engine) -> None:
     sid = await _setup(db_engine)
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
-
     async with factory() as db:
         emitter = EventEmitter(db=db, redis_client=None)
         await emitter.emit(
@@ -122,7 +120,6 @@ async def test_prompt_submitted_uses_text_and_char_count(db_engine) -> None:
     """`prompt.submitted` payload uses `text` + `char_count` (renamed)."""
     sid = await _setup(db_engine)
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
 
     payload_text = "Investigate the cookie expiration regression."
     async with factory() as db:
@@ -153,11 +150,17 @@ async def test_prompt_submitted_uses_text_and_char_count(db_engine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_patch_applied_files_changed_is_int(db_engine) -> None:
-    """`patch.applied` reports ``files_changed`` as an int, not a list."""
+async def test_patch_applied_file_count_is_int(db_engine) -> None:
+    """`patch.applied` reports ``file_count`` (int) — renamed from ``files_changed``.
+
+    The historical name collided with :attr:`PatchResult.files_changed`
+    (which is a *list* of paths), making it ambiguous what callers were
+    reading. P1-B10 renames the count field to ``file_count`` so the wire
+    schema is self-describing. The legacy ``files_changed`` key MUST NOT
+    appear in newly emitted payloads.
+    """
     sid = await _setup(db_engine)
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
 
     async with factory() as db:
         emitter = EventEmitter(db=db, redis_client=None)
@@ -166,7 +169,7 @@ async def test_patch_applied_files_changed_is_int(db_engine) -> None:
             event_type="patch.applied",
             payload={
                 "turn_index": 1,
-                "files_changed": 3,
+                "file_count": 3,
                 "added": 12,
                 "removed": 4,
             },
@@ -180,11 +183,12 @@ async def test_patch_applied_files_changed_is_int(db_engine) -> None:
                 select(SupervisionEvent).where(SupervisionEvent.event_type == "patch.applied")
             )
         ).scalar_one()
-        assert isinstance(row.payload["files_changed"], int)
-        assert row.payload["files_changed"] == 3
+        assert isinstance(row.payload["file_count"], int)
+        assert row.payload["file_count"] == 3
         assert row.payload["added"] == 12
         assert row.payload["removed"] == 4
-        # Legacy keys must NOT appear.
+        # Legacy keys must NOT appear in the new contract.
+        assert "files_changed" not in row.payload
         assert "added_lines" not in row.payload
         assert "removed_lines" not in row.payload
 
@@ -194,7 +198,6 @@ async def test_publish_deferred_until_after_commit(db_engine) -> None:
     """`EventEmitter.emit` should queue the publish, not fan it out inline."""
     sid = await _setup(db_engine)
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
-
 
     async with factory() as db:
         emitter = EventEmitter(db=db, redis_client=None)

@@ -43,6 +43,7 @@ Thumbs.db
 *.db
 docker-compose.override.yml
 .local/
+.claude/
 
 # --- Generated artifacts ---
 # Generated TS types from the FastAPI OpenAPI schema (committed; CI checks drift).

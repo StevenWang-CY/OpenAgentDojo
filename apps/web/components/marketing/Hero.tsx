@@ -28,7 +28,7 @@ export function Hero() {
           id="hero-heading"
           className="mt-6 text-balance text-4xl font-semibold tracking-tight sm:text-5xl"
         >
-          <span className="text-[var(--color-foreground)]">Hello, Arena.</span>
+          <span className="text-[var(--color-foreground)]">Hello, OpenAgentDojo.</span>
           <span className="block text-2xl font-normal text-[var(--color-muted-foreground)] sm:text-3xl">
             Learn to supervise coding agents that quietly get it wrong.
           </span>
@@ -36,7 +36,7 @@ export function Hero() {
 
         <p className="mt-6 max-w-2xl text-balance text-base text-[var(--color-muted-foreground)] sm:text-lg">
           Real repositories. A deliberately-flawed agent. Hidden tests that
-          punish lazy review. Arena grades the <em>process</em> of supervision
+          punish lazy review. OpenAgentDojo grades the <em>process</em> of supervision
           — prompting, context, diff review, verification, correction — not
           just the final patch.
         </p>

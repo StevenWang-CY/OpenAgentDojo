@@ -35,6 +35,16 @@ _APP_REF: Any = None
 # self-discard via ``add_done_callback`` once they finish.
 _BACKGROUND_TASKS: set[asyncio.Task[Any]] = set()
 
+# Wall-clock budget for the manifest load step. Sync YAML parsing is normally
+# sub-second, but a corrupt or pathologically large file could stall the
+# worker indefinitely — the rest of the pipeline would then sit idle holding
+# a SessionRow in ``provisioning`` state until the idle reaper kicks in.
+# Overridable per-test via ``_MANIFEST_LOAD_TIMEOUT_S_OVERRIDE`` (kept as a
+# module attribute so the test can monkeypatch without reaching into a
+# function-local default).
+_MANIFEST_LOAD_TIMEOUT_S = 10.0
+_MANIFEST_LOAD_TIMEOUT_S_OVERRIDE: float | None = None
+
 
 def _track_task(task: asyncio.Task[Any]) -> asyncio.Task[Any]:
     """Register ``task`` so the loop keeps a strong ref until it completes."""
@@ -162,16 +172,18 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
         redis = await get_redis()
         emitter = EventEmitter(db=db, redis_client=redis)
 
-        manifest = _load_manifest_for(settings.missions_root, session.mission_id)
+        manifest = await _load_manifest_with_timeout(
+            db=db,
+            emitter=emitter,
+            session_id=session_id,
+            mission_id=session.mission_id,
+            missions_root=settings.missions_root,
+        )
         if manifest is None:
-            logger.warning(
-                "provision job: manifest {} not found for session {}",
-                session.mission_id,
-                session_id,
-            )
-            await _emit_errored_and_mark(
-                db, emitter, session_id, stage="manifest", detail="manifest not found"
-            )
+            # The helper has already marked the session and emitted the
+            # appropriate event (either ``session.errored`` for "not found"
+            # or ``session.provision_failed`` for "load timeout"). Just
+            # bail out cleanly.
             return
 
         try:
@@ -195,7 +207,7 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
             await db.commit()
 
             try:
-                ready_ok = await _run_setup_commands(driver, handle, manifest, settings)
+                ready_outcome = await _run_setup_commands(driver, handle, manifest, settings)
             except Exception as exc:
                 logger.exception("ready_check raised for {}: {}", session_id, exc)
                 await _emit_errored_and_mark(
@@ -203,17 +215,19 @@ async def _async_run_provision(session_id: uuid.UUID, in_process: bool) -> None:
                 )
                 return
 
-            if not ready_ok:
+            if not ready_outcome.ok:
                 logger.error(
-                    "ready_check failed for {} — marking session error",
+                    "ready_check failed for {} (exit={}): {}",
                     session_id,
+                    ready_outcome.exit_code,
+                    ready_outcome.detail,
                 )
                 await _emit_errored_and_mark(
                     db,
                     emitter,
                     session_id,
-                    stage="ready_check",
-                    detail="ready_check returned non-zero",
+                    stage=ready_outcome.stage,
+                    detail=ready_outcome.detail,
                 )
                 return
 
@@ -293,6 +307,96 @@ async def _emit_errored_and_mark(
         logger.warning("could not commit session.errored for {}: {}", session_id, exc)
 
 
+async def _load_manifest_with_timeout(
+    *,
+    db: Any,
+    emitter: Any,
+    session_id: uuid.UUID,
+    mission_id: str,
+    missions_root: Any,
+) -> Any | None:
+    """Async-load the manifest under a wall-clock timeout.
+
+    Returns the loaded manifest, or ``None`` if loading failed (in which case
+    the session has already been marked ``error`` and the appropriate
+    supervision event emitted — the caller just needs to bail out). Extracted
+    from ``_async_run_provision`` so that function stays under the linter's
+    branch+statement ceiling (P1-B8).
+    """
+    manifest_timeout = (
+        _MANIFEST_LOAD_TIMEOUT_S_OVERRIDE
+        if _MANIFEST_LOAD_TIMEOUT_S_OVERRIDE is not None
+        else _MANIFEST_LOAD_TIMEOUT_S
+    )
+    try:
+        manifest = await asyncio.wait_for(
+            asyncio.to_thread(_load_manifest_for, missions_root, mission_id),
+            timeout=manifest_timeout,
+        )
+    except TimeoutError:
+        logger.error(
+            "provision job: manifest load timed out after {}s for session {}",
+            manifest_timeout,
+            session_id,
+        )
+        await _emit_provision_failed(
+            db,
+            emitter,
+            session_id,
+            reason="manifest_load_timeout",
+            detail=f"manifest load exceeded {manifest_timeout}s",
+        )
+        return None
+
+    if manifest is None:
+        logger.warning(
+            "provision job: manifest {} not found for session {}",
+            mission_id,
+            session_id,
+        )
+        await _emit_errored_and_mark(
+            db, emitter, session_id, stage="manifest", detail="manifest not found"
+        )
+        return None
+    return manifest
+
+
+async def _emit_provision_failed(
+    db: Any,
+    emitter: Any,
+    session_id: uuid.UUID,
+    *,
+    reason: str,
+    detail: str,
+) -> None:
+    """Flip the session row to ``error`` and emit ``session.provision_failed``.
+
+    Distinct from :func:`_emit_errored_and_mark` because the provisioning
+    stage owns its own event type — the FE renders a separate "provision
+    timed out" UX when ``session.provision_failed`` arrives with
+    ``reason="manifest_load_timeout"`` (P1-B8).
+    """
+    from app.sessions.service import set_status
+
+    try:
+        await set_status(db, session_id, "error")
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("could not mark session {} as error: {}", session_id, exc)
+    try:
+        await emitter.emit(
+            session_id=session_id,
+            event_type="session.provision_failed",
+            payload={"reason": reason, "detail": detail[:500]},
+            publish_after_commit=False,
+        )
+    except Exception as exc:  # pragma: no cover — telemetry only
+        logger.warning("could not emit session.provision_failed for {}: {}", session_id, exc)
+    try:
+        await db.commit()
+    except Exception as exc:  # pragma: no cover
+        logger.warning("could not commit session.provision_failed for {}: {}", session_id, exc)
+
+
 def _load_manifest_for(root, mission_id: str) -> Any | None:
     from app.missions.loader import MissionLoader
 
@@ -303,37 +407,74 @@ def _load_manifest_for(root, mission_id: str) -> Any | None:
     return None
 
 
-async def _run_setup_commands(driver, handle, manifest, settings) -> bool:
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class _ReadyOutcome:
+    """Outcome of ``_run_setup_commands`` — carries enough detail to render
+    a useful FE error when something fails.
+
+    ``ok`` is True when both ``setup_commands`` and ``ready_check`` exited
+    cleanly (or were absent). When False, ``stage`` is ``"setup"`` or
+    ``"ready_check"`` and ``detail`` is a short, human-readable summary that
+    the FE surfaces via ``session.errored``.
+    """
+
+    ok: bool
+    stage: str = "ready_check"
+    exit_code: int = 0
+    detail: str = ""
+
+
+def _format_run_failure(stage: str, cmd: str, result) -> str:
+    """Compact, single-line summary of a non-zero command — readable in a toast."""
+    tail = (result.stderr or result.stdout or "").strip().splitlines()[-3:]
+    snippet = " | ".join(tail) if tail else "(no output)"
+    return f"{stage} `{cmd}` exited {result.exit_code}: {snippet[:400]}"
+
+
+async def _run_setup_commands(driver, handle, manifest, settings) -> _ReadyOutcome:
     """Run the mission's setup_commands and ready_check.
 
-    Returns ``True`` when the ready_check succeeded (or none was declared) and
-    ``False`` when ready_check exited non-zero. The caller is responsible for
-    transitioning the session row to ``error`` on a False return.
+    Returns an ``_ReadyOutcome`` so the caller can both decide whether to
+    transition the session to ``error`` AND surface a meaningful detail to the
+    frontend (which previously showed only "ready_check returned non-zero").
 
-    For the ``local`` driver we skip the setup commands by default — they
-    typically install packages (``pnpm install --frozen-lockfile``) which
-    requires network access the local-driver MVP does not guarantee (plan
-    §9.4 — local is laptop-only with a "no isolation" warning). Repo packs
-    ship with ``node_modules`` preinstalled so unit tests still run. Set
-    ``ARENA_RUN_LOCAL_SETUP=1`` to override.
+    For the ``local`` driver we skip setup commands by default — they typically
+    install packages which can take minutes, and repo packs ship pre-installed
+    (plan §9.4). Toggle ``ARENA_RUN_LOCAL_SETUP=1`` (env) / set
+    ``arena_run_local_setup=True`` (settings) to force setup commands to run.
     """
     if manifest is None:
-        return True
+        return _ReadyOutcome(ok=True)
 
-    import os
-
-    skip_setup = settings.sandbox_driver == "local" and not os.environ.get("ARENA_RUN_LOCAL_SETUP")
-    if skip_setup:
+    if settings.sandbox_driver == "local" and not settings.arena_run_local_setup:
         logger.info("local driver: skipping setup_commands (repo pack must ship dependencies)")
     else:
         for cmd in getattr(manifest.repo, "setup_commands", []) or []:
             logger.debug("running setup command: {}", cmd)
-            await driver.run(handle, ["/bin/sh", "-c", cmd], timeout_s=300)
+            result = await driver.run(handle, ["/bin/sh", "-c", cmd], timeout_s=300)
+            if result.exit_code != 0:
+                detail = _format_run_failure("setup_command", cmd, result)
+                logger.warning("setup_command failed: {}", detail)
+                return _ReadyOutcome(
+                    ok=False,
+                    stage="setup",
+                    exit_code=result.exit_code,
+                    detail=detail,
+                )
 
     ready = getattr(manifest.repo, "ready_check", None)
     if ready:
         result = await driver.run(handle, ["/bin/sh", "-c", ready], timeout_s=120)
         if result.exit_code != 0:
-            logger.warning("ready_check failed: {}", result.stderr)
-            return False
-    return True
+            detail = _format_run_failure("ready_check", ready, result)
+            logger.warning("ready_check failed: {}", detail)
+            return _ReadyOutcome(
+                ok=False,
+                stage="ready_check",
+                exit_code=result.exit_code,
+                detail=detail,
+            )
+    return _ReadyOutcome(ok=True)

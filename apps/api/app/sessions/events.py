@@ -28,13 +28,53 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.supervision_event import SupervisionEvent
-from app.observability import event_publish_failures_total
+from app.observability import (
+    event_payload_truncated_total,
+    event_publish_failures_total,
+)
 
 # Module-level lazy redis client cache — created once on first use.
 _redis_client: Any | None = None
 
 # Key into ``AsyncSession.info`` where pending publishes are queued.
 _PENDING_KEY = "_pending_publishes"
+
+# Hard upper bound on a single event payload — applied at *emit* time so both
+# the DB row and the Redis publish carry the same truncated form. The legacy
+# subscribe-time guard in ``app.ws.events`` remains as defence-in-depth (it
+# catches anything that bypasses the emitter), but in steady state the DB and
+# WS now agree on payload contents which keeps the timeline and live stream
+# consistent for the FE.
+_MAX_EVENT_BYTES = 65_536  # 64 KiB
+
+# Sentinel marker the FE uses to render a "payload truncated" pill instead of
+# the usual rich content. Mirrored in the ws.events stub builder so a
+# subscribe-time truncation produces structurally identical output.
+_TRUNCATED_PAYLOAD_REASON = "payload_exceeds_max_event_bytes"
+
+
+def _payload_size_bytes(payload: dict[str, Any]) -> int | None:
+    """Return the JSON byte-size of ``payload`` or None on serialisation error.
+
+    Uses the same ``default=str`` coercion as the publish path so what we
+    measure here matches what hits Redis (and the DB column, which stores the
+    same dict but as JSONB).
+    """
+    try:
+        return len(json.dumps(payload, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _truncated_payload(event_type: str, original_size_bytes: int) -> dict[str, Any]:
+    """Build the canonical "we dropped the body" payload."""
+    return {
+        "truncated": True,
+        "original_size_bytes": original_size_bytes,
+        "max_size_bytes": _MAX_EVENT_BYTES,
+        "reason": _TRUNCATED_PAYLOAD_REASON,
+        "event_type": event_type,
+    }
 
 
 async def get_redis() -> Any | None:
@@ -83,6 +123,13 @@ async def drain_pending_publishes(db: AsyncSession) -> None:
     Called by ``get_db`` AFTER ``await db.commit()`` so subscribers cannot
     observe an event whose producing transaction rolled back. The queue is
     cleared up-front so re-entrant calls cannot double-publish.
+
+    When Redis is unavailable we log an ERROR (was: WARNING) and bump the
+    publish-failure counter by the number of events dropped (P1-B5). Live
+    subscribers will miss these events entirely — backfill will catch them up
+    on next reconnect, but until then the FE timeline stays out of sync with
+    the live stream. The structured log includes the session id and dropped
+    count so an oncall pager can locate the affected sessions.
     """
     pending: list[tuple[str, str]] = db.info.get(_PENDING_KEY, [])
     if not pending:
@@ -91,6 +138,22 @@ async def drain_pending_publishes(db: AsyncSession) -> None:
 
     redis = await get_redis()
     if redis is None:
+        # Group dropped events by session so the log is readable even when a
+        # single drain spans events from multiple sessions (unusual but
+        # possible — e.g. an admin tool that touches several sessions in one
+        # transaction).
+        session_counts: dict[str, int] = {}
+        for channel, _msg in pending:
+            # Channel format: ``events:session:{uuid}``.
+            sid = channel.rsplit(":", 1)[-1]
+            session_counts[sid] = session_counts.get(sid, 0) + 1
+        for sid, n in session_counts.items():
+            logger.error(
+                "[events] redis unavailable — {} events dropped for session={}; "
+                "live subscribers will miss them until next reconnect+backfill",
+                n,
+                sid,
+            )
         event_publish_failures_total.labels(reason="no_redis").inc(len(pending))
         return
 
@@ -131,6 +194,24 @@ class EventEmitter:
         immediate fan-out.
         """
         now = datetime.now(UTC)
+
+        # Truncate at emit time so the DB row and the Redis publish carry the
+        # *same* payload — the FE's timeline (DB-backed) and live stream
+        # (WS-backed) must agree on what a given event looks like, otherwise a
+        # reconnect can show a fully populated payload on the timeline that
+        # disagreed with the truncated stub the WS subscriber received
+        # earlier in the session (P1-B3).
+        size = _payload_size_bytes(payload)
+        if size is not None and size > _MAX_EVENT_BYTES:
+            logger.warning(
+                "[events] truncating {} payload (size={}B > max={}B) — "
+                "DB row + publish will both carry the stub form",
+                event_type,
+                size,
+                _MAX_EVENT_BYTES,
+            )
+            event_payload_truncated_total.labels(event_type=event_type).inc()
+            payload = _truncated_payload(event_type, original_size_bytes=size)
 
         event = SupervisionEvent(
             session_id=session_id,

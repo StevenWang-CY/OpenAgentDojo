@@ -80,9 +80,7 @@ def test_renderer_caches_compiled_template(mission_folder: Path) -> None:
     renderer.render(intent="fix", prompt="hi", selected_context=[])
     # Mutate the template on disk; if the parsed AST is cached we should still
     # see the *original* output.
-    (mission_folder / "prompts" / "response.md").write_text(
-        "TOTALLY DIFFERENT", encoding="utf-8"
-    )
+    (mission_folder / "prompts" / "response.md").write_text("TOTALLY DIFFERENT", encoding="utf-8")
     out2 = renderer.render(intent="fix", prompt="hi", selected_context=[])
     assert "SUMMARY:" in out2  # still using the cached template
 
@@ -94,9 +92,7 @@ def test_renderer_reasoning_returns_empty_when_template_missing(mission_folder: 
         manifest_sha="sha1",
         mission_folder=mission_folder,
     )
-    assert renderer.render_reasoning(
-        intent="fix", prompt="hi", selected_context=[]
-    ) == ""
+    assert renderer.render_reasoning(intent="fix", prompt="hi", selected_context=[]) == ""
 
 
 def test_render_response_helper_with_real_mission_01(repo_root: Path) -> None:

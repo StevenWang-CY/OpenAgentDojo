@@ -33,7 +33,7 @@ export function MarketingFooter() {
             >
               <Compass className="size-4" />
             </span>
-            AgentSupervisor Arena
+            OpenAgentDojo
           </Link>
           <p className="mt-3 max-w-sm text-xs text-[var(--color-muted-foreground)]">
             A simulator for developers learning to supervise AI coding agents
@@ -60,7 +60,7 @@ export function MarketingFooter() {
       <div className="border-t border-[var(--color-border)]">
         <div className="mx-auto flex max-w-6xl flex-col gap-2 px-6 py-5 text-xs text-[var(--color-muted-foreground)] sm:flex-row sm:items-center sm:justify-between">
           <p>
-            &copy; {new Date().getFullYear()} AgentSupervisor Arena. All rights
+            &copy; {new Date().getFullYear()} OpenAgentDojo. All rights
             reserved.
           </p>
           <p>

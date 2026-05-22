@@ -40,10 +40,65 @@ from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
 from app.sandbox.types import GradingArtifacts
-from app.sessions.events import EventEmitter, drain_pending_publishes, drain_pending_publishes
+from app.sessions.events import EventEmitter, drain_pending_publishes
 
 DEFAULT_BUDGET_SECONDS = 300
 PER_VALIDATOR_TIMEOUT_S = 30
+
+# §11.2 rubric — the seven dimensions in canonical order with their MAX
+# scores. Mirrored in :mod:`app.grading.score` (kept duplicated rather than
+# imported so a change to the scoring engine's internals can't silently rename
+# a dimension out from under the FE contract). Defaulting against this table
+# guarantees ``submission.graded`` always carries all seven keys (P1-B4) so
+# the FE radar chart never renders a hole.
+_RUBRIC_DIMENSIONS: tuple[tuple[str, int], ...] = (
+    ("final_correctness", 30),
+    ("verification", 20),
+    ("agent_review", 15),
+    ("prompt_quality", 10),
+    ("context_selection", 10),
+    ("safety", 10),
+    ("diff_minimality", 5),
+)
+
+
+def _ensure_all_dimensions(
+    breakdown: dict[str, Any],
+    *,
+    session_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Return a ``breakdown`` dict with every rubric dimension present.
+
+    A score dimension that compute_score didn't produce (e.g. because a
+    refactor broke the import path or a custom report stub was injected
+    mid-pipeline) is filled in with a zero score, the correct max, and a
+    ``dimension_missing`` signal so the FE renders the gap explicitly rather
+    than dropping the radar axis. We log a single structured warning so the
+    operator knows to investigate; this code path should never run in
+    production with the current scoring engine.
+    """
+    out: dict[str, Any] = {}
+    missing: list[str] = []
+    for name, max_score in _RUBRIC_DIMENSIONS:
+        value = breakdown.get(name)
+        if isinstance(value, dict) and "score" in value and "max" in value:
+            out[name] = value
+        else:
+            missing.append(name)
+            out[name] = {
+                "score": 0,
+                "max": max_score,
+                "signals": ["dimension_missing"],
+            }
+    if missing:
+        logger.warning(
+            "[grader] submission.graded breakdown missing dimensions={} for session={}; "
+            "defaulting to zero — investigate scoring engine drift",
+            missing,
+            session_id,
+        )
+    return out
+
 
 # Persistent thread pool for sync `driver.read_file` shims so we don't spin a
 # fresh event loop + thread per call (P1-B19). The pool is shut down by the
@@ -366,11 +421,13 @@ class GradingRunner:
         await db.flush()
 
         # FE contract requires `score` + `breakdown` (renamed from
-        # `total_score` and lifted from score_report.dimensions).
-        breakdown: dict[str, Any] = {}
-        dims = result.score_report.get("dimensions") or {}
-        if isinstance(dims, dict):
-            breakdown = {k: dims[k] for k in dims}
+        # `total_score` and lifted from score_report.dimensions). The breakdown
+        # MUST carry all seven rubric dimensions even if compute_score returned
+        # a partial dict (P1-B4) — the FE radar chart assumes the canonical
+        # axes are always present and silently hides any missing one.
+        raw_dims = result.score_report.get("dimensions") or {}
+        dims_in: dict[str, Any] = raw_dims if isinstance(raw_dims, dict) else {}
+        breakdown = _ensure_all_dimensions(dims_in, session_id=result.session_id)
 
         await self._emit(
             emitter,

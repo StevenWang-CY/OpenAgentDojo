@@ -93,7 +93,14 @@ class BannedCommandsMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             # Fail closed — we can't enforce the banned-command guard if we
             # can't see the body. The request must not be forwarded.
-            logger.warning("[banned_commands] could not read request body: {}", exc)
+            # ``logger.opt(exception=True)`` attaches the traceback to the
+            # record (loguru's equivalent of stdlib's ``exc_info=True``) so
+            # operators can triage these incidents from the structured log;
+            # without it the traceback was thrown away (P1-B7).
+            logger.opt(exception=True).warning(
+                "[banned_commands] could not read request body: {}",
+                exc,
+            )
             return JSONResponse(
                 status_code=400,
                 content={"detail": "could not read request body"},

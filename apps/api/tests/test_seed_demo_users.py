@@ -26,9 +26,7 @@ _DEMO_HANDLES = ("alice", "bob", "carol")
 async def _bind_engine(db_engine):
     """Point ``AsyncSessionLocal`` at the test engine and prime the schema."""
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return session_module.AsyncSessionLocal
@@ -97,14 +95,14 @@ async def test_seed_creates_three_demo_users(client, db_engine, monkeypatch) -> 
     from app.scripts.seed_demo_users import seed_demo_users
 
     sessions_written = await seed_demo_users()
-    assert sessions_written >= 2 * len(_DEMO_HANDLES), (
-        "expected at least 2 sessions per demo user"
-    )
+    assert sessions_written >= 2 * len(_DEMO_HANDLES), "expected at least 2 sessions per demo user"
 
     async with session_factory() as db:
         rows = (
-            await db.execute(select(User.handle).where(User.handle.in_(_DEMO_HANDLES)))
-        ).scalars().all()
+            (await db.execute(select(User.handle).where(User.handle.in_(_DEMO_HANDLES))))
+            .scalars()
+            .all()
+        )
     assert set(rows) == set(_DEMO_HANDLES)
 
 
@@ -132,9 +130,7 @@ async def test_seed_is_idempotent(client, db_engine, monkeypatch) -> None:
         session_count = (
             await db.execute(
                 select(func.count(SessionRow.id)).where(
-                    SessionRow.user_id.in_(
-                        select(User.id).where(User.handle.in_(_DEMO_HANDLES))
-                    )
+                    SessionRow.user_id.in_(select(User.id).where(User.handle.in_(_DEMO_HANDLES)))
                 )
             )
         ).scalar_one()

@@ -149,4 +149,70 @@ describe("ReportView", () => {
       expect(screen.getByText(/Report not found/i)).toBeInTheDocument()
     );
   });
+
+  it("renders the error state (not a crash) when getReport resolves null", async () => {
+    getReport.mockResolvedValueOnce(null as unknown as Submission);
+
+    renderWithClient(<ReportView submissionId="submission-123" />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Report not found/i)).toBeInTheDocument()
+    );
+  });
+
+  it("renders the error state when score_report.dimensions is empty", async () => {
+    getReport.mockResolvedValueOnce(
+      buildSubmission({
+        score_report: {
+          total: 0,
+          missed_failure_mode: false,
+          strengths: [],
+          weaknesses: [],
+          badges_earned: [],
+          // The radar + breakdown components index each key unconditionally;
+          // an empty dimensions object would crash render — assert we
+          // degrade to the error state instead.
+          dimensions: {} as unknown as Submission["score_report"]["dimensions"],
+        },
+      })
+    );
+
+    renderWithClient(<ReportView submissionId="submission-123" />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Report not available/i)).toBeInTheDocument()
+    );
+    expect(screen.getByText(/incomplete/i)).toBeInTheDocument();
+  });
+
+  it("renders the error state when one dimension key is missing", async () => {
+    const fixture = buildSubmission();
+    const missingOne: Submission = {
+      ...fixture,
+      score_report: {
+        ...(fixture.score_report as NonNullable<Submission["score_report"]>),
+        dimensions: {
+          // Intentionally omit `diff_minimality` — the radar would crash
+          // reading `dim.score` off `undefined`.
+          final_correctness: {
+            score: 24,
+            max: 30,
+            signals: [],
+          },
+          verification: { score: 14, max: 20, signals: [] },
+          agent_review: { score: 11, max: 15, signals: [] },
+          prompt_quality: { score: 7, max: 10, signals: [] },
+          context_selection: { score: 8, max: 10, signals: [] },
+          safety: { score: 9, max: 10, signals: [] },
+        } as unknown as Submission["score_report"]["dimensions"],
+      },
+    };
+    getReport.mockResolvedValueOnce(missingOne);
+
+    renderWithClient(<ReportView submissionId="submission-123" />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Report not available/i)).toBeInTheDocument()
+    );
+  });
 });

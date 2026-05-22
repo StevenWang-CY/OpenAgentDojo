@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-05-21
-- Deciders: AgentSupervisor Arena team
+- Deciders: OpenAgentDojo team
 
 ## Context
 

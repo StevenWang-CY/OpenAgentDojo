@@ -202,4 +202,5 @@ describe("WorkspaceShell status branches", () => {
       ).toBeInTheDocument()
     );
   });
+
 });

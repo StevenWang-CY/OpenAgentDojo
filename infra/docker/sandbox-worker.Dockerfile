@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
-# AgentArena sandbox worker — RQ worker that provisions and drives sandboxes.
+# OpenAgentDojo sandbox worker — RQ worker that provisions and drives sandboxes.
 #
 # Built on the same FastAPI image so it shares the application code and
 # SQLAlchemy models, but its CMD runs `rq worker` instead of uvicorn.

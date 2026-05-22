@@ -1,6 +1,6 @@
 # fullstack-auth-demo
 
-Frozen base repository pack used by AgentSupervisor Arena auth-related missions
+Frozen base repository pack used by OpenAgentDojo auth-related missions
 (Mission 01 — *Expired Session Cookie Still Grants Access*, plus future missions
 02, 03, 05, 06, 09, 10).
 

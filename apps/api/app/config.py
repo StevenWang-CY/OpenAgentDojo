@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     sandbox_workdir: Path = Path("/tmp/arena-sandboxes")
     sandbox_max_concurrent: int = 10
     sandbox_timeout_seconds: int = 1800
+    # When True, the local driver runs ``setup_commands`` (e.g. ``pnpm install``)
+    # at provision time. Default False because repo packs are pre-installed
+    # (see plan §9.4); flip to True for any pack that ships *without* a
+    # populated node_modules / .venv.
+    arena_run_local_setup: bool = False
 
     # --- auth ---
     session_cookie_name: str = "arena_session"
@@ -147,6 +152,25 @@ class Settings(BaseSettings):
     def _coerce_sandbox_workdir(cls, v: object) -> Path:
         return Path(str(v)).expanduser()
 
+    # Treat empty-string env values (``ARENA_RUN_LOCAL_SETUP=`` /
+    # ``ALLOW_DEV_AUTH=``) as ``False``. Without this, pydantic raises
+    # bool_parsing on an empty string and the whole app fails to boot —
+    # which is what burned us during the M0 e2e launch (.env had a leftover
+    # ``ALLOW_DEV_AUTH=`` and ``ARENA_RUN_LOCAL_SETUP=`` from when the value
+    # was bridged through shell exports).
+    @field_validator(
+        "arena_run_local_setup",
+        "allow_dev_auth",
+        "provision_in_process",
+        "feature_llm_narration",
+        mode="before",
+    )
+    @classmethod
+    def _blank_bool_to_false(cls, v: object) -> object:
+        if isinstance(v, str) and v.strip() == "":
+            return False
+        return v
+
     # --- CORS ---
     # Optional comma-separated additional origins beyond ``web_origin``.
     # Useful when staging and prod share an API but live on different web
@@ -218,6 +242,9 @@ class Settings(BaseSettings):
         if len(secret) < 64:
             raise ValueError("SESSION_SECRET must be >=64 chars in staging/production")
 
+        # ---- share_token_secret: explicit + distinct from session_secret ----
+        _validate_share_token_secret(self.share_token_secret, secret)
+
         # ---- required externals ----
         missing: list[str] = []
         if not self.resend_api_key:
@@ -249,6 +276,28 @@ class Settings(BaseSettings):
             )
 
         return self
+
+
+def _validate_share_token_secret(raw: str | None, session_secret: str) -> None:
+    """Enforce the staging/production share-token secret invariants (P2-B12).
+
+    Sharing one secret across two unrelated token types (login session vs.
+    public report share link) means a compromise of one rotates both — an
+    operator who thought they were resetting login sessions would also
+    silently invalidate every active share link, and vice versa. Pulled out
+    of ``_validate_for_environment`` so that method stays under the linter's
+    branch budget.
+    """
+    share_secret = (raw or "").strip()
+    if not share_secret:
+        raise ValueError(
+            "SHARE_TOKEN_SECRET must be set in staging/production "
+            "(falling back to SESSION_SECRET conflates two unrelated trust domains)"
+        )
+    if share_secret == session_secret:
+        raise ValueError("SHARE_TOKEN_SECRET must differ from SESSION_SECRET in staging/production")
+    if len(share_secret) < 32:
+        raise ValueError("SHARE_TOKEN_SECRET must be >=32 chars in staging/production")
 
 
 @lru_cache(maxsize=1)

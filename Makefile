@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# AgentSupervisor Arena — convenience Make targets.
+# OpenAgentDojo — convenience Make targets.
 #
 # These wrap the pnpm scripts and shell scripts the rest of the infra exposes,
 # so contributors can use whichever interface they prefer.
@@ -15,7 +15,7 @@ COMPOSE_FILE := infra/compose/docker-compose.yml
 
 .PHONY: help
 help:
-	@echo "AgentArena make targets:"
+	@echo "OpenAgentDojo make targets:"
 	@echo "  make up            — start the compose stack (postgres+redis+minio+api+worker+web)"
 	@echo "  make down          — stop the compose stack"
 	@echo "  make logs          — tail compose logs"

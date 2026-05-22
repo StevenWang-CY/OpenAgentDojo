@@ -28,10 +28,10 @@ vi.mock("next/link", () => ({
 }));
 
 describe("landing page", () => {
-  it("renders the Hello, Arena hero", () => {
+  it("renders the Hello, OpenAgentDojo hero", () => {
     renderWithClient(<LandingPage />);
     expect(
-      screen.getByRole("heading", { level: 1, name: /Hello, Arena/i })
+      screen.getByRole("heading", { level: 1, name: /Hello, OpenAgentDojo/i })
     ).toBeInTheDocument();
   });
 

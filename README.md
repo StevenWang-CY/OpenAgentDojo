@@ -1,4 +1,4 @@
-# AgentSupervisor Arena
+# OpenAgentDojo
 
 A browser-based simulator that teaches developers to **supervise AI coding agents** inside real repositories. The platform grades the *process* of supervision — prompting, context selection, diff review, verification, correction, safety — not only the final patch.
 

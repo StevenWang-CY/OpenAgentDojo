@@ -79,13 +79,13 @@ describe("Timeline rendering — Phase 4.A contract", () => {
     expect(screen.getByText("patches/turn-0.patch")).toBeInTheDocument();
   });
 
-  it("renders patch.applied with files_changed / added / removed", () => {
+  it("renders patch.applied with file_count / added / removed", () => {
     render(
       <Timeline
         events={[
           event(4, "patch.applied", {
             turn_index: 0,
-            files_changed: 3,
+            file_count: 3,
             added: 12,
             removed: 4,
           }),
@@ -104,7 +104,7 @@ describe("Timeline rendering — Phase 4.A contract", () => {
           event(5, "patch.failed", {
             turn_index: 0,
             error: "merge conflict in foo.ts",
-            files_changed: 1,
+            file_count: 1,
             added: 0,
             removed: 0,
           }),

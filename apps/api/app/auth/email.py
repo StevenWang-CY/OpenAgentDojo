@@ -51,7 +51,7 @@ async def _send_via_resend(to_email: str, magic_url: str, settings: Settings) ->
     payload = {
         "from": settings.email_from,
         "to": [to_email],
-        "subject": "Your Arena login link",
+        "subject": "Your OpenAgentDojo login link",
         "html": _html_body(magic_url),
         "text": _text_body(magic_url),
     }
@@ -86,7 +86,7 @@ async def _send_via_smtp(to_email: str, magic_url: str, settings: Settings) -> b
         return False
 
     msg = email.mime.multipart.MIMEMultipart("alternative")
-    msg["Subject"] = "Your Arena login link"
+    msg["Subject"] = "Your OpenAgentDojo login link"
     msg["From"] = settings.email_from
     msg["To"] = to_email
     msg.attach(email.mime.text.MIMEText(_text_body(magic_url), "plain"))
@@ -124,7 +124,7 @@ async def _send_via_smtp(to_email: str, magic_url: str, settings: Settings) -> b
 
 def _text_body(magic_url: str) -> str:
     return (
-        "Click the link below to log in to Agent Supervisor Arena.\n\n"
+        "Click the link below to log in to OpenAgentDojo.\n\n"
         f"{magic_url}\n\n"
         "This link expires in 30 minutes and can only be used once.\n"
         "If you did not request this, you can safely ignore this email."
@@ -135,12 +135,12 @@ def _html_body(magic_url: str) -> str:
     safe_url = magic_url.replace("&", "&amp;").replace('"', "&quot;")
     return (
         "<!doctype html><html><body style='font-family:sans-serif;max-width:480px;margin:0 auto'>"
-        "<h2>Log in to Agent Supervisor Arena</h2>"
+        "<h2>Log in to OpenAgentDojo</h2>"
         "<p>Click the button below to sign in. "
         "This link expires in 30&nbsp;minutes and can only be used once.</p>"
         f'<p><a href="{safe_url}" style="display:inline-block;padding:12px 24px;'
         "background:#1a56db;color:#fff;text-decoration:none;"
-        'border-radius:6px;font-weight:bold">Sign in to Arena</a></p>'
+        'border-radius:6px;font-weight:bold">Sign in to OpenAgentDojo</a></p>'
         "<p style='color:#6b7280;font-size:0.85em'>Or copy and paste this URL:<br>"
         f'<code style="word-break:break-all">{safe_url}</code></p>'
         "<p style='color:#6b7280;font-size:0.85em'>"

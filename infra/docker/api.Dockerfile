@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
-# AgentArena API — production image for apps/api (FastAPI + uvicorn).
+# OpenAgentDojo API — production image for apps/api (FastAPI + uvicorn).
 #
 # Build context MUST be the repository root so we can copy apps/api/*.
 #   docker build -f infra/docker/api.Dockerfile -t agentarena/api:dev .

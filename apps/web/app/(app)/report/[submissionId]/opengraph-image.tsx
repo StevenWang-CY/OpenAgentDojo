@@ -3,7 +3,7 @@ import type { ScoreBreakdown, Submission } from "@arena/shared-types";
 import { env } from "@/lib/env";
 
 export const runtime = "edge";
-export const alt = "AgentSupervisor Arena — graded supervision report";
+export const alt = "OpenAgentDojo — graded supervision report";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -27,11 +27,21 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
   const { submissionId } = await params;
   const sp = await searchParams;
   const share = readShare(sp.share);
+  // The report API enforces the same auth + share-token policy as the
+  // user-facing /report/{id} page. If the share token is missing or
+  // invalid (and the viewer isn't the session owner), it responds with a
+  // non-OK status and `fetchSubmission` returns null — at which point we
+  // fall back to a generic OG image so we don't leak score data via a
+  // crawler / unfurl preview.
   const submission = await fetchSubmission(submissionId, share);
 
-  const score = submission?.total_score ?? 0;
-  const dims = submission?.score_report?.dimensions;
-  const passed = !submission?.score_report?.missed_failure_mode;
+  if (!submission || !submission.score_report) {
+    return new ImageResponse(<GenericOg />, size);
+  }
+
+  const score = submission.total_score;
+  const dims = submission.score_report.dimensions;
+  const passed = !submission.score_report.missed_failure_mode;
   const radar = dims ? radarPolygon(dims, 130) : "";
 
   return new ImageResponse(
@@ -70,7 +80,7 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
               display: "inline-block",
             }}
           />
-          AgentSupervisor Arena
+          OpenAgentDojo
         </div>
 
         <div
@@ -241,4 +251,80 @@ function axisLines(radius: number): { x: number; y: number }[] {
     const angle = (Math.PI * 2 * i) / DIMENSION_ORDER.length - Math.PI / 2;
     return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
   });
+}
+
+/**
+ * Fallback OG image rendered when the viewer doesn't have access to the
+ * submission's score (private report without a valid share token). Carries
+ * only marketing copy — no scores, no dimensions, no submission id beyond
+ * what's already in the URL the crawler followed.
+ */
+function GenericOg() {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: 24,
+        background:
+          "linear-gradient(135deg, #0b0f17 0%, #131a26 60%, #1b2238 100%)",
+        color: "#f7f8fb",
+        fontFamily:
+          "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter",
+        padding: 64,
+        textAlign: "center",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          fontSize: 26,
+          letterSpacing: 4,
+          textTransform: "uppercase",
+          color: "#a4b0c4",
+        }}
+      >
+        <span
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            background: "#7c8dff",
+            display: "inline-block",
+          }}
+        />
+        OpenAgentDojo
+      </div>
+      <div
+        style={{
+          display: "flex",
+          fontSize: 60,
+          fontWeight: 700,
+          lineHeight: 1.1,
+          maxWidth: 900,
+        }}
+      >
+        Supervise AI Coding Agents
+      </div>
+      <div
+        style={{
+          display: "flex",
+          fontSize: 24,
+          color: "#a4b0c4",
+          maxWidth: 800,
+        }}
+      >
+        Process-graded missions across 7 rubric dimensions.
+      </div>
+      <div style={{ display: "flex", fontSize: 20, color: "#a4b0c4", marginTop: 24 }}>
+        {env.appUrl.replace(/^https?:\/\//, "")}
+      </div>
+    </div>
+  );
 }

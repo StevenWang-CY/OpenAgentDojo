@@ -92,9 +92,7 @@ async def _seed_mission_and_session(session_factory, mission_id: str) -> uuid.UU
         )
         db.add(mission)
         await db.flush()
-        session = SessionRow(
-            user_id=user.id, mission_id=mission.id, status="active"
-        )
+        session = SessionRow(user_id=user.id, mission_id=mission.id, status="active")
         db.add(session)
         await db.commit()
         return session.id
@@ -270,9 +268,7 @@ class _CannedDriver:
         self._hidden_pass = hidden_pass
         self._sleep_for = sleep_for
 
-    async def freeze_and_grade(
-        self, handle, mission, *, manifest_folder=None
-    ):
+    async def freeze_and_grade(self, handle, mission, *, manifest_folder=None):
         if self._sleep_for:
             await asyncio.sleep(self._sleep_for)
         return GradingArtifacts(
@@ -340,9 +336,7 @@ async def test_runner_ideal_solution_scores_at_least_92(
     driver = _CannedDriver(diff=diff, visible_pass=True, hidden_pass=True)
     handle = _FakeHandle()
 
-    session_id = await _seed_mission_and_session(
-        session_factory, manifest.id
-    )
+    session_id = await _seed_mission_and_session(session_factory, manifest.id)
 
     async with session_factory() as db:
         await _seed_supervision_events(
@@ -386,9 +380,7 @@ async def test_runner_agent_patch_lands_in_unmodified_band(
     driver = _CannedDriver(diff=diff, visible_pass=True, hidden_pass=False)
     handle = _FakeHandle()
 
-    session_id = await _seed_mission_and_session(
-        session_factory, manifest.id
-    )
+    session_id = await _seed_mission_and_session(session_factory, manifest.id)
 
     # Minimal supervision events: only context selected (no diff opened, no
     # corrective prompt, no targeted test) — simulating an inattentive user
@@ -455,9 +447,7 @@ async def test_runner_agent_patch_lands_in_unmodified_band(
 
 
 @pytest.mark.asyncio
-async def test_runner_validator_exception_is_fail_soft(
-    monkeypatch, session_factory
-) -> None:
+async def test_runner_validator_exception_is_fail_soft(monkeypatch, session_factory) -> None:
     """If a validator raises, the runner records a failure and continues."""
     from app.grading import runner as runner_mod
 
@@ -499,9 +489,7 @@ async def test_runner_validator_exception_is_fail_soft(
 async def test_runner_timeout_marks_session_error(session_factory) -> None:
     """A tight wall-clock budget makes the runner fail with status='error'."""
     manifest, folder = _load_mission01_manifest()
-    driver = _CannedDriver(
-        diff="", visible_pass=True, hidden_pass=True, sleep_for=0.5
-    )
+    driver = _CannedDriver(diff="", visible_pass=True, hidden_pass=True, sleep_for=0.5)
     handle = _FakeHandle()
     session_id = await _seed_mission_and_session(session_factory, manifest.id)
 
@@ -522,16 +510,132 @@ async def test_runner_timeout_marks_session_error(session_factory) -> None:
         refreshed = await db.get(SessionRow, session_id)
         assert refreshed.status == "error"
         rows = (
-            await db.execute(
-                select(SupervisionEvent).where(
-                    SupervisionEvent.session_id == session_id,
-                    SupervisionEvent.event_type == "submission.failed",
+            (
+                await db.execute(
+                    select(SupervisionEvent).where(
+                        SupervisionEvent.session_id == session_id,
+                        SupervisionEvent.event_type == "submission.failed",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         # New contract (P0-B1): payload uses `stage` + `detail` not `reason`.
         assert any(
             (e.payload or {}).get("stage") == "grading"
             and "budget" in (e.payload or {}).get("detail", "")
             for e in rows
         )
+
+
+@pytest.mark.asyncio
+async def test_submission_graded_breakdown_always_has_seven_dimensions(
+    monkeypatch, session_factory, caplog
+) -> None:
+    """A partial score_report MUST still surface all 7 axes in the event payload.
+
+    The FE radar chart silently drops missing keys, which looks like a scoring
+    bug to the user even when the pipeline was healthy. P1-B4 makes the
+    runner backfill any dimension compute_score didn't return with a zero
+    score + ``dimension_missing`` signal — and log a warning so an actual
+    upstream regression surfaces in the operator's logs.
+    """
+    from app.grading import runner as runner_mod
+    from app.grading.score import DimensionScore, ScoreReport
+
+    manifest, folder = _load_mission01_manifest()
+    diff = _agent_diff_text(folder)
+    driver = _CannedDriver(diff=diff, visible_pass=True, hidden_pass=True)
+    handle = _FakeHandle()
+    session_id = await _seed_mission_and_session(session_factory, manifest.id)
+
+    # Stub compute_score to return a report missing the `safety` dimension
+    # (and `prompt_quality`, to prove multi-key defaulting works).
+    def _stub_compute_score(
+        *, diff, events, validator_results, test_results, manifest, agent_turns
+    ):
+        partial: dict[str, DimensionScore] = {
+            "final_correctness": DimensionScore(score=20, max_score=30, signals=["stub"]),
+            "verification": DimensionScore(score=12, max_score=20, signals=["stub"]),
+            "agent_review": DimensionScore(score=10, max_score=15, signals=["stub"]),
+            "context_selection": DimensionScore(score=6, max_score=10, signals=["stub"]),
+            "diff_minimality": DimensionScore(score=4, max_score=5, signals=["stub"]),
+        }
+        return ScoreReport(
+            total=52,
+            dimensions=partial,
+            strengths=[],
+            weaknesses=[],
+            missed_failure_mode=False,
+            badges_earned=[],
+        )
+
+    monkeypatch.setattr(runner_mod, "compute_score", _stub_compute_score)
+
+    # Capture loguru warnings — loguru doesn't integrate with caplog by
+    # default, so add a sink writing into a plain list and assert on it.
+    from loguru import logger as _logger
+
+    sink_lines: list[str] = []
+    sink_id = _logger.add(lambda m: sink_lines.append(str(m)), level="WARNING")
+    try:
+        async with session_factory() as db:
+            session = await db.get(SessionRow, session_id)
+            runner = GradingRunner(settings=None, budget_seconds=30)
+            submission, _result = await runner.run_and_persist(
+                db=db,
+                session=session,
+                driver=driver,
+                handle=handle,
+                manifest=manifest,
+                manifest_folder=folder,
+            )
+    finally:
+        _logger.remove(sink_id)
+
+    # The submission.graded event must carry all 7 dimensions.
+    async with session_factory() as db:
+        graded_rows = (
+            (
+                await db.execute(
+                    select(SupervisionEvent).where(
+                        SupervisionEvent.session_id == session_id,
+                        SupervisionEvent.event_type == "submission.graded",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(graded_rows) == 1
+        breakdown = (graded_rows[0].payload or {}).get("breakdown", {})
+        assert set(breakdown.keys()) == {
+            "final_correctness",
+            "verification",
+            "agent_review",
+            "prompt_quality",
+            "context_selection",
+            "safety",
+            "diff_minimality",
+        }
+        # The missing dimensions are zeroed with the correct max + a marker.
+        assert breakdown["safety"]["score"] == 0
+        assert breakdown["safety"]["max"] == 10
+        assert "dimension_missing" in breakdown["safety"]["signals"]
+        assert breakdown["prompt_quality"]["score"] == 0
+        assert breakdown["prompt_quality"]["max"] == 10
+        assert "dimension_missing" in breakdown["prompt_quality"]["signals"]
+        # The dimensions that *were* returned retain their values.
+        assert breakdown["final_correctness"]["score"] == 20
+
+    # And a structured warning fired so operators see the drift.
+    assert any(
+        "missing dimensions" in line and "safety" in line and "prompt_quality" in line
+        for line in sink_lines
+    ), sink_lines
+
+    # Sanity: the submission row's total_score was preserved (the runner
+    # doesn't recompute totals when backfilling — it just guarantees the
+    # event payload shape).
+    assert submission.total_score == 52

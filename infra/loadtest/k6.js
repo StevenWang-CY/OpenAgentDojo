@@ -1,4 +1,4 @@
-// AgentSupervisor Arena — sustained-throughput load test (M8).
+// OpenAgentDojo — sustained-throughput load test (M8).
 //
 // Drives 25 RPS for 10 minutes across the four hot REST endpoints:
 //   - GET  /api/v1/missions

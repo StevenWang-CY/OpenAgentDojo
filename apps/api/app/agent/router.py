@@ -83,10 +83,15 @@ class ApplyPatchBody(BaseModel):
     """POST body for ``/sessions/{id}/patches/{turn_id}/apply``.
 
     Currently empty; reserved so the endpoint can accept driver overrides
-    (e.g. dry-run) without a breaking-change later.
+    (e.g. dry-run) without a breaking-change later. We previously declared
+    ``dry_run: bool`` but nothing in the agent service consumed it (P1-B9)
+    — the field was published as a public contract through the OpenAPI
+    schema with no implementation backing it, which is worse than no
+    field at all. Removed; clients sending an empty body still pass schema
+    validation.
     """
 
-    dry_run: bool = False
+    model_config = {"extra": "ignore"}
 
 
 # ---------------------------------------------------------------------------
@@ -180,11 +185,22 @@ async def post_prompt(
     try:
         matched = detect_prompt_injection(body.text)
     except Exception as exc:
-        # Detector is pure regex so a raise is unusual; still preserve the
-        # security signal in the timeline by emitting a validator.flag with
-        # ``kind=prompt_injection_detector_error`` rather than silently
-        # downgrading to "no matches" (P1-4).
-        logger.debug("prompt-injection detector raised: {}", exc)
+        # Detector is pure regex so a raise here is unusual and almost always
+        # indicates a regression in the pattern table (a broken backref, etc).
+        # Bumped from DEBUG to WARNING so the operator sees the traceback in
+        # the structured log (P1-B6); without this the failure was effectively
+        # invisible. ``logger.opt(exception=True)`` attaches the traceback —
+        # loguru ignores the stdlib ``exc_info`` kwarg, so calling it the
+        # idiomatic way is required for the operator to see the stack frame.
+        # We still surface a supervision event so graders/replays know safety
+        # analysis was skipped for this turn — the payload carries BOTH
+        # ``kind`` (legacy contract still consumed by the scorer + FE) and
+        # ``reason`` (new canonical field per the rubric §11.2.6 safety
+        # dimension).
+        logger.opt(exception=True).warning(
+            "prompt-injection detector raised — safety analysis skipped: {}",
+            exc,
+        )
         matched = []
         detector_error = str(exc)[:200]
     if detector_error is not None:
@@ -194,6 +210,7 @@ async def post_prompt(
                 event_type="validator.flag",
                 payload={
                     "kind": "prompt_injection_detector_error",
+                    "reason": "prompt_injection_check_failed",
                     "message": detector_error,
                 },
             )

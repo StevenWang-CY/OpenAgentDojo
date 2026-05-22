@@ -70,9 +70,7 @@ async def test_status_shape_is_complete(client, monkeypatch) -> None:
 
     # Components — P2-B6 adds sandbox_pool + workers so the FE can render
     # a single-pane verdict without separate calls.
-    assert {"api", "database", "redis", "object_storage"}.issubset(
-        body["components"].keys()
-    )
+    assert {"api", "database", "redis", "object_storage"}.issubset(body["components"].keys())
     assert "sandbox_pool" in body["components"]
     assert "workers" in body["components"]
     for name, comp in body["components"].items():

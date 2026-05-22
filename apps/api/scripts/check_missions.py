@@ -167,7 +167,7 @@ def _augment_with_regression_test(diff_text: str, manifest: Any) -> str:
         f"--- /dev/null\n"
         f"+++ b/{test_path}\n"
         f"@@ -0,0 +1,5 @@\n"
-        f'+// auto-injected regression test ({keyword})\n'
+        f"+// auto-injected regression test ({keyword})\n"
         f"+it('locks in the {keyword} behaviour', () => {{\n"
         f"+  // exercises the failure mode described by the mission manifest.\n"
         f"+  expect(true).toBe(true);\n"
@@ -176,9 +176,7 @@ def _augment_with_regression_test(diff_text: str, manifest: Any) -> str:
     return diff_text + "\n" + appendix
 
 
-async def _seed_session(
-    db: AsyncSession, mission_id: str
-) -> SessionRow:
+async def _seed_session(db: AsyncSession, mission_id: str) -> SessionRow:
     """Insert a minimal Mission + User + SessionRow so grading can persist."""
     user_id = uuid.uuid4()
     db.add(
@@ -205,9 +203,7 @@ async def _seed_session(
         )
     )
     await db.flush()
-    session = SessionRow(
-        user_id=user_id, mission_id=mission_id, status="active"
-    )
+    session = SessionRow(user_id=user_id, mission_id=mission_id, status="active")
     db.add(session)
     await db.flush()
     return session
@@ -288,19 +284,14 @@ async def _apply_diff_strict(driver, handle, diff_text: str) -> bool:
     diff_file.write_text(diff_text, encoding="utf-8")
 
     async def _reset() -> None:
-        await driver.run(
-            handle, ["git", "checkout", "--", "."], timeout_s=30
-        )
-        await driver.run(
-            handle, ["git", "clean", "-fd"], timeout_s=30
-        )
+        await driver.run(handle, ["git", "checkout", "--", "."], timeout_s=30)
+        await driver.run(handle, ["git", "clean", "-fd"], timeout_s=30)
 
     try:
         attempts = (
             ["git", "apply", "--whitespace=fix", str(diff_file)],
             ["git", "apply", "--whitespace=fix", "--recount", str(diff_file)],
-            ["patch", "-p1", "-F", "5", "--no-backup-if-mismatch",
-             "-i", str(diff_file)],
+            ["patch", "-p1", "-F", "5", "--no-backup-if-mismatch", "-i", str(diff_file)],
         )
         for i, cmd in enumerate(attempts):
             if i > 0:
@@ -343,9 +334,7 @@ async def _install_deps_if_needed(driver, handle, manifest) -> None:
         )
 
     # Re-commit so apply_diff has a clean working tree.
-    await driver.run(
-        handle, ["git", "add", "-A"], timeout_s=30
-    )
+    await driver.run(handle, ["git", "add", "-A"], timeout_s=30)
     await driver.run(
         handle,
         ["git", "commit", "--allow-empty", "-q", "-m", "post-install"],
@@ -571,8 +560,7 @@ async def _check_one(
     if not (env.min_unmodified <= agent_score <= env.max_unmodified):
         return (
             False,
-            f"agent-patch score={agent_score} not in "
-            f"[{env.min_unmodified}, {env.max_unmodified}]",
+            f"agent-patch score={agent_score} not in [{env.min_unmodified}, {env.max_unmodified}]",
         )
 
     # Phase B: ideal solution. Supplement with a synthetic regression test
@@ -607,9 +595,7 @@ async def _toolchain_can_run(manifest: Any, manifest_folder: Path) -> bool:
     """
     import shutil as _sh
 
-    cmds: dict[str, str] = dict(
-        getattr(getattr(manifest, "repo", None), "test_commands", {}) or {}
-    )
+    cmds: dict[str, str] = dict(getattr(getattr(manifest, "repo", None), "test_commands", {}) or {})
     if not cmds:
         return True
 
@@ -633,9 +619,7 @@ async def _toolchain_can_run(manifest: Any, manifest_folder: Path) -> bool:
     try:
         await _install_deps_if_needed(driver, handle, manifest)
         for cmd in probe_order:
-            result = await driver.run(
-                handle, ["bash", "-lc", cmd], timeout_s=120
-            )
+            result = await driver.run(handle, ["bash", "-lc", cmd], timeout_s=120)
             if result.exit_code != 127 and not result.timed_out:
                 return True
         return False

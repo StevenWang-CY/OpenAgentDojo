@@ -50,8 +50,8 @@ _ORPHAN_SWEEP_INTERVAL_S = 300
 # legitimately in-flight for a short window after the API crashes mid-step.
 # Only flip the row when it has been stuck for at least this long. (Without
 # this guard the sweeper could race a legitimately-starting session.)
-_ORPHAN_PROVISIONING_GRACE_S = 5 * 60        # 5 minutes
-_ORPHAN_SUBMITTING_GRACE_S = 15 * 60          # 15 minutes
+_ORPHAN_PROVISIONING_GRACE_S = 5 * 60  # 5 minutes
+_ORPHAN_SUBMITTING_GRACE_S = 15 * 60  # 15 minutes
 
 
 def _touch(handle: SandboxHandle) -> None:
@@ -197,9 +197,7 @@ class SandboxPool:
                 self._handles.pop(handle.id, None)
                 self._handles_by_session.pop(handle.session_id, None)
             self._semaphore.release()
-            logger.debug(
-                "sandbox pool: released {} ({} active)", handle.id, len(self._handles)
-            )
+            logger.debug("sandbox pool: released {} ({} active)", handle.id, len(self._handles))
 
     def get(self, handle_id: str) -> SandboxHandle | None:
         return self._handles.get(handle_id)
@@ -322,9 +320,7 @@ class SandboxPool:
                     SessionRow.id,
                     SessionRow.status,
                     SessionRow.started_at,
-                ).where(
-                    SessionRow.status.in_(("active", "provisioning", "submitting"))
-                )
+                ).where(SessionRow.status.in_(("active", "provisioning", "submitting")))
                 rows = (await db.execute(stmt)).all()
 
                 abandoned: list[uuid.UUID] = []

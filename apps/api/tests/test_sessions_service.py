@@ -91,9 +91,7 @@ async def test_set_sandbox_persists_when_session_exists(db_engine) -> None:
     async with SessionLocal() as db:
         from sqlalchemy import select
 
-        row = (
-            await db.execute(select(SessionRow).where(SessionRow.id == session_id))
-        ).scalar_one()
+        row = (await db.execute(select(SessionRow).where(SessionRow.id == session_id))).scalar_one()
         assert row.sandbox_id == "sb-handle-42"
 
 

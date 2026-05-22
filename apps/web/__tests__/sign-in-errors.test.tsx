@@ -68,4 +68,26 @@ describe("sign-in error handling", () => {
       expect(screen.getByText(/Check your email\./i)).toBeInTheDocument()
     );
   });
+
+  it.each([
+    { label: "empty", value: "" },
+    { label: "whitespace-only", value: "   " },
+    { label: "missing @", value: "alice.example.com" },
+    { label: "missing TLD", value: "alice@example" },
+    { label: "missing local part", value: "@example.com" },
+  ])("rejects $label input client-side without calling the API", async ({ value }) => {
+    render(<SignInPage />);
+
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /email me/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /please enter a valid email address/i
+      )
+    );
+    expect(sendMagicLink).not.toHaveBeenCalled();
+  });
 });

@@ -1,9 +1,9 @@
 [project]
 name = "agentarena-api"
 version = "0.1.0"
-description = "AgentSupervisor Arena — FastAPI backend"
+description = "OpenAgentDojo — FastAPI backend"
 requires-python = ">=3.12,<3.13"
-authors = [{ name = "AgentArena" }]
+authors = [{ name = "OpenAgentDojo" }]
 license = { text = "Proprietary" }
 
 dependencies = [

@@ -29,9 +29,7 @@ async def test_atomic_claim_only_one_winner(db_engine) -> None:
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     async with factory() as db:
-        db.add(
-            User(id=user_id, email=f"c-{user_id}@arena.local", handle=f"c{str(user_id)[:6]}")
-        )
+        db.add(User(id=user_id, email=f"c-{user_id}@arena.local", handle=f"c{str(user_id)[:6]}"))
         db.add(
             Mission(
                 id="claim-test-mission",
@@ -85,9 +83,7 @@ async def test_claim_no_op_when_status_not_active(db_engine) -> None:
     factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     async with factory() as db:
-        db.add(
-            User(id=user_id, email=f"c2-{user_id}@arena.local", handle=f"c2{str(user_id)[:6]}")
-        )
+        db.add(User(id=user_id, email=f"c2-{user_id}@arena.local", handle=f"c2{str(user_id)[:6]}"))
         db.add(
             Mission(
                 id="claim-test-mission-2",

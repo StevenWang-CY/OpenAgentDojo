@@ -1,9 +1,9 @@
 [project]
 name = "data-api-demo-backend"
 version = "1.0.0"
-description = "Frozen Python backend used by AgentSupervisor Arena data-API missions."
+description = "Frozen Python backend used by OpenAgentDojo data-API missions."
 requires-python = ">=3.12,<3.13"
-authors = [{ name = "AgentArena" }]
+authors = [{ name = "OpenAgentDojo" }]
 license = { text = "Proprietary" }
 
 dependencies = [

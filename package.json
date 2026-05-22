@@ -2,7 +2,7 @@
   "name": "agentsupervisor-arena",
   "version": "0.1.0",
   "private": true,
-  "description": "AgentSupervisor Arena — browser-based simulator for supervising deliberately-flawed coding agents.",
+  "description": "OpenAgentDojo — browser-based simulator for supervising deliberately-flawed coding agents.",
   "packageManager": "pnpm@9.12.0",
   "engines": {
     "node": ">=20.10.0",

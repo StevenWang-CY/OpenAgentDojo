@@ -18,10 +18,7 @@ def test_authorize_removal_trips() -> None:
 
 
 def test_no_guard_removed_passes() -> None:
-    diff = (
-        "--- a/src/route.ts\n+++ b/src/route.ts\n"
-        "@@ -1,1 +1,2 @@\n const x = 1;\n+const y = 2;\n"
-    )
+    diff = "--- a/src/route.ts\n+++ b/src/route.ts\n@@ -1,1 +1,2 @@\n const x = 1;\n+const y = 2;\n"
     parsed = ParsedDiff(diff)
     result = validate_no_validation_removed(parsed)
     assert result.passed is True
@@ -29,8 +26,7 @@ def test_no_guard_removed_passes() -> None:
 
 def test_custom_pattern_supported() -> None:
     diff = (
-        "--- a/src/route.ts\n+++ b/src/route.ts\n"
-        "@@ -1,2 +1,1 @@\n const x = 1;\n-customGuard();\n"
+        "--- a/src/route.ts\n+++ b/src/route.ts\n@@ -1,2 +1,1 @@\n const x = 1;\n-customGuard();\n"
     )
     parsed = ParsedDiff(diff)
     result = validate_no_validation_removed(parsed, [r"customGuard"])

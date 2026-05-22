@@ -55,6 +55,20 @@ export function TelemetryProvider({ children }: TelemetryProviderProps) {
         identify: (userId: string, traits?: Record<string, unknown>) => void;
       };
 
+      // Defend against a future posthog-js major bump (or a custom
+      // shim being substituted in) by verifying the methods we actually
+      // call. A broken client would otherwise throw on the next track()
+      // and tear down the React tree.
+      if (
+        typeof client.capture !== "function" ||
+        typeof client.identify !== "function"
+      ) {
+        console.warn(
+          "[telemetry] posthog client missing capture/identify; skipping init"
+        );
+        return;
+      }
+
       if (typeof client.init === "function") {
         try {
           client.init(key, {

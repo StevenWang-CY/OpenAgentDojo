@@ -18,9 +18,7 @@ from app.sandbox.types import GradingArtifacts, SandboxHandle
 class _FakeDriver:
     name = "local"
 
-    async def freeze_and_grade(
-        self, handle, mission, *, manifest_folder=None
-    ) -> GradingArtifacts:
+    async def freeze_and_grade(self, handle, mission, *, manifest_folder=None) -> GradingArtifacts:
         return GradingArtifacts(
             diff="--- a/x\n+++ b/x\n@@ -1,1 +1,2 @@\n a\n+b\n",
             test_results={
@@ -69,9 +67,7 @@ async def test_submit_endpoint_round_trip(client, db_engine, monkeypatch) -> Non
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -79,9 +75,7 @@ async def test_submit_endpoint_round_trip(client, db_engine, monkeypatch) -> Non
     user_id = uuid.uuid4()
     session_id = uuid.uuid4()
     async with session_module.AsyncSessionLocal() as db:
-        db.add(
-            User(id=user_id, email="user@arena.local", display_name="U")
-        )
+        db.add(User(id=user_id, email="user@arena.local", display_name="U"))
         db.add(
             Mission(
                 id="auth-cookie-expiration",
@@ -183,16 +177,12 @@ async def test_submit_endpoint_round_trip(client, db_engine, monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_submit_endpoint_409_when_already_graded(
-    client, db_engine, monkeypatch
-) -> None:
+async def test_submit_endpoint_409_when_already_graded(client, db_engine, monkeypatch) -> None:
     """Re-submitting a graded session should be rejected with 409."""
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -258,16 +248,12 @@ async def test_submit_endpoint_409_when_already_graded(
 
 
 @pytest.mark.asyncio
-async def test_submit_endpoint_503_when_no_sandbox(
-    client, db_engine, monkeypatch
-) -> None:
+async def test_submit_endpoint_503_when_no_sandbox(client, db_engine, monkeypatch) -> None:
     """Submitting before the sandbox provisions should return 503."""
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

@@ -1,4 +1,4 @@
-# Arena load tests
+# OpenAgentDojo load tests
 
 `k6.js` drives the four hot read paths plus a small session-creation arm at a
 constant 25 RPS for 10 minutes and enforces `http_req_duration p(95) < 800ms`.

@@ -113,9 +113,7 @@ def get_user_id_from_cookie(request: Request, settings: Settings) -> str | None:
     return user_id or None
 
 
-async def get_user_id_from_cookie_async(
-    request: Request, settings: Settings
-) -> str | None:
+async def get_user_id_from_cookie_async(request: Request, settings: Settings) -> str | None:
     """Async variant — checks in-process AND Redis-backed JTI revocation.
 
     Use this from FastAPI dependencies / async handlers so logging out on

@@ -1,4 +1,4 @@
-"""Cross-cutting ASGI middleware for the Arena API.
+"""Cross-cutting ASGI middleware for the OpenAgentDojo API.
 
 Each module here adds one orthogonal concern (CSRF, rate-limiting, banned
 commands, security headers, trusted-host validation). They are wired in

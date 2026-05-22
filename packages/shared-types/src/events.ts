@@ -92,7 +92,12 @@ export interface PatchProposedPayload {
 
 export interface PatchAppliedPayload {
   turn_index: number;
-  files_changed: number;
+  /**
+   * Number of files touched by the patch. Distinct from the REST
+   * `PatchResult.files_changed` (which is the actual `string[]` of paths);
+   * the event payload only carries the count to keep the WS frame small.
+   */
+  file_count: number;
   added: number;
   removed: number;
 }
@@ -101,7 +106,8 @@ export interface PatchFailedPayload {
   turn_index: number;
   /** Human-readable reason (e.g. "merge conflict in foo.ts"). */
   error: string;
-  files_changed?: number;
+  /** Same semantics as `PatchAppliedPayload.file_count`. */
+  file_count?: number;
   added?: number;
   removed?: number;
 }

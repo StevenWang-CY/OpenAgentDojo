@@ -95,9 +95,7 @@ class _FakeEmitter:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, Any]]] = []
 
-    async def emit(
-        self, session_id: uuid.UUID, event_type: str, payload: dict[str, Any]
-    ) -> None:
+    async def emit(self, session_id: uuid.UUID, event_type: str, payload: dict[str, Any]) -> None:
         self.events.append((event_type, payload))
 
 
@@ -157,9 +155,7 @@ async def test_apply_patch_success_emits_patch_applied(db_engine: Any) -> None:
 
     # Persisted patch text on the turn row.
     async with session_module.AsyncSessionLocal() as db:
-        turn = (
-            await db.execute(select(AgentTurn).where(AgentTurn.id == turn_id))
-        ).scalar_one()
+        turn = (await db.execute(select(AgentTurn).where(AgentTurn.id == turn_id))).scalar_one()
         assert turn.applied_patch is not None
         assert turn.patch_applied_at is not None
 
@@ -257,9 +253,7 @@ async def test_apply_patch_failure_event_persists_via_emitter(
             e.event_type
             for e in (
                 await db.execute(
-                    select(SupervisionEvent).where(
-                        SupervisionEvent.session_id == session_id
-                    )
+                    select(SupervisionEvent).where(SupervisionEvent.session_id == session_id)
                 )
             )
             .scalars()

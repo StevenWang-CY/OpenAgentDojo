@@ -1,6 +1,6 @@
 # data-api-demo
 
-Frozen base repository pack used by AgentSupervisor Arena Python-runtime missions:
+Frozen base repository pack used by OpenAgentDojo Python-runtime missions:
 
 - Mission 04 — *Overfitted Test Fix (Price Calculation)*
 - Mission 07 — *Dependency Misuse (Date Formatting)*

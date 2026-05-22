@@ -52,6 +52,9 @@ sessions_provision_seconds = Histogram(
 submissions_total = Counter(
     "submissions_total",
     "Number of submissions graded.",
+    # outcome ∈ {graded, failed, timeout}. ``timeout`` is split out from
+    # ``failed`` so SLO dashboards can distinguish "we hit the wall-clock
+    # budget" (operational) from "the pipeline raised mid-flight" (bug).
     ["mission_id", "outcome"],
     registry=REGISTRY,
 )
@@ -90,7 +93,14 @@ llm_latency_seconds = Histogram(
 event_publish_failures_total = Counter(
     "event_publish_failures_total",
     "Supervision event Redis publishes that did not reach Redis.",
-    ["reason"],  # reason = no_redis | publish_error
+    ["reason"],  # reason = no_redis | publish_error | serialisation_error
+    registry=REGISTRY,
+)
+event_payload_truncated_total = Counter(
+    "event_payload_truncated_total",
+    "Supervision events whose payload exceeded the wire-size budget "
+    "and were truncated at emit time.",
+    ["event_type"],
     registry=REGISTRY,
 )
 profile_malformed_reports_total = Counter(

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# AgentSupervisor Arena — local development stack.
+# OpenAgentDojo — local development stack.
 #
 # `docker compose up` from this directory brings the whole platform online
 # with no manual steps beyond `cp .env.example .env` at the repo root.

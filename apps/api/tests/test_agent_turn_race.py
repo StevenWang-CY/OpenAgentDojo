@@ -133,12 +133,16 @@ async def test_concurrent_respond_yields_distinct_turn_indices(
     # Verify two AgentTurn rows landed with distinct turn_index values.
     async with SessionLocal() as db:
         rows = (
-            await db.execute(
-                select(AgentTurn)
-                .where(AgentTurn.session_id == session_id)
-                .order_by(AgentTurn.turn_index)
+            (
+                await db.execute(
+                    select(AgentTurn)
+                    .where(AgentTurn.session_id == session_id)
+                    .order_by(AgentTurn.turn_index)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [r.turn_index for r in rows] == [0, 1]
 
         session_row = (

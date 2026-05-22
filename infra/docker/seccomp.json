@@ -429,5 +429,5 @@
       ]
     }
   ],
-  "comment": "AgentSupervisor Arena sandbox seccomp profile. Forked from the Docker default profile (Moby v25). Dangerous syscalls removed per plan §21: keyctl, add_key, request_key, mount, umount/umount2, pivot_root, chroot, bpf, clone3, unshare (CLONE_NEWUSER), userfaultfd, kcmp, process_vm_readv, process_vm_writev, quotactl, quotactl_fd, ptrace, perf_event_open, swapon/swapoff. clone is also denied (default allow upstream) since we require user=1000:1000 + no_new_privs and do not need new namespaces inside the sandbox; vfork covers the standard process-spawn case alongside fork."
+  "comment": "OpenAgentDojo sandbox seccomp profile. Forked from the Docker default profile (Moby v25). Dangerous syscalls removed per plan §21: keyctl, add_key, request_key, mount, umount/umount2, pivot_root, chroot, bpf, clone3, unshare (CLONE_NEWUSER), userfaultfd, kcmp, process_vm_readv, process_vm_writev, quotactl, quotactl_fd, ptrace, perf_event_open, swapon/swapoff. clone is also denied (default allow upstream) since we require user=1000:1000 + no_new_privs and do not need new namespaces inside the sandbox; vfork covers the standard process-spawn case alongside fork."
 }

@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This directory holds the load-bearing decisions for AgentSupervisor Arena. Each ADR is one page, follows MADR-lite, and links back to the relevant section of [IMPLEMENTATION_PLAN.md](../../IMPLEMENTATION_PLAN.md).
+This directory holds the load-bearing decisions for OpenAgentDojo. Each ADR is one page, follows MADR-lite, and links back to the relevant section of [IMPLEMENTATION_PLAN.md](../../IMPLEMENTATION_PLAN.md).
 
 ## Index
 

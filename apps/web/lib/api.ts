@@ -162,8 +162,11 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       signal: opts.signal,
     });
   } catch {
+    // Surface the full URL (origin + path + query) so the error pinpoints
+    // exactly which backend host failed — invaluable when debugging local
+    // env overrides vs. the deployed API.
     throw new ApiError(
-      `Network error contacting ${url.pathname}`,
+      `Network error contacting ${url.toString()}`,
       0,
       null
     );

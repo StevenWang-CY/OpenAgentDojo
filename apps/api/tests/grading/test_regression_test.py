@@ -17,9 +17,7 @@ def _diff_with_test(body: str) -> str:
 
 
 def test_no_test_file_fails() -> None:
-    diff = (
-        "--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,1 +1,2 @@\n a\n+b\n"
-    )
+    diff = "--- a/src/index.ts\n+++ b/src/index.ts\n@@ -1,1 +1,2 @@\n a\n+b\n"
     parsed = ParsedDiff(diff)
     result = validate_regression_test_required(
         parsed,
@@ -40,9 +38,7 @@ def test_test_file_without_keyword_fails() -> None:
 
 
 def test_test_file_with_keyword_passes() -> None:
-    parsed = ParsedDiff(
-        _diff_with_test("it('rejects expired cookies', () => {});")
-    )
+    parsed = ParsedDiff(_diff_with_test("it('rejects expired cookies', () => {});"))
     result = validate_regression_test_required(
         parsed,
         test_globs=["backend/src/tests/**/*.test.ts"],
@@ -50,6 +46,5 @@ def test_test_file_with_keyword_passes() -> None:
     )
     assert result.passed is True
     assert any(
-        isinstance(ev, dict) and ev.get("hit_keyword") == "expired"
-        for ev in result.evidence
+        isinstance(ev, dict) and ev.get("hit_keyword") == "expired" for ev in result.evidence
     )

@@ -32,21 +32,46 @@ def _dev_user_id_from_ip(request: Request) -> uuid.UUID:
 
 
 async def _ensure_dev_user(db: AsyncSession, user_id: uuid.UUID) -> User:
-    """Upsert a minimal dev placeholder user and return it."""
+    """Upsert a minimal dev placeholder user and return it.
+
+    The synthesised email lives at ``@example.com`` — the RFC 2606 reserved
+    "always valid, never routable" domain. We tried ``@arena.local`` first
+    (RFC 6762 mDNS reserved) and ``@arena.test`` (RFC 6761 testing reserved),
+    but ``email-validator`` rejects both, which made /me return 500 when the
+    dev-fallback fired. ``example.com`` is accepted unconditionally and
+    cannot deliver real mail, which is exactly what we want for a synthetic
+    placeholder.
+    """
     existing: User | None = (
         await db.execute(select(User).where(User.id == user_id))
     ).scalar_one_or_none()
     if existing is not None:
+        # Migrate stale dev rows whose persisted email uses a TLD that
+        # ``email-validator`` rejects (it special-cases ``.local`` per RFC
+        # 6762 and ``.test`` per RFC 6761). Without this, /me would 500
+        # because UserRead's EmailStr can't validate the persisted address.
+        # ``example.com`` (RFC 2606) is the canonical "always-valid, never
+        # routable" host and is accepted unconditionally.
+        current = existing.email or ""
+        if current.endswith("@arena.local") or current.endswith("@arena.test"):
+            existing.email = f"dev-{user_id}@example.com"
+            await db.commit()
+            await db.refresh(existing)
         return existing
 
     user = User(
         id=user_id,
-        email=f"dev-{user_id}@arena.local",
+        email=f"dev-{user_id}@example.com",
         display_name="Dev user",
         handle=f"dev-{str(user_id)[:8]}",
     )
     db.add(user)
     await db.flush()
+    # Without commit the row only lives in this session; flush gives us the
+    # server-side default for ``created_at`` so model_validate(...) can
+    # serialise the row without tripping the non-null datetime guard.
+    await db.commit()
+    await db.refresh(user)
     return user
 
 

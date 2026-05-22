@@ -652,15 +652,14 @@ export interface components {
      * @description POST body for ``/sessions/{id}/patches/{turn_id}/apply``.
      *
      *     Currently empty; reserved so the endpoint can accept driver overrides
-     *     (e.g. dry-run) without a breaking-change later.
+     *     (e.g. dry-run) without a breaking-change later. We previously declared
+     *     ``dry_run: bool`` but nothing in the agent service consumed it (P1-B9)
+     *     — the field was published as a public contract through the OpenAPI
+     *     schema with no implementation backing it, which is worse than no
+     *     field at all. Removed; clients sending an empty body still pass schema
+     *     validation.
      */
-    ApplyPatchBody: {
-      /**
-       * Dry Run
-       * @default false
-       */
-      dry_run: boolean;
-    };
+    ApplyPatchBody: Record<string, never>;
     /** CommandBody */
     CommandBody: {
       /**

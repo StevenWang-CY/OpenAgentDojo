@@ -2,7 +2,7 @@
   "name": "data-api-demo",
   "version": "1.0.0",
   "private": true,
-  "description": "Frozen base repo pack for AgentSupervisor Arena Python data-API scenarios (missions 04, 07, 08).",
+  "description": "Frozen base repo pack for OpenAgentDojo Python data-API scenarios (missions 04, 07, 08).",
   "packageManager": "pnpm@9.12.0",
   "engines": {
     "node": ">=20.10.0",

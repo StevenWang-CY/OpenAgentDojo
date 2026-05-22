@@ -26,9 +26,7 @@ async def test_signup_creates_user_with_handle(db_session) -> None:
     await db_session.commit()
 
     row = (
-        await db_session.execute(
-            select(User).where(User.email == "newperson@example.com")
-        )
+        await db_session.execute(select(User).where(User.email == "newperson@example.com"))
     ).scalar_one()
     assert row.handle == "newperson"
 
@@ -48,9 +46,13 @@ async def test_handle_collision_appends_numeric_suffix(db_session) -> None:
         row.handle
         for row in (
             await db_session.execute(
-                select(User).where(User.email.in_(["collide@a.com", "Collide@b.com", "c.o.l.l.i.d.e@c.com"]))
+                select(User).where(
+                    User.email.in_(["collide@a.com", "Collide@b.com", "c.o.l.l.i.d.e@c.com"])
+                )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     assert handles == {"collide", "collide-2", "collide-3"}
 

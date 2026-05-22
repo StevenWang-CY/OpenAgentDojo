@@ -53,9 +53,7 @@ def _find_mission_folder(mission_id: str, missions_root: Path) -> Path | None:
     try:
         return resolve_mission_dir(missions_root, mission_id)
     except (MissionFolderNotFoundError, ValueError) as exc:
-        logger.debug(
-            "[agent] could not resolve mission folder for {}: {}", mission_id, exc
-        )
+        logger.debug("[agent] could not resolve mission folder for {}: {}", mission_id, exc)
         return None
 
 
@@ -466,7 +464,12 @@ class AgentService:
                     payload={
                         "turn_index": turn_index,
                         "error": result.error or "git apply returned non-zero",
-                        "files_changed": len(files_list),
+                        # ``file_count`` (was: ``files_changed``) — P1-B10.
+                        # The legacy name collided with the
+                        # :class:`PatchResult.files_changed` list field,
+                        # confusing readers about whether the payload value
+                        # was a count or the list itself.
+                        "file_count": len(files_list),
                         "added": result.added_lines,
                         "removed": result.removed_lines,
                         "turn_id": str(turn_id),
@@ -493,7 +496,11 @@ class AgentService:
                 event_type="patch.applied",
                 payload={
                     "turn_index": turn_index,
-                    "files_changed": len(files_list),
+                    # ``file_count`` (was: ``files_changed``) — P1-B10. The
+                    # frontend Timeline + scorer both read this key; the
+                    # rename clarifies that the field is an integer count
+                    # rather than the list of paths.
+                    "file_count": len(files_list),
                     "added": result.added_lines,
                     "removed": result.removed_lines,
                     "turn_id": str(turn_id),
