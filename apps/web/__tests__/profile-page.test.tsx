@@ -81,7 +81,10 @@ describe("ProfileView", () => {
     );
     expect(getProfile).toHaveBeenCalledWith("alice", expect.anything());
 
-    expect(screen.getByText(/@alice/)).toBeInTheDocument();
+    // Header renders ``@`` and the handle in separate <span> elements so the
+    // text doesn't match a single regex node. Walk for the handle alone
+    // (the ``@`` precedes it visually but is decorative).
+    expect(screen.getByText("alice")).toBeInTheDocument();
     expect(screen.getByText(/Regression Test Writer/)).toBeInTheDocument();
     // Two link surfaces per row (clickable <tr role="link"> + inner <Link> for
     // screen readers); assert at least one resolves to the mission detail href.

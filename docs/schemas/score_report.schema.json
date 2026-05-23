@@ -100,6 +100,23 @@
       "type": "array",
       "description": "Per-dimension diagnostic + next-mission recommendation. One entry per weakness, ordered by severity. Empty when there are no weaknesses or when the dimension's signals were insufficient to derive a cause.",
       "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "effective_max": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Effective maximum total this report could have reached, given any pending dimensions (P0-1). 100 in the normal case; drops to 90 when prompt_quality is pending."
+    },
+    "score_cap_reason": {
+      "type": ["string", "null"],
+      "enum": ["gave_up", null],
+      "description": "P0-4 — when set, a post-grading rule capped 'total'. Currently only 'gave_up' is emitted (the give-up affordance caps at 50/100). Mirrored to submissions.score_cap_reason. null/absent means no cap applied."
+    },
+    "uncapped_total": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "P0-4 — the uncapped (honest) total when a cap was applied. The FE renders 'would have scored X' beside the capped total. null when no cap."
     }
   },
   "$defs": {

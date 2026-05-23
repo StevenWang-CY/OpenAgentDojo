@@ -1781,6 +1781,13 @@
               }
             ],
             "title": "Latest Submission Id"
+          },
+          "score_history": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Score History",
+            "type": "array"
           }
         },
         "title": "YourAttempts",

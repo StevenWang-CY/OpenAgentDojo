@@ -228,7 +228,15 @@ async def submit_session(
         # this session. Persist + commit it first, then let the stub-writer
         # do its best-effort INSERT.
         await _mark_session_errored(db, session, session_id)
-        await _ensure_failed_stub(db, session_id, reason=f"timeout: {exc}")
+        # P0-4 audit fix — when the user invoked give-up before the timeout,
+        # propagate ``score_cap_reason='gave_up'`` to the stub so the FE
+        # chip + profile aggregator still see the deliberate forfeit.
+        # Without this, a timeout AFTER give-up silently drops the cap
+        # signal and the user sees a 0/100 stub instead of "capped at 50".
+        cap_reason = "gave_up" if session.gave_up_at is not None else None
+        await _ensure_failed_stub(
+            db, session_id, reason=f"timeout: {exc}", score_cap_reason=cap_reason
+        )
         # ``outcome="timeout"`` is split out from the generic ``failed`` bucket
         # so the SLO dashboard can distinguish wall-clock-budget hits (an
         # operational signal) from pipeline crashes (a bug signal) — P2-B13.
@@ -240,7 +248,11 @@ async def submit_session(
     except Exception as exc:
         logger.exception("[submit] grading pipeline failed for session {}", session_id)
         await _mark_session_errored(db, session, session_id)
-        await _ensure_failed_stub(db, session_id, reason=f"pipeline_error: {exc}")
+        # P0-4 audit fix — same rationale as the timeout branch above.
+        cap_reason = "gave_up" if session.gave_up_at is not None else None
+        await _ensure_failed_stub(
+            db, session_id, reason=f"pipeline_error: {exc}", score_cap_reason=cap_reason
+        )
         submissions_total.labels(mission_id=mission_id, outcome="failed").inc()
         raise HTTPException(
             status_code=500,
@@ -299,6 +311,7 @@ async def _ensure_failed_stub(
     session_id: uuid.UUID,
     *,
     reason: str,
+    score_cap_reason: str | None = None,
 ) -> Submission | None:
     """Persist a placeholder ``submissions`` row so GET returns 200.
 
@@ -307,6 +320,11 @@ async def _ensure_failed_stub(
     the very next ``execute`` would otherwise raise ``InFailedSQLTransaction``
     before we ever get to the INSERT. Rolling back up-front clears that
     state so this best-effort stub-writer has a clean slate to work with.
+
+    ``score_cap_reason`` (P0-4 audit fix) propagates the give-up cap into
+    the stub when the grader timed out / crashed AFTER the user invoked
+    give-up. Without this, the FE chip + profile aggregator would silently
+    lose the forfeit signal on every timeout-after-give-up.
     """
     from sqlalchemy import select
 
@@ -353,8 +371,15 @@ async def _ensure_failed_stub(
                 "badges_earned": [],
                 "failure_reason": reason[:500],
                 "is_stub": True,
+                # P0-4 audit fix — also mirror the cap into the score_report
+                # JSONB so the FE chip renders correctly even for stubs.
+                "score_cap_reason": score_cap_reason,
             },
             total_score=0,
+            # P0-4 audit fix — preserve the give-up signal on the column so
+            # the profile aggregator's tier policy excludes this stub
+            # exactly the way it would a real graded gave-up submission.
+            score_cap_reason=score_cap_reason,
         )
         db.add(stub)
         await db.commit()

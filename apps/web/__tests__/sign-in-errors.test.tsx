@@ -42,7 +42,7 @@ describe("sign-in error handling", () => {
 
     render(<SignInPage />);
 
-    fireEvent.change(screen.getByLabelText(/email address/i), {
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
       target: { value: "alice@example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: /email me/i }));
@@ -51,7 +51,7 @@ describe("sign-in error handling", () => {
       expect(screen.getByRole("alert")).toHaveTextContent(/couldn't reach the api/i)
     );
     // The success state would render this string — confirm we do not show it.
-    expect(screen.queryByText(/Check your email\./i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Check your inbox\./i)).not.toBeInTheDocument();
   });
 
   it("shows the success state on a real 204 response", async () => {
@@ -59,13 +59,13 @@ describe("sign-in error handling", () => {
 
     render(<SignInPage />);
 
-    fireEvent.change(screen.getByLabelText(/email address/i), {
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
       target: { value: "alice@example.com" },
     });
     fireEvent.click(screen.getByRole("button", { name: /email me/i }));
 
     await waitFor(() =>
-      expect(screen.getByText(/Check your email\./i)).toBeInTheDocument()
+      expect(screen.getByText(/Check your inbox\./i)).toBeInTheDocument()
     );
   });
 
@@ -78,7 +78,7 @@ describe("sign-in error handling", () => {
   ])("rejects $label input client-side without calling the API", async ({ value }) => {
     render(<SignInPage />);
 
-    fireEvent.change(screen.getByLabelText(/email address/i), {
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
       target: { value },
     });
     fireEvent.click(screen.getByRole("button", { name: /email me/i }));

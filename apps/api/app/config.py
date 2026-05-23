@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     sandbox_workdir: Path = Path("/tmp/arena-sandboxes")
     sandbox_max_concurrent: int = 10
     sandbox_timeout_seconds: int = 1800
+
+    # --- P0-4 give-up affordance ---
+    # Soft-block window before the give-up affordance is available. ADR 0010
+    # locks the default at 600 seconds (10 minutes); ops can override via the
+    # GIVE_UP_MIN_SECONDS env var without a redeploy. A future per-mission
+    # override (``mission.give_up_after_seconds`` in mission.yaml) would
+    # read this as the global fallback.
+    give_up_min_seconds: int = Field(default=600, ge=0)
     # When True, the local driver runs ``setup_commands`` (e.g. ``pnpm install``)
     # at provision time. Default False because repo packs are pre-installed
     # (see plan §9.4); flip to True for any pack that ships *without* a

@@ -119,7 +119,14 @@ describe("reports contract", () => {
   it("GET /sessions/{id}/submission returns the same Submission shape", async () => {
     const s = await getSubmission(sessionId);
     expect(s.id).toBe(submissionId);
-    expect(s.hidden_test_results[0]!.passed).toBe(false);
+    // ``passed`` is the count of passing tests in this suite (per
+    // TestResult, see shared-types/api.ts). The hidden-auth fixture
+    // failed (exit_code=1, passed=0, failed=1) — assert the integer
+    // shape, not a boolean. The earlier ``toBe(false)`` was a
+    // pre-existing typo that compared a count to a literal boolean.
+    expect(s.hidden_test_results[0]!.passed).toBe(0);
+    expect(s.hidden_test_results[0]!.failed).toBe(1);
+    expect(s.hidden_test_results[0]!.exit_code).toBe(1);
     expect(s.validator_results[1]!.evidence?.[0]?.file).toBe("settings.ts");
   });
 

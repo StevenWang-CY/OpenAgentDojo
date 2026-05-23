@@ -40,12 +40,18 @@ describe("MissionCard", () => {
     // chip in the footer. Assert both surfaces are populated rather than
     // requiring a single occurrence.
     expect(screen.getAllByText("auth").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/35 min/i)).toBeInTheDocument();
+    // Card renders "~35m" — match the actual abbreviation.
+    expect(screen.getByText(/~35m/i)).toBeInTheDocument();
   });
 
   it("links to the mission detail page", () => {
     render(<MissionCard mission={mission} />);
-    const link = screen.getByRole("link", { name: mission.title });
+    // The card wraps the entire tile in a Link with no aria-label, so the
+    // accessible name is the concatenation of every text node inside. A
+    // substring match against the mission title is the stable assertion.
+    const link = screen.getByRole("link", {
+      name: new RegExp(mission.title, "i"),
+    });
     expect(link).toHaveAttribute(
       "href",
       `/missions/${mission.id}`

@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user, require_auth
 from app.db.session import get_db
+from app.grading.attempts import candidate_beats
 from app.grading.dimensions import DIMENSION_NAMES
 from app.models.badge import Badge
 from app.models.mission import Mission
@@ -283,34 +284,9 @@ async def _best_per_mission(
             score_cap_reason=row.score_cap_reason,
         )
         current = by_mission.get(candidate.mission_id)
-        if current is None or _candidate_beats(candidate, current):
+        if current is None or candidate_beats(candidate, current):
             by_mission[candidate.mission_id] = candidate
     return list(by_mission.values())
-
-
-def _candidate_beats(candidate: _BestAttempt, current: _BestAttempt) -> bool:
-    """Tier-aware comparison: uncapped > gave-up; higher score within tier wins."""
-    candidate_capped = candidate.score_cap_reason is not None
-    current_capped = current.score_cap_reason is not None
-    if current_capped and not candidate_capped:
-        return True  # uncapped beats capped regardless of score
-    if not current_capped and candidate_capped:
-        return False
-    # Same tier — higher score wins.
-    cand_score = candidate.score if candidate.score is not None else -1
-    curr_score = current.score if current.score is not None else -1
-    if cand_score != curr_score:
-        return cand_score > curr_score
-    # Ties (rare) — prefer the more recent attempt.
-    cand_t = candidate.completed_at
-    curr_t = current.completed_at
-    if cand_t is None and curr_t is None:
-        return False
-    if cand_t is None:
-        return False
-    if curr_t is None:
-        return True
-    return cand_t > curr_t
 
 
 async def _fetch_dimension_trends(
@@ -485,6 +461,42 @@ async def get_profile(
     )
 
 
+def _skills_dedupe_by_mission(rows: Sequence[Any]) -> dict[str, dict[str, Any]]:
+    """Collapse a user's per-mission graded attempts to one best entry each.
+
+    Implements the same tier policy as :func:`_best_per_mission` (uncapped
+    beats capped; within tier, higher ``score`` wins; ties break to the
+    more recent ``completed_at``). Pulled out as a helper so
+    :func:`get_my_skills` stays under the ruff PLR0912/PLR0915 limits and
+    so the policy lives in one place — drift between the radar and the
+    skills view is the kind of silent bug that's expensive to catch
+    after the fact.
+
+    Each input ``row`` is expected to expose ``mission_id``, ``score``,
+    ``completed_at``, ``score_cap_reason``, ``failure_mode``, and
+    ``score_report``. Grader-failure stubs (``score_report.is_stub``) are
+    excluded so a transient sandbox outage doesn't make the user appear
+    to have practised a mission they never really attempted.
+    """
+    best: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        report = row.score_report
+        if isinstance(report, dict) and report.get("is_stub"):
+            continue
+        mid = str(row.mission_id)
+        candidate = {
+            "failure_mode": row.failure_mode,
+            "score_report": report,
+            "score": row.score,
+            "completed_at": row.completed_at,
+            "score_cap_reason": row.score_cap_reason,
+        }
+        current = best.get(mid)
+        if current is None or candidate_beats(candidate, current):
+            best[mid] = candidate
+    return best
+
+
 @router.get(
     "/me/skills",
     response_model=SkillsCatalog,
@@ -548,47 +560,7 @@ async def get_my_skills(
         .order_by(SessionRow.completed_at.desc().nullslast(), SessionRow.id.desc())
     )
     rows = (await db.execute(sessions_stmt)).all()
-
-    # Collapse rows to per-mission best, applying the same tier policy
-    # used by ``_best_per_mission`` (uncapped beats capped; within tier,
-    # higher score wins; ties → most recent). The map is per-mission, so
-    # a user with 3 attempts on mission A only contributes 1 row to the
-    # mastery rollup below.
-    best_per_mission: dict[str, dict[str, Any]] = {}
-    for row in rows:
-        report = row.score_report
-        if isinstance(report, dict) and report.get("is_stub"):
-            continue
-        mid = str(row.mission_id)
-        candidate = {
-            "failure_mode": row.failure_mode,
-            "score_report": report,
-            "score": row.score,
-            "completed_at": row.completed_at,
-            "score_cap_reason": row.score_cap_reason,
-        }
-        current = best_per_mission.get(mid)
-        if current is None:
-            best_per_mission[mid] = candidate
-            continue
-        cand_capped = candidate["score_cap_reason"] is not None
-        curr_capped = current["score_cap_reason"] is not None
-        if curr_capped and not cand_capped:
-            best_per_mission[mid] = candidate
-            continue
-        if not curr_capped and cand_capped:
-            continue
-        cand_score = candidate["score"] if isinstance(candidate["score"], int) else -1
-        curr_score = current["score"] if isinstance(current["score"], int) else -1
-        if cand_score > curr_score:
-            best_per_mission[mid] = candidate
-        elif cand_score == curr_score:
-            cand_t = candidate["completed_at"]
-            curr_t = current["completed_at"]
-            if curr_t is None and cand_t is not None:
-                best_per_mission[mid] = candidate
-            elif cand_t is not None and curr_t is not None and cand_t > curr_t:
-                best_per_mission[mid] = candidate
+    best_per_mission = _skills_dedupe_by_mission(rows)
 
     attempts: dict[str, dict[str, Any]] = {}
     for entry in best_per_mission.values():

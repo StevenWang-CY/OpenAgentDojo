@@ -69,6 +69,14 @@ export function GiveUpDialog({
   // Tick once a second so the countdown decreases in real time. We only
   // run the tick while the gate hasn't elapsed; afterwards the interval
   // shuts itself down so we don't churn React state for nothing.
+  //
+  // FE-P1 audit fix — also resync ``now`` whenever the page becomes
+  // visible again. Background tabs are throttled to ~1Hz (Chrome) or
+  // paused entirely (Safari), so a user who backgrounded the tab for
+  // 10+ minutes would otherwise see a stale countdown until the next
+  // interval tick. The visibilitychange handler force-resyncs the
+  // moment they look at the tab again so the button enables exactly
+  // when the server's gate opens.
   React.useEffect(() => {
     const startedMs = new Date(sessionStartedAt).getTime();
     if (Number.isNaN(startedMs)) return;
@@ -77,12 +85,41 @@ export function GiveUpDialog({
     const interval = window.setInterval(() => {
       setNow(Date.now());
     }, 1000);
-    return () => window.clearInterval(interval);
+    const onVisibility = () => {
+      if (!document.hidden) setNow(Date.now());
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+    };
   }, [sessionStartedAt]);
 
+  // FE-P2 audit fix — a malformed ``sessionStartedAt`` (e.g. backend
+  // shipped a stale-cache value or the cookie deserialiser failed) used
+  // to fall back to ``Date.now()``, which opened the gate IMMEDIATELY
+  // because elapsed = 0. Fall back to "the future" instead so the
+  // button stays disabled and the user / ops sees the unhealthy state
+  // rather than a silently-bypassed gate.
   const startedMs = React.useMemo(() => {
     const ms = new Date(sessionStartedAt).getTime();
-    return Number.isFinite(ms) ? ms : Date.now();
+    if (!Number.isFinite(ms)) {
+      // Pretend the session started 10 years from now → secondsRemaining
+      // saturates and the gate stays closed. Surfaces as a log warning.
+      // (We deliberately don't throw — workspace shell tolerates a stale
+      // started_at by displaying the rest of the surface read-only.)
+      if (process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console -- diagnostic only
+        console.warn(
+          "[GiveUpDialog] invalid sessionStartedAt:",
+          sessionStartedAt,
+        );
+      }
+      return Date.now() + 10 * 365 * 24 * 60 * 60 * 1000;
+    }
+    return ms;
   }, [sessionStartedAt]);
   const elapsedSeconds = Math.max(0, Math.floor((now - startedMs) / 1000));
   const secondsRemaining = Math.max(0, GIVE_UP_MIN_SECONDS - elapsedSeconds);
@@ -91,12 +128,19 @@ export function GiveUpDialog({
   async function handleConfirm() {
     if (busy) return;
     setBusy(true);
-    track("session_gave_up", { session_id: sessionId });
     try {
       const submission = await giveUpSession(sessionId);
+      // P0-4 audit fix — telemetry fires AFTER the API accepts. Firing
+      // before the call conflated user intent with server rejections
+      // (425 gate-not-elapsed, 409 not-active) and inflated the abandon
+      // signal.
+      track("session_gave_up", { session_id: sessionId });
       // Don't await the toast — the redirect closes the modal anyway and
       // re-rendering the workspace shell would race with the navigation.
       toast.success("Ideal solution revealed on the report page.");
+      // P0-4 audit fix — close the dialog ONLY on success. Closing in
+      // the finally block would race the error toast (the dialog would
+      // close before the user could read what went wrong).
       setOpen(false);
       onSubmitted?.(submission.id);
       router.push(`/report/${submission.id}`);
@@ -110,7 +154,17 @@ export function GiveUpDialog({
               : "Give up isn't available yet — keep going.",
           );
         } else if (err.status === 409) {
-          toast.error(err.message || "Session is no longer active.");
+          // 409 split: tutorial sessions get a distinct, non-error toast
+          // ("just complete or skip"); other 409s ("session not active")
+          // get the existing error toast.
+          const code = readErrorCode(err.body);
+          if (code === "give_up_not_supported_for_tutorial") {
+            toast.message(
+              "Give up isn't available on the orientation tutorial — just complete or skip it.",
+            );
+          } else {
+            toast.error(err.message || "Session is no longer active.");
+          }
         } else {
           toast.error(err.message || "Could not give up — try again.");
         }
@@ -213,12 +267,21 @@ export function GiveUpDialog({
           >
             Stay in the mission
           </Button>
+          {/* P0-4 audit fix — Warning treatment (amber), NOT destructive
+              (red). ADR 0010: give-up is deliberate but recoverable.
+              Implemented inline so we don't need to fork the Button
+              variant table; the className override applies the warning
+              tokens consistently with the trigger above. */}
           <Button
             type="button"
-            variant="destructive"
+            variant="primary"
             onClick={() => void handleConfirm()}
             disabled={busy}
             data-testid="give-up-confirm"
+            className={cn(
+              "bg-[var(--color-warning)] text-[var(--color-warning-foreground,#1a1208)]",
+              "hover:brightness-110 active:brightness-95 shadow-soft",
+            )}
           >
             {busy ? (
               <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -242,6 +305,20 @@ function readSecondsRemaining(body: unknown): number | null {
     return Math.ceil(value);
   }
   return null;
+}
+
+/**
+ * Read ``detail.code`` off a structured ApiError body. The backend uses
+ * stable string codes (e.g. ``give_up_not_supported_for_tutorial``) so the
+ * FE can branch on the semantic meaning instead of HTTP status + message
+ * substring matching.
+ */
+function readErrorCode(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const detail = (body as { detail?: unknown }).detail;
+  if (!detail || typeof detail !== "object") return null;
+  const code = (detail as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
 }
 
 function formatCountdown(totalSeconds: number): string {

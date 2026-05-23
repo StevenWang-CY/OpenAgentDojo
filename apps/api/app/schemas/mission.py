@@ -73,6 +73,13 @@ class YourAttempts(BaseModel):
     # a muted "gave up" hint beside the score so the strip is honest about
     # the cap.
     best_was_gave_up: bool = False
+    # P0-3 — per-attempt total scores in chronological order (first → latest).
+    # Powers the sparkline tooltip on the "delta vs first" cell. Empty for
+    # the never-attempted case; a list of one int for first-attempt-only.
+    # Capped at the most recent 12 attempts so a power user with 100s of
+    # attempts doesn't bloat the payload — the sparkline tooltip is for
+    # trajectory at a glance, not exhaustive history.
+    score_history: list[int] = Field(default_factory=list)
 
 
 class MissionDetail(BaseModel):

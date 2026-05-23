@@ -1591,6 +1591,8 @@ export interface components {
       latest_score?: number | null;
       /** Latest Submission Id */
       latest_submission_id?: string | null;
+      /** Score History */
+      score_history?: number[];
     };
   };
   responses: never;

@@ -3,11 +3,12 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Copy, Flag, Loader2, RotateCcw, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, createSession, getReport, getTimeline, shareReport } from "@/lib/api";
 import type { ScoreReport } from "@arena/shared-types";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { track } from "@/lib/telemetry";
@@ -277,6 +278,32 @@ function RetryMissionButton({
   previousSessionId,
 }: RetryMissionButtonProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  // FE-P1 audit fix — when the user hits 429 (rate limit), disable the
+  // button for the retry-after window AND surface a live countdown in
+  // the label so they don't spam the button and rack up 429s. Using a
+  // simple state machine keyed off the response header.
+  const [retryAfterDeadline, setRetryAfterDeadline] = React.useState<
+    number | null
+  >(null);
+  const [, force] = React.useReducer((n: number) => n + 1, 0);
+  React.useEffect(() => {
+    if (retryAfterDeadline === null) return;
+    const remaining = retryAfterDeadline - Date.now();
+    if (remaining <= 0) {
+      setRetryAfterDeadline(null);
+      return;
+    }
+    const interval = window.setInterval(() => {
+      if (Date.now() >= retryAfterDeadline) {
+        setRetryAfterDeadline(null);
+        return;
+      }
+      force();
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [retryAfterDeadline]);
+
   const mutation = useMutation({
     mutationFn: () =>
       createSession({
@@ -288,6 +315,13 @@ function RetryMissionButton({
         mission_id: missionId,
         previous_session_id: previousSessionId,
       });
+      // FE-P1 audit fix — invalidate the mission detail cache so the
+      // YourAttemptsStrip on /missions/{id} reflects the new attempt
+      // immediately when the user returns. Also invalidate the profile
+      // + skills caches so the radar updates on next view.
+      queryClient.invalidateQueries({ queryKey: ["mission", missionId] });
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+      queryClient.invalidateQueries({ queryKey: ["skills"] });
       // Land directly in the workspace — the shell handles the
       // provisioning state and transitions to active on its own.
       router.push(`/workspace/${session.id}`);
@@ -318,9 +352,19 @@ function RetryMissionButton({
               return;
             }
           }
+          // Fall through to the generic 409 toast — at least we surface
+          // a real error instead of swallowing it silently.
+          toast.error(
+            err.message || "Finish your current attempt before retrying.",
+          );
+          return;
         }
         if (err.status === 429) {
           const wait = err.retryAfterSeconds ?? 60;
+          // FE-P1 audit fix — disable the button AND show a live countdown
+          // until the rate-limit budget refills, instead of letting the
+          // user spam the button and accumulate more 429s.
+          setRetryAfterDeadline(Date.now() + wait * 1000);
           toast.error(
             `You're submitting too quickly. Try again in ${wait}s.`,
           );
@@ -333,11 +377,22 @@ function RetryMissionButton({
     },
   });
 
+  const secondsRemaining =
+    retryAfterDeadline === null
+      ? 0
+      : Math.max(0, Math.ceil((retryAfterDeadline - Date.now()) / 1000));
+  const disabled = mutation.isPending || secondsRemaining > 0;
+  const label = mutation.isPending
+    ? "Starting retry…"
+    : secondsRemaining > 0
+      ? `Try again in ${secondsRemaining}s`
+      : "Retry this mission";
+
   return (
     <Button
       variant="secondary"
       onClick={() => mutation.mutate()}
-      disabled={mutation.isPending}
+      disabled={disabled}
       data-testid="retry-mission-button"
     >
       {mutation.isPending ? (
@@ -345,7 +400,7 @@ function RetryMissionButton({
       ) : (
         <RotateCcw className="size-3.5" aria-hidden />
       )}
-      {mutation.isPending ? "Starting retry…" : "Retry this mission"}
+      {label}
     </Button>
   );
 }
@@ -440,8 +495,9 @@ function ReportHeader({
           </p>
         ) : null}
         {scoreCapReason === "gave_up" ? (
-          <p
-            className="mt-2 inline-flex items-center gap-1.5 rounded border border-[oklch(from_var(--color-warning)_l_c_h/0.45)] bg-[oklch(from_var(--color-warning)_l_c_h/0.12)] px-2 py-1 text-[11px] font-medium text-[var(--color-warning)]"
+          <Badge
+            tone="warning"
+            className="mt-2 normal-case tracking-normal"
             data-testid="gave-up-chip"
           >
             <Flag className="size-3" aria-hidden />
@@ -451,7 +507,7 @@ function ReportHeader({
                 (uncapped {uncappedTotal})
               </span>
             ) : null}
-          </p>
+          </Badge>
         ) : null}
       </div>
 

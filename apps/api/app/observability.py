@@ -111,6 +111,35 @@ profile_malformed_reports_total = Counter(
     ["reason"],
     registry=REGISTRY,
 )
+# P0-4 — give-up affordance instrumentation. The grading runner increments
+# this counter once per submission that landed via the give-up path. The
+# ``cap_applied`` label distinguishes "cap was binding" (uncapped > 50) from
+# "give-up recorded but cap not binding" (uncapped <= 50) — operators care
+# about both signals for content tuning.
+give_ups_total = Counter(
+    "give_ups_total",
+    "Sessions submitted via the give-up affordance (P0-4).",
+    ["mission_id", "cap_applied"],  # cap_applied ∈ {"true", "false"}
+    registry=REGISTRY,
+)
+# P0-4 — incremented at the endpoint when the 10-min gate rejects a request.
+# Lets ops spot users hitting the gate at scale (signals frustration or
+# gate misconfiguration).
+give_up_blocked_total = Counter(
+    "give_up_blocked_total",
+    "Give-up requests rejected by the 10-minute soft block.",
+    ["mission_id"],
+    registry=REGISTRY,
+)
+# P0-3 — incremented by the report-page Retry CTA. Distinct from
+# submissions_total so we can compute retry-rate per mission without
+# disaggregating the broader submissions counter.
+mission_retries_total = Counter(
+    "mission_retries_total",
+    "Sessions created via the Retry-mission CTA (P0-3).",
+    ["mission_id"],
+    registry=REGISTRY,
+)
 
 
 def metrics_asgi_app():

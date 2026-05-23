@@ -53,7 +53,13 @@ def test_missing_resend_key_rejected_in_production(monkeypatch) -> None:
     from app.config import Settings
 
     _prod_env(monkeypatch)
-    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    # ``monkeypatch.delenv`` only removes the process env var, but
+    # pydantic-settings continues to read the repo's ``.env`` file
+    # (which carries a dev RESEND_API_KEY). Setting the env var to an
+    # empty string is the canonical way to force-disable a field in this
+    # codebase — see the matching pattern in the other secret-missing
+    # tests above.
+    monkeypatch.setenv("RESEND_API_KEY", "")
     with pytest.raises(Exception) as exc_info:
         Settings()
     assert "RESEND_API_KEY" in str(exc_info.value)

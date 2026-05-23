@@ -117,7 +117,12 @@ describe("ReportView", () => {
     renderWithClient(<ReportView submissionId="submission-123" />);
 
     await waitFor(() =>
-      expect(screen.getByText(/Your Score:/i)).toBeInTheDocument()
+      // Report header is an <h1> with aria-label="Score 78 out of 100"
+      // (the visible content is a giant numeral). Query by role for the
+      // accessible name rather than by stale "Your Score:" copy.
+      expect(
+        screen.getByRole("heading", { name: /Score 78 out of/i }),
+      ).toBeInTheDocument()
     );
 
     expect(getReport).toHaveBeenCalledWith(

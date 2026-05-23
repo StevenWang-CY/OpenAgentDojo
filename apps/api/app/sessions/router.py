@@ -32,6 +32,7 @@ from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
 from app.models.user import User
+from app.observability import give_up_blocked_total, give_ups_total, mission_retries_total
 from app.schemas.auth import WsTokenRead
 from app.schemas.mission import MissionDetail
 from app.schemas.session import ContextSelection, SessionCreate, SessionDetail, SessionRead
@@ -184,6 +185,23 @@ async def post_session(
     from app.workers.provision import enqueue_provision
 
     enqueue_provision(row.id)
+
+    # P0-3 observability — count Retry-CTA invocations distinctly so the
+    # SLO dashboard can compute retry-rate per mission without
+    # disaggregating the broader ``sessions`` counter. Gated on the
+    # caller passing a previous_session_id AND that pointer being
+    # accepted by create_session (it silently drops stale pointers, so
+    # we read row.previous_session_id, not the request body).
+    if row.previous_session_id is not None:
+        mission_retries_total.labels(mission_id=row.mission_id).inc()
+        logger.info(
+            "[retry] new session created from prior attempt",
+            user_id=str(user.id),
+            mission_id=row.mission_id,
+            previous_session_id=str(row.previous_session_id),
+            attempt_index=row.attempt_index,
+            new_session_id=str(row.id),
+        )
 
     return SessionRead.model_validate(_serialize_session(row, get_settings()))
 
@@ -712,10 +730,12 @@ async def post_submit(
 # ---------------------------------------------------------------------------
 
 
-# Soft-block window before "Give up" is allowed. Documented in ADR 0010 and
-# user-facing copy on the GiveUpDialog. Kept in seconds so it can be overridden
-# per-mission later without changing units.
-GIVE_UP_MIN_SECONDS: int = 600  # 10 minutes
+# Soft-block window before "Give up" is allowed (ADR 0010). Sourced from
+# Settings.give_up_min_seconds so ops can adjust without redeploying. Kept
+# in seconds; a future per-mission override (``mission.give_up_after_seconds``)
+# would extend this lookup rather than replace the global default. Tests
+# read the value via ``get_settings().give_up_min_seconds`` so they don't
+# hardcode the constant either.
 
 
 @router.post(
@@ -777,6 +797,26 @@ async def post_give_up(
             },
         )
 
+    # P0-4 audit fix — tutorial missions short-circuit the grader and never
+    # persist a Submission row. Allowing give-up there would set
+    # ``gave_up_at`` but no submission would ever carry ``score_cap_reason``,
+    # producing an orphaned timestamp the profile aggregator + report page
+    # can't render coherently. Reject up-front; tutorials are a "learn the
+    # dojo" surface, not a give-up surface.
+    mission_row = await get_mission_row(db, row.mission_id)
+    if mission_row is not None and getattr(mission_row, "kind", "standard") == "tutorial":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "give_up_not_supported_for_tutorial",
+                "message": (
+                    "give-up isn't available on the orientation tutorial — "
+                    "just complete or skip it"
+                ),
+                "session_status": row.status,
+            },
+        )
+
     now = datetime.now(UTC)
     started_at = row.started_at
     # The DB column is TIMESTAMPTZ but SQLite-backed tests sometimes return a
@@ -784,8 +824,20 @@ async def post_give_up(
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=UTC)
     seconds_elapsed = int((now - started_at).total_seconds())
-    if seconds_elapsed < GIVE_UP_MIN_SECONDS:
-        seconds_remaining = GIVE_UP_MIN_SECONDS - seconds_elapsed
+    gate_seconds = get_settings().give_up_min_seconds
+    if seconds_elapsed < gate_seconds:
+        seconds_remaining = gate_seconds - seconds_elapsed
+        # P0-4 observability — count gate hits so ops can spot users
+        # hammering the affordance and consider lowering the gate.
+        give_up_blocked_total.labels(mission_id=row.mission_id).inc()
+        logger.info(
+            "[give_up] blocked by 10-min gate",
+            session_id=str(session_id),
+            user_id=str(user.id),
+            mission_id=row.mission_id,
+            seconds_elapsed=seconds_elapsed,
+            seconds_remaining=seconds_remaining,
+        )
         # 425 Too Early signals "the request is valid but the server isn't
         # ready to accept it yet" — matches the "the gate isn't open"
         # semantics better than 400/409. The FE's GiveUpDialog narrows on
@@ -798,7 +850,7 @@ async def post_give_up(
                     "give-up requires at least 10 minutes in session"
                 ),
                 "seconds_remaining": seconds_remaining,
-                "seconds_required": GIVE_UP_MIN_SECONDS,
+                "seconds_required": gate_seconds,
             },
             headers={"Retry-After": str(seconds_remaining)},
         )
@@ -829,9 +881,33 @@ async def post_give_up(
     await db.commit()
     await db.refresh(row)
 
+    logger.info(
+        "[give_up] forfeit accepted",
+        session_id=str(session_id),
+        user_id=str(user.id),
+        mission_id=row.mission_id,
+        seconds_into_session=seconds_elapsed,
+    )
+
     # Hand off to the standard submit pipeline. The runner reads
     # ``session.gave_up_at`` and applies the cap inside ``_pipeline``.
-    return await submit_session(db=db, session=row, request=request)
+    submission = await submit_session(db=db, session=row, request=request)
+    # P0-4 observability — record the give-up outcome. ``cap_applied`` is
+    # the binary signal: did the user's honest score exceed 50, so the
+    # cap was binding (true), or was it under 50 already (false)? Both
+    # cases still record the deliberate forfeit; the dimension distinguishes
+    # "stopped a strong attempt" from "stopped a weak attempt".
+    cap_was_binding = submission.total_score < (
+        submission.score_report.get("uncapped_total")
+        if isinstance(submission.score_report, dict)
+        and isinstance(submission.score_report.get("uncapped_total"), int)
+        else submission.total_score
+    )
+    give_ups_total.labels(
+        mission_id=row.mission_id,
+        cap_applied="true" if cap_was_binding else "false",
+    ).inc()
+    return submission
 
 
 @router.get(

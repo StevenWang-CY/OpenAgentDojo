@@ -157,8 +157,7 @@ def apply_score_cap(
     """
     report.score_cap_reason = reason
     report.uncapped_total = report.total
-    if report.total > cap:
-        report.total = cap
+    report.total = min(report.total, cap)
     return report
 
 
