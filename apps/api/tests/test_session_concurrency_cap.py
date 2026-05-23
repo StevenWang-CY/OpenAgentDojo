@@ -150,10 +150,14 @@ async def test_second_session_for_same_user_returns_409(cap_setup) -> None:
     second = await _post_session(client, user_id, mission_id)
     assert second.status_code == 409, second.text
     detail = second.json().get("detail")
-    # Detail is now a plain string; the actionable metadata rides on
-    # response headers so the FE error parser can read them without
-    # peeling a double-nested ``detail`` envelope.
-    assert detail == "an active session already exists", second.json()
+    # Detail carries the conflict envelope as a structured object so the FE
+    # Resume CTA can narrow on ``active_session_id`` without falling back
+    # to a generic "HTTP 409" toast.
+    assert isinstance(detail, dict), second.json()
+    assert detail["code"] == "active_session_exists"
+    assert detail["active_session_id"] == first_id
+    assert detail["message"] == "an active session already exists"
+    # Headers retained as advisory for legacy / log scrapers.
     assert second.headers.get("X-Code") == "active_session_exists"
     assert second.headers.get("X-Active-Session-Id") == first_id
 

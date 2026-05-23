@@ -133,18 +133,49 @@ async def consume_magic_token(db: AsyncSession, raw_token: str) -> User | None:
     token_hash = _hash_token(raw_token)
     now = datetime.now(UTC)
 
+    # Look up by hash alone so we can distinguish "unknown token" from
+    # "already-used token" — the latter is a replay signal worth logging.
+    # Expiry is still checked in SQL via the eligibility query below so the
+    # comparison stays inside the DB's timezone semantics (Postgres
+    # ``timestamptz`` vs SQLite naive datetimes don't compare cleanly in
+    # Python).
     row: MagicLinkToken | None = (
         await db.execute(
-            select(MagicLinkToken).where(
-                MagicLinkToken.token_hash == token_hash,
-                MagicLinkToken.used_at.is_(None),
-                MagicLinkToken.expires_at > now,
-            )
+            select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash)
         )
     ).scalar_one_or_none()
 
     if row is None:
         return None
+
+    # Re-presenting a token that was already redeemed is suspicious — it
+    # means either the user clicked the link twice from the same email or
+    # someone intercepted the token. We can't tell the two apart but we can
+    # surface the signal so incident response has a thread to pull.
+    if row.used_at is not None:
+        from loguru import logger as _logger
+
+        _logger.warning(
+            "magic_link.replay user_id={} token_used_at={}",
+            row.user_id,
+            row.used_at.isoformat(),
+        )
+        return None
+
+    # Re-fetch with the expiry filter so SQL handles the timezone
+    # comparison correctly (the row we already have may carry a naive
+    # datetime when the backing DB is SQLite).
+    eligible: MagicLinkToken | None = (
+        await db.execute(
+            select(MagicLinkToken).where(
+                MagicLinkToken.id == row.id,
+                MagicLinkToken.expires_at > now,
+            )
+        )
+    ).scalar_one_or_none()
+    if eligible is None:
+        return None
+    row = eligible
 
     # Mark consumed.
     row.used_at = now

@@ -116,6 +116,28 @@ async def _require_owned_session(db: AsyncSession, session_id: uuid.UUID, user: 
     return row
 
 
+def _require_mutable_session(row: SessionRow) -> None:
+    """Reject mutating workspace ops when the session is no longer active.
+
+    The sandbox-handle 503 covers the case where the pool has already
+    destroyed the sandbox, but during the brief ``submitting`` window the
+    handle still exists and a stray ``file.edited`` / ``command.run`` /
+    ``apply_patch`` would mutate the workspace mid-grade, producing a
+    Submission whose ``final_diff`` no longer matches the on-disk repo.
+    Tightening to ``active`` only also blocks no-op writes on ``graded`` /
+    ``abandoned`` / ``error`` sessions whose handle hasn't been GC'd yet.
+    """
+    if row.status != "active":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_not_active",
+                "message": f"session is {row.status!s} — workspace is read-only",
+                "session_status": row.status,
+            },
+        )
+
+
 # ---------------------------------------------------------------------------
 # M2 endpoints
 # ---------------------------------------------------------------------------
@@ -135,16 +157,20 @@ async def post_session(
         raise HTTPException(status_code=404, detail=f"mission not found: {exc}") from exc
     except ActiveSessionExistsError as exc:
         # §21 — per-user concurrency cap (MVP: 1 live session per user).
-        # FastAPI's default error envelope wraps ``detail`` once, so we keep
-        # ``detail`` a plain string (the FE parser reads ``body.detail`` as
-        # text) and surface the actionable metadata via response headers
-        # (``X-Code`` + ``X-Active-Session-Id``). This avoids the
-        # double-nested-detail trap that made the FE fall back to the
-        # generic ``HTTP 409`` message.
+        # The FE's Resume CTA narrows ``error.body.detail`` and looks for an
+        # ``active_session_id`` key, so we ship the conflict metadata in the
+        # JSON body. (The historical string-detail-plus-headers shape made
+        # the narrowing fall through and the user saw a generic "HTTP 409".)
         raise HTTPException(
             status_code=409,
-            detail="an active session already exists",
+            detail={
+                "code": "active_session_exists",
+                "message": "an active session already exists",
+                "active_session_id": str(exc.active_session_id),
+            },
             headers={
+                # Kept for legacy callers / log scraping. Body is the
+                # contract; headers are advisory.
                 "X-Code": "active_session_exists",
                 "X-Active-Session-Id": str(exc.active_session_id),
             },
@@ -212,7 +238,13 @@ async def post_context(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     request.state.user = user
-    await _require_owned_session(db, session_id, user)
+    row = await _require_owned_session(db, session_id, user)
+    # ``context.selected`` is one of the events the grader keys off for the
+    # context_selection dimension. A queued POST that lands AFTER
+    # ``submission.requested`` would change the operative-selection result
+    # and silently corrupt scoring — same hazard as the other mutating
+    # endpoints, so apply the same guard.
+    _require_mutable_session(row)
 
     redis = await get_redis()
     emitter = EventEmitter(db=db, redis_client=redis)
@@ -312,7 +344,8 @@ async def post_file(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     request.state.user = user
-    await _require_owned_session(db, session_id, user)
+    row = await _require_owned_session(db, session_id, user)
+    _require_mutable_session(row)
 
     handle = _get_sandbox_handle(request, session_id)
     pool = request.app.state.sandbox_pool
@@ -380,7 +413,8 @@ async def post_revert(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     request.state.user = user
-    await _require_owned_session(db, session_id, user)
+    row = await _require_owned_session(db, session_id, user)
+    _require_mutable_session(row)
 
     handle = _get_sandbox_handle(request, session_id)
     pool = request.app.state.sandbox_pool
@@ -436,7 +470,8 @@ async def post_command(
             detail=f"category must be one of {sorted(_ALLOWED_CATEGORIES)}",
         )
 
-    await _require_owned_session(db, session_id, user)
+    row = await _require_owned_session(db, session_id, user)
+    _require_mutable_session(row)
 
     handle = _get_sandbox_handle(request, session_id)
     pool = request.app.state.sandbox_pool
@@ -548,7 +583,12 @@ async def post_diff_opened(
     backwards compatibility with older clients.
     """
     request.state.user = user
-    await _require_owned_session(db, session_id, user)
+    row = await _require_owned_session(db, session_id, user)
+    # ``diff.opened`` after the grader's own ``submission.requested`` would
+    # let a user retroactively inflate their agent_review-dimension score
+    # (the dwell-time signal keys off the last diff.opened position). Lock
+    # this endpoint down the same way the other mutating ops are locked.
+    _require_mutable_session(row)
 
     path = body.path if body is not None else ""
 

@@ -306,9 +306,17 @@ async def _ensure_failed_stub(
                 "dimensions": {},
                 "strengths": [],
                 "weaknesses": [],
-                "missed_failure_mode": True,
+                # The grader crashed before it could evaluate the user's
+                # work, so we genuinely don't know whether they caught the
+                # failure mode. Default to ``False`` rather than the
+                # historic ``True`` (which silently poisoned the profile
+                # mastery aggregator) and let the ``is_stub`` flag below
+                # tell downstream readers to exclude this row from
+                # statistics.
+                "missed_failure_mode": False,
                 "badges_earned": [],
                 "failure_reason": reason[:500],
+                "is_stub": True,
             },
             total_score=0,
         )

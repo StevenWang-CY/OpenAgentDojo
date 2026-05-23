@@ -28,6 +28,7 @@ from app.auth.email import send_magic_link_email
 from app.auth.magic_link import consume_magic_token, create_magic_link
 from app.auth.session_cookie import issue_session_cookie, revoke_session_cookie
 from app.config import get_settings
+from loguru import logger
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserRead
@@ -108,6 +109,7 @@ async def post_magic_link(
 
 @router.get("/callback", summary="Exchange magic-link token for a session")
 async def get_callback(
+    request: Request,
     token: str = Query(..., description="Raw magic-link token from the email URL"),
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
@@ -125,6 +127,11 @@ async def get_callback(
     redirect = RedirectResponse(url=frontend_url, status_code=302)
     issue_session_cookie(redirect, str(user.id), settings)
     issue_csrf_token(redirect, settings)
+    logger.info(
+        "auth.callback.success user_id={} ip={}",
+        user.id,
+        request.client.host if request.client else "unknown",
+    )
     return redirect
 
 
@@ -139,6 +146,33 @@ async def post_logout(request: Request) -> Response:
     settings = get_settings()
     response = Response(status_code=204)
     revoke_session_cookie(response, settings, request=request)
+    # Also drop the CSRF cookie so a second user on the same browser does
+    # not inherit the first user's CSRF token (the cookie max-age otherwise
+    # outlives the session and is non-HttpOnly).
+    response.delete_cookie(
+        key=_CSRF_COOKIE_NAME,
+        path="/",
+        httponly=False,
+        secure=settings.cookie_secure,
+        samesite="lax",
+    )
+    user_id: str | None = None
+    raw = request.cookies.get(settings.session_cookie_name)
+    if raw:
+        try:
+            from jose import jwt as _jwt
+
+            payload = _jwt.decode(
+                raw, settings.session_secret, algorithms=["HS256"]
+            )
+            user_id = payload.get("sub")
+        except Exception:  # pragma: no cover — best-effort logging
+            pass
+    logger.info(
+        "auth.logout user_id={} ip={}",
+        user_id or "unknown",
+        request.client.host if request.client else "unknown",
+    )
     return response
 
 

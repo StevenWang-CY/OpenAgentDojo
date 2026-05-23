@@ -305,13 +305,26 @@ export interface PublicProfile {
  *  - ``string`` — most ``HTTPException(detail="…")`` calls.
  *  - ``[{ msg, type?, loc? }]`` — FastAPI's request-validation 422 envelope.
  *  - ``object`` — structured detail bodies (e.g. 409 from ``POST /sessions``
- *    carries ``{detail, code, active_session_id}``; see M8 §21).
+ *    carries ``{code, message, active_session_id}``; see M8 §21).
  * Consumers should narrow with ``typeof`` / structural checks before reading
  * nested fields.
+ *
+ * Top-level extras (``code``, ``limit``, ``window_seconds``) are emitted by
+ * the CSRF, rate-limit, and ArenaError envelopes alongside ``detail``. They
+ * are optional so a regular ``HTTPException`` body still matches the type.
  */
 export interface ApiErrorBody {
   detail:
     | string
     | { msg: string; type?: string; loc?: (string | number)[] }[]
     | Record<string, unknown>;
+  /** Stable machine-readable error code (e.g. "csrf_invalid",
+   *  "rate_limited", "session_not_active"). Optional so plain
+   *  ``HTTPException(detail="…")`` payloads keep matching. */
+  code?: string;
+  /** Rate-limit budget that the bucket holds (only on 429 envelopes). */
+  limit?: number;
+  /** Rate-limit window in seconds (only on 429 envelopes). Pair with the
+   *  ``Retry-After`` header for the human-facing wait time. */
+  window_seconds?: number;
 }

@@ -43,6 +43,10 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
   const dims = submission.score_report.dimensions;
   const passed = !submission.score_report.missed_failure_mode;
   const radar = dims ? radarPolygon(dims, 130) : "";
+  const effectiveMax =
+    typeof submission.score_report.effective_max === "number"
+      ? submission.score_report.effective_max
+      : 100;
 
   return new ImageResponse(
     (
@@ -105,7 +109,7 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
               <span style={{ fontSize: 168, fontWeight: 700, lineHeight: 1 }}>
                 {score}
               </span>
-              <span style={{ fontSize: 56, color: "#a4b0c4" }}>/ 100</span>
+              <span style={{ fontSize: 56, color: "#a4b0c4" }}>/ {effectiveMax}</span>
             </div>
             <div
               style={{

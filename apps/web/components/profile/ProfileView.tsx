@@ -7,6 +7,7 @@ import { AlertCircle, UserX } from "lucide-react";
 import type { PublicProfile } from "@arena/shared-types";
 import { ApiError, getProfile } from "@/lib/api";
 import { ProfileHeader } from "./ProfileHeader";
+import { ProfileRadar } from "./ProfileRadar";
 import { BadgeGrid } from "./BadgeGrid";
 import { MissionHistoryTable } from "./MissionHistoryTable";
 import { Button } from "@/components/ui/Button";
@@ -111,6 +112,19 @@ export function ProfileView({ handle }: ProfileViewProps) {
       <section className="mt-3" aria-labelledby="profile-header">
         <ProfileHeader profile={profile} />
       </section>
+
+      {Object.keys(profile.radar_averages).length > 0 ? (
+        <>
+          <SectionHeading
+            title="rubric averages"
+            count={`across ${profile.total_missions} graded session${profile.total_missions === 1 ? "" : "s"}`}
+            id="radar-heading"
+          />
+          <div className="mt-4">
+            <ProfileRadar averages={profile.radar_averages} />
+          </div>
+        </>
+      ) : null}
 
       <SectionHeading
         title="badges earned"

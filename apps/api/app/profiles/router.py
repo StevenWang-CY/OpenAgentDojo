@@ -213,6 +213,10 @@ async def _fetch_dimension_trends(
         completed_at = row.completed_at
         if not isinstance(report, dict) or completed_at is None:
             continue
+        # Stub reports (grader-failure backstop) carry score=0 and would
+        # show up as a hard "dropped to zero" tick on every sparkline.
+        if report.get("is_stub"):
+            continue
         dims = report.get("dimensions")
         if not isinstance(dims, dict):
             continue
@@ -271,6 +275,12 @@ def _aggregate_radar(reports: Sequence[Any]) -> dict[str, float]:
         if not isinstance(report, dict):
             _record_malformed("not_dict", session_id)
             continue
+        # Skip grader-failure stubs entirely — they carry score=0 across the
+        # board but represent infrastructure failures, not real attempts.
+        # Counting them would drag the radar toward zero for any user
+        # unlucky enough to hit a transient sandbox/LLM outage.
+        if report.get("is_stub"):
+            continue
         dims = report.get("dimensions")
         if not isinstance(dims, dict):
             _record_malformed("dimensions_missing", session_id)
@@ -283,6 +293,11 @@ def _aggregate_radar(reports: Sequence[Any]) -> dict[str, float]:
                 _record_malformed("dimension_payload_not_dict", session_id)
                 continue
             raw = dim_payload.get("score")
+            if raw is None:
+                # Pending dimension (judge cache cold + LLM unavailable).
+                # Not an error — just unmeasurable on this run.
+                _record_malformed("score_pending", session_id)
+                continue
             if not isinstance(raw, (int, float)) or isinstance(raw, bool):
                 _record_malformed("score_not_numeric", session_id)
                 continue
@@ -392,6 +407,12 @@ async def get_my_skills(
     rows = (await db.execute(sessions_stmt)).all()
     attempts: dict[str, dict[str, Any]] = {}
     for row in rows:
+        report = row.score_report
+        # Grader-failure stubs aren't real attempts — exclude them so a
+        # transient sandbox outage doesn't make the user appear to have
+        # tried (and failed) every mission they touched.
+        if isinstance(report, dict) and report.get("is_stub"):
+            continue
         fm = row.failure_mode or "unknown"
         slot = attempts.setdefault(
             fm,
@@ -416,7 +437,6 @@ async def get_my_skills(
         # still has missed_failure_mode==True under the binary
         # _hidden_tests_passed predicate — the user gets no mastery
         # credit for substantial supervision.
-        report = row.score_report
         if isinstance(report, dict):
             effective_max = (
                 int(report.get("effective_max") or 100)

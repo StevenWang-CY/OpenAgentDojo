@@ -208,11 +208,15 @@ function render(event: SupervisionEvent): RenderedEvent {
       };
     case "submission.graded": {
       const entries = Object.entries(event.payload.breakdown ?? {});
+      const effectiveMax =
+        typeof event.payload.effective_max === "number"
+          ? event.payload.effective_max
+          : 100;
       return {
         icon: CheckCircle2,
         tone: "success",
         label: "Submission graded",
-        detail: `Total ${event.payload.score} / 100`,
+        detail: `Total ${event.payload.score} / ${effectiveMax}`,
         breakdown:
           entries.length > 0
             ? entries.map(([key, dim]) => ({

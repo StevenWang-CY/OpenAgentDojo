@@ -153,20 +153,19 @@ Validator = Annotated[
 
 # --- scoring + signals ---
 
-# Canonical scoring distribution per plan §11.1 — total must equal 100.
-SCORING_WEIGHTS_CANONICAL: dict[str, int] = {
-    "final_correctness": 30,
-    "verification": 20,
-    "agent_review": 15,
-    "prompt_quality": 10,
-    "context_selection": 10,
-    "safety": 10,
-    "diff_minimality": 5,
-}
+# Canonical scoring distribution — sourced from the grader's single rubric
+# constant (apps/api/app/grading/dimensions.py:RUBRIC_DIMENSIONS) so a manifest
+# that validates here is guaranteed to match what the grader actually applies.
+# Previously this duplicated the §11.1 plan numbers (30/20/15/10/10/10/5) and
+# silently drifted from the runtime rubric (30/15/15/10/10/10/10) — every
+# mission YAML asserted weights the grader never honoured.
+from app.grading.dimensions import DIMENSION_MAX
+
+SCORING_WEIGHTS_CANONICAL: dict[str, int] = dict(DIMENSION_MAX)
 
 
 class ScoringWeights(BaseModel):
-    """Scoring weights with hard constants — enforce 30/20/15/10/10/10/5 = 100."""
+    """Scoring weights with hard constants — must match RUBRIC_DIMENSIONS."""
 
     model_config = ConfigDict(extra="forbid")
 

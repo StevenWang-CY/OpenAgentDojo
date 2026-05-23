@@ -43,8 +43,13 @@ export function Header({ showCta = true }: HeaderProps) {
     mutationFn: () => auth.logout(),
     onSuccess() {
       toast.success("Signed out.");
-      queryClient.setQueryData(["me"], undefined);
-      void queryClient.invalidateQueries({ queryKey: ["me"] });
+      // Wipe every cached query before navigating. Without this, the
+      // previous user's /profile/me, /skills, mission/session, and
+      // workspace caches stay live for their staleTime (≥ 60s for most
+      // entries) — on a shared device the next user inherits the previous
+      // user's data. Also invalidates the duplicate ``["auth-me"]`` key
+      // used by WorkspaceShell.
+      queryClient.clear();
       router.push("/");
     },
     onError(error) {

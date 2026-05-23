@@ -153,6 +153,11 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
+        # Browsers hide every non-safelisted response header from cross-origin
+        # JS reads unless they're listed here. ``Retry-After`` powers the
+        # rate-limit "try again in Ns" UX; ``X-Request-ID`` lets the FE
+        # surface a correlation id in error toasts.
+        expose_headers=["Retry-After", "X-Request-ID"],
     )
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(

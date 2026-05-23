@@ -108,24 +108,34 @@ async def _backfill(session_id: uuid.UUID, last_id: int) -> list[dict[str, Any]]
     out the WS frame buffer on reconnect — the client can resume from the
     highest-seen id by setting ``?last_id=``.
 
-    Ordering: ``(occurred_at, id)``. ``occurred_at`` is the causal axis the
-    grading engine and timeline endpoint both honour, so the WS backfill must
-    match — otherwise a clock skew between API workers (or a backfilled event
-    inserted with an earlier ``occurred_at``) would deliver causally-earlier
-    events after later ones, breaking the FE's "play forward" assumption.
-    The ``id`` tiebreaker keeps the order stable when two events share a
-    timestamp (common at flush boundaries).
+    When the gap exceeds the limit we keep the **newest** rows (the ones the
+    live subscription will not re-deliver because they pre-date the
+    subscribe point) and the FE can paginate the /timeline endpoint for the
+    older tail. The previous ``ORDER BY occurred_at ASC LIMIT 500`` did the
+    opposite — it returned the oldest 500 and silently dropped the newest
+    events in the gap, which were then unreachable by any subsequent live
+    frame.
     """
     async with AsyncSessionLocal() as db:
+        # Pull the most-recent N by (occurred_at, id) descending, then
+        # reverse to ascending so the FE still receives them in causal
+        # play-forward order. The ``occurred_at`` tiebreak matches what the
+        # grader and timeline endpoint read; the ``id`` tiebreak makes
+        # ordering stable when two events share a timestamp.
         stmt = (
             select(SupervisionEvent)
             .where(SupervisionEvent.session_id == session_id)
             .where(SupervisionEvent.id > last_id)
-            .order_by(SupervisionEvent.occurred_at, SupervisionEvent.id)
+            .order_by(
+                SupervisionEvent.occurred_at.desc(),
+                SupervisionEvent.id.desc(),
+            )
             .limit(_BACKFILL_LIMIT)
         )
         result = await db.execute(stmt)
-        return [_serialise(ev) for ev in result.scalars().all()]
+        rows = list(result.scalars().all())
+        rows.reverse()
+        return [_serialise(ev) for ev in rows]
 
 
 async def _session_exists(session_id: uuid.UUID) -> bool:

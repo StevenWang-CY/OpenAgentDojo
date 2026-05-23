@@ -219,12 +219,12 @@ validators:
     max_added_lines: 100
 scoring_weights:
   final_correctness: 30
-  verification: 20
+  verification: 15
   agent_review: 15
   prompt_quality: 10
   context_selection: 10
   safety: 10
-  diff_minimality: 5
+  diff_minimality: 10
 reward_signals:
   prompt_quality:
     must_include_any: [reproduce, root cause, regression]

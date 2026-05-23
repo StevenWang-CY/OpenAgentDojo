@@ -246,6 +246,17 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
     }
   }, [status]);
 
+  // Hold a stable ref to ``tokenQuery.refetch`` so the WS effect can call it
+  // from ``resolveQueryParams`` without keeping ``tokenQuery`` (a freshly-
+  // allocated object on every render) in its deps array. Previously the
+  // effect re-mounted the socket on every render — including renders
+  // triggered by the refetch it called itself — which produced a thundering-
+  // herd of reconnects and dropped live events between teardowns.
+  const tokenRefetchRef = React.useRef(tokenQuery.refetch);
+  React.useEffect(() => {
+    tokenRefetchRef.current = tokenQuery.refetch;
+  }, [tokenQuery.refetch]);
+
   React.useEffect(() => {
     if (!sessionLoaded) return;
     if (!wsToken) return;
@@ -268,8 +279,9 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
       // reconnect to side-step the 60s TTL.
       resolveQueryParams: () => {
         // Best-effort refresh; the token-mint is async so any in-flight
-        // result is picked up by the next reconnect.
-        void tokenQuery.refetch();
+        // result is picked up by the next reconnect. Read through the ref
+        // so an inline call doesn't pin ``tokenQuery`` in the deps array.
+        void tokenRefetchRef.current();
         return lastEventIdRef.current > 0
           ? { last_id: lastEventIdRef.current }
           : {};
@@ -333,7 +345,6 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
     pushEvent,
     pushAgentTurn,
     queryClient,
-    tokenQuery,
     redirectToSignIn,
   ]);
 

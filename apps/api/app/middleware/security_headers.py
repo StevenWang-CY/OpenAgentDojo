@@ -56,4 +56,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         response.headers.setdefault("Permissions-Policy", _PERMISSIONS_POLICY)
 
+        # HSTS only when cookies require HTTPS — forcing it on dev (HTTP
+        # localhost) would lock developers out of their own machine for the
+        # max-age window.
+        if settings.cookie_secure:
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=63072000; includeSubDomains; preload",
+            )
+
         return response

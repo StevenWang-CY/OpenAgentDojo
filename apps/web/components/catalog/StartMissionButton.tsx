@@ -19,8 +19,8 @@ interface StartMissionButtonProps {
  * top-level ``detail`` key, so ``ApiError.body.detail`` is this object.
  */
 interface ActiveSessionConflict {
-  detail: string;
   code: "active_session_exists";
+  message: string;
   active_session_id: string;
 }
 

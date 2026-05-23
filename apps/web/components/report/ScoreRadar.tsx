@@ -186,7 +186,7 @@ class RadarErrorBoundary extends React.Component<
   }
 
   override componentDidCatch(error: unknown): void {
-    console.error(
+    console.warn(
       "[score-radar] chart render failed; using text fallback",
       error,
     );

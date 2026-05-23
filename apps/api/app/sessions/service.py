@@ -13,6 +13,7 @@ import uuid
 from typing import Literal
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.mission import Mission
@@ -94,7 +95,27 @@ async def create_session(
         status="provisioning",
     )
     db.add(row)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Two concurrent POST /sessions from the same user can both pass
+        # the SELECT above and race to the INSERT — the rate-limit budget
+        # (6/min/user) keeps the blast radius small but the §21 cap is
+        # logical, not enforced by a DB constraint. Roll back the failed
+        # insert and re-fetch the now-live row so the second caller sees
+        # the same 409 envelope as the sequential case.
+        await db.rollback()
+        racing_id = (
+            await db.execute(
+                select(SessionRow.id)
+                .where(SessionRow.user_id == user_id)
+                .where(SessionRow.status.in_(_LIVE_SESSION_STATUSES))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if racing_id is not None:
+            raise ActiveSessionExistsError(racing_id)
+        raise
     return row
 
 

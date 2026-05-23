@@ -228,7 +228,7 @@ export interface SubmissionRequestedPayload {
 }
 
 export interface SubmissionGradedPayload {
-  /** Total score in [0, 100]. */
+  /** Total score in [0, effective_max]. */
   score: number;
   /**
    * Per-dimension scores, keyed by `RubricDimension`. Each value is the
@@ -238,6 +238,14 @@ export interface SubmissionGradedPayload {
   breakdown: Record<string, ScoreDimension>;
   submission_id?: UUID;
   missed_failure_mode?: boolean;
+  /** Badge ids awarded for this submission. Mirrors
+   *  ``score_report.badges_earned`` so the Timeline can render a toast
+   *  without a second fetch. */
+  badges_earned?: string[];
+  /** Effective denominator for the score (typically 100; drops to 90 when
+   *  prompt_quality is pending, etc). Defaults to 100 server-side when
+   *  absent so legacy consumers stay correct. */
+  effective_max?: number;
 }
 
 export interface SubmissionFailedPayload {

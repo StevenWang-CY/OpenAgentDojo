@@ -159,6 +159,15 @@ async def post_prompt(
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     _enforce_ownership(session, user)
+    if session.status != "active":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_not_active",
+                "message": f"session is {session.status!s} — workspace is read-only",
+                "session_status": session.status,
+            },
+        )
 
     context = body.context or ContextSelection()
     mission_folder = _resolve_mission_folder(session.mission_id)
@@ -263,6 +272,19 @@ async def post_apply_patch(
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
     _enforce_ownership(session, user)
+    if session.status != "active":
+        # Same guard as the workspace mutating endpoints — once the session
+        # has flipped to submitting/graded/abandoned/error, applying a patch
+        # would mutate the live workspace mid-grade and the submitted diff
+        # would no longer match the on-disk repo.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_not_active",
+                "message": f"session is {session.status!s} — workspace is read-only",
+                "session_status": session.status,
+            },
+        )
 
     handle = _get_sandbox_handle(request, session_id)
     pool = request.app.state.sandbox_pool

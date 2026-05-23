@@ -464,6 +464,7 @@ class GradingRunner:
         dims_in: dict[str, Any] = raw_dims if isinstance(raw_dims, dict) else {}
         breakdown = _ensure_all_dimensions(dims_in, session_id=result.session_id)
 
+        effective_max = result.score_report.get("effective_max")
         await self._emit(
             emitter,
             result.session_id,
@@ -474,6 +475,10 @@ class GradingRunner:
                 "submission_id": str(submission.id),
                 "missed_failure_mode": bool(result.score_report.get("missed_failure_mode", False)),
                 "badges_earned": result.badges_earned,
+                # Include the denominator so the Timeline and OG-image can
+                # render ``score / effective_max`` (e.g. 70/90 when a
+                # dimension is pending) without re-fetching the report.
+                "effective_max": int(effective_max) if isinstance(effective_max, (int, float)) else 100,
             },
         )
         await db.commit()

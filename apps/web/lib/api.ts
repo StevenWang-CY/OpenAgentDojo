@@ -68,12 +68,24 @@ import { env } from "./env";
 export class ApiError extends Error {
   readonly status: number;
   readonly body: ApiErrorBody | null;
+  /**
+   * Parsed ``Retry-After`` header value in seconds (only set on 429
+   * responses). Lets callers render "try again in Ns" without poking at
+   * the underlying fetch response.
+   */
+  readonly retryAfterSeconds: number | null;
 
-  constructor(message: string, status: number, body: ApiErrorBody | null) {
+  constructor(
+    message: string,
+    status: number,
+    body: ApiErrorBody | null,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -189,7 +201,27 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       body && typeof body.detail === "string"
         ? body.detail
         : `HTTP ${response.status}`;
-    throw new ApiError(detail, response.status, body);
+    // Capture Retry-After on 429 so the rate-limit toast can render an
+    // accurate "try again in Ns" hint instead of a generic 429.
+    let retryAfterSeconds: number | null = null;
+    if (response.status === 429) {
+      const raw = response.headers.get("retry-after");
+      if (raw !== null) {
+        const parsed = Number.parseInt(raw, 10);
+        if (Number.isFinite(parsed) && parsed >= 0) {
+          retryAfterSeconds = parsed;
+        }
+      }
+      // Fall back to the body's window_seconds if Retry-After was absent.
+      if (
+        retryAfterSeconds === null &&
+        body &&
+        typeof body.window_seconds === "number"
+      ) {
+        retryAfterSeconds = body.window_seconds;
+      }
+    }
+    throw new ApiError(detail, response.status, body, retryAfterSeconds);
   }
 
   return payload as T;
