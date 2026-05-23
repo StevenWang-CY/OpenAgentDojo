@@ -364,9 +364,7 @@ class SandboxPool:
         if force_remove is None:
             # Try the inner driver too — ``_ActivityTrackedDriver`` delegates
             # via ``__getattr__`` but a custom wrapper may not.
-            inner = getattr(self._driver, "inner", None) or getattr(
-                self._driver, "_inner", None
-            )
+            inner = getattr(self._driver, "inner", None) or getattr(self._driver, "_inner", None)
             if inner is not None:
                 force_remove = getattr(inner, "force_remove_container", None)
         for container_id, handle_id in snapshot:

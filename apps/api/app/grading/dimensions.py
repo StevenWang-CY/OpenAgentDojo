@@ -1,4 +1,5 @@
 """Single source of truth for the seven rubric dimensions and their max scores."""
+
 from __future__ import annotations
 
 from typing import Final

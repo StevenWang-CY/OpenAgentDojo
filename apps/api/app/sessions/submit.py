@@ -188,9 +188,7 @@ async def submit_session(  # noqa: PLR0915
         try:
             await runner.complete_tutorial(db=db, session=session, manifest=manifest)
         except Exception as exc:
-            logger.exception(
-                "[submit] tutorial completion failed for session {}", session_id
-            )
+            logger.exception("[submit] tutorial completion failed for session {}", session_id)
             await _mark_session_errored(db, session, session_id)
             raise HTTPException(
                 status_code=500,

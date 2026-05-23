@@ -89,9 +89,7 @@ class PublicProfile(BaseModel):
     # (P2-2). Each dimension maps to a list of ``(completed_at, score)``
     # points, oldest first. Pending dimension scores (``null``) are skipped
     # — a sparkline plots only points the grader could actually measure.
-    dimension_trends: dict[str, list[DimensionTrendPoint]] = Field(
-        default_factory=dict
-    )
+    dimension_trends: dict[str, list[DimensionTrendPoint]] = Field(default_factory=dict)
     total_missions: int = 0
     best_score: int | None = None
 

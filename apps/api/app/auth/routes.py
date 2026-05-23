@@ -162,9 +162,7 @@ async def post_logout(request: Request) -> Response:
         try:
             from jose import jwt as _jwt
 
-            payload = _jwt.decode(
-                raw, settings.session_secret, algorithms=["HS256"]
-            )
+            payload = _jwt.decode(raw, settings.session_secret, algorithms=["HS256"])
             user_id = payload.get("sub")
         except Exception:  # pragma: no cover — best-effort logging
             pass

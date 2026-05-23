@@ -100,18 +100,14 @@ async def load_your_attempts(
             best = candidate
 
     delta: int | None = None
-    if len(real_attempts) >= 2 and isinstance(latest.score, int) and isinstance(
-        first.score, int
-    ):
+    if len(real_attempts) >= 2 and isinstance(latest.score, int) and isinstance(first.score, int):
         delta = int(latest.score) - int(first.score)
 
     # P0-3 — score_history powers the sparkline tooltip on the FE. Capped
     # at 12 entries (most recent) so a power user with hundreds of attempts
     # doesn't bloat the mission-detail payload. Order: oldest → newest.
     history_window = real_attempts[-12:]
-    score_history = [
-        int(row.score) for row in history_window if isinstance(row.score, int)
-    ]
+    score_history = [int(row.score) for row in history_window if isinstance(row.score, int)]
 
     return YourAttempts(
         count=len(real_attempts),

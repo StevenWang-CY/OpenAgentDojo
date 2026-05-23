@@ -193,18 +193,14 @@ def _clamp_axis(v: Any) -> float:
     return f
 
 
-def _judgement_from_llm_response(
-    cache_key: str, raw_text: str
-) -> PromptJudgement:
+def _judgement_from_llm_response(cache_key: str, raw_text: str) -> PromptJudgement:
     """Parse the JSON the model returned. Defensive: model can return
     invalid JSON, missing keys, extra prose, out-of-range axes — every
     failure mode collapses to a recoverable judgement, not an exception."""
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError as exc:
-        logger.warning(
-            "prompt_judge: invalid JSON from model (key={}): {}", cache_key, exc
-        )
+        logger.warning("prompt_judge: invalid JSON from model (key={}): {}", cache_key, exc)
         return PromptJudgement(
             cache_key=cache_key,
             score=None,
@@ -243,14 +239,9 @@ def _build_user_message(prompt: str, ctx: PromptJudgeContext) -> str:
     if ctx.failure_mode_title:
         parts.append(f"Failure mode: {ctx.failure_mode_title}")
     if ctx.expected_files:
-        parts.append(
-            "Mission expected files: " + ", ".join(ctx.expected_files[:10])
-        )
+        parts.append("Mission expected files: " + ", ".join(ctx.expected_files[:10]))
     if ctx.expected_context_required:
-        parts.append(
-            "Mission required context: "
-            + ", ".join(ctx.expected_context_required[:10])
-        )
+        parts.append("Mission required context: " + ", ".join(ctx.expected_context_required[:10]))
     if ctx.prior_agent_response:
         snippet = ctx.prior_agent_response.strip()
         if len(snippet) > 800:
@@ -259,10 +250,7 @@ def _build_user_message(prompt: str, ctx: PromptJudgeContext) -> str:
     parts.append("--- SUPERVISOR PROMPT TO SCORE ---")
     parts.append(prompt)
     parts.append("--- END PROMPT ---")
-    parts.append(
-        "Return the JSON object specified in the system prompt. "
-        "No other output."
-    )
+    parts.append("Return the JSON object specified in the system prompt. No other output.")
     return "\n\n".join(parts)
 
 
@@ -292,9 +280,7 @@ class PromptJudge:
     def enabled(self) -> bool:
         return self._enabled
 
-    async def _call_model(
-        self, prompt: str, ctx: PromptJudgeContext
-    ) -> str | None:
+    async def _call_model(self, prompt: str, ctx: PromptJudgeContext) -> str | None:
         if self._client is None:
             # Build lazily so the module is import-safe without civitas_core.
             from app.agent.llm import AnthropicClient
@@ -331,14 +317,10 @@ class PromptJudge:
         try:
             return str(resp.content[0].text)
         except Exception as exc:  # pragma: no cover — defensive
-            logger.warning(
-                "prompt_judge: malformed model response: {}", exc
-            )
+            logger.warning("prompt_judge: malformed model response: {}", exc)
             return None
 
-    async def score_one(
-        self, prompt: str, ctx: PromptJudgeContext
-    ) -> PromptJudgement:
+    async def score_one(self, prompt: str, ctx: PromptJudgeContext) -> PromptJudgement:
         """Score a single prompt. Cache-first; LLM only on miss."""
         cache_key = compute_cache_key(prompt, ctx)
         if self._cache_get is not None:

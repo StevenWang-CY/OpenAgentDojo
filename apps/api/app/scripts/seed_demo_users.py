@@ -205,9 +205,7 @@ async def _seed_mission_history(
                 # Lists to match the shared-types contract — each entry is a
                 # serialised ``TestRunResult`` / ``ValidatorResult`` dict that
                 # the FE iterates as an array.
-                visible_test_results=[
-                    {"suite": "unit", "passed": 5, "failed": 0, "exit_code": 0}
-                ],
+                visible_test_results=[{"suite": "unit", "passed": 5, "failed": 0, "exit_code": 0}],
                 hidden_test_results=[
                     {
                         "suite": "hidden",

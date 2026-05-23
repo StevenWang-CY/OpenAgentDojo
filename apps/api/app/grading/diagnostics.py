@@ -217,11 +217,7 @@ def _cause_prompt_quality(signals: list[str]) -> str:
         )
     if _has_signal(signals, "via LLM judge"):
         for s in signals:
-            if (
-                "specificity=" in s
-                and "constraint=" in s
-                and "engagement=" in s
-            ):
+            if "specificity=" in s and "constraint=" in s and "engagement=" in s:
                 # Surface the weakest axis as the diagnostic.
                 weakest = _weakest_axis(s)
                 if weakest:
@@ -355,7 +351,7 @@ def _weakest_axis(signal: str) -> str | None:
             prefix = axis + "="
             if token.startswith(prefix):
                 try:
-                    parts[axis] = float(token[len(prefix):].split("/")[0])
+                    parts[axis] = float(token[len(prefix) :].split("/")[0])
                 except ValueError:
                     pass
     if not parts:
@@ -417,11 +413,9 @@ def build_feedback_narrative(
             if cause_fn is not None
             else "See per-signal breakdown above."
         )
-        recs = [
-            mid
-            for mid in _RECOMMENDED_BY_DIMENSION.get(dim_name, [])
-            if mid not in completed
-        ][:2]
+        recs = [mid for mid in _RECOMMENDED_BY_DIMENSION.get(dim_name, []) if mid not in completed][
+            :2
+        ]
         if recs:
             recommendation = _format_recommendation(dim_name, recs)
         else:
@@ -447,15 +441,9 @@ def build_feedback_narrative(
 def _format_recommendation(dim_name: str, mission_ids: list[str]) -> str:
     label = _DIM_LABEL.get(dim_name, dim_name)
     if len(mission_ids) == 1:
-        return (
-            f"Try {mission_ids[0]} next — it directly exercises "
-            f"{label.lower()}."
-        )
+        return f"Try {mission_ids[0]} next — it directly exercises {label.lower()}."
     joined = " and ".join(mission_ids)
-    return (
-        f"Try {joined} next — both directly exercise "
-        f"{label.lower()}."
-    )
+    return f"Try {joined} next — both directly exercise {label.lower()}."
 
 
 # ---------------------------------------------------------------------------
@@ -655,9 +643,7 @@ def compute_critical_moments(  # noqa: PLR0912, PLR0915 — four heuristics are 
         last_responded_no_review = (i, eid)
     if last_responded_no_review is not None:
         idx, eid = last_responded_no_review
-        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY[
-            "agent_responded_no_review"
-        ]
+        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY["agent_responded_no_review"]
         out.append(
             CriticalMoment(
                 event_id=eid,
@@ -734,9 +720,7 @@ def compute_critical_moments(  # noqa: PLR0912, PLR0915 — four heuristics are 
         eid = _event_id(anchor_ev)
         if eid is None:
             continue
-        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY[
-            "wrong_layer_committed"
-        ]
+        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY["wrong_layer_committed"]
         if flagged_path:
             explanation = (
                 f"The patch touched `{flagged_path}` which is on this mission's "

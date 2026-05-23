@@ -375,9 +375,7 @@ class GradingRunner:
         # Already-attempted missions for this user — the diagnostic
         # narrative uses this to avoid recommending missions the user
         # has already tried.
-        completed_mission_ids = await _load_completed_mission_ids(
-            db=db, user_id=session.user_id
-        )
+        completed_mission_ids = await _load_completed_mission_ids(db=db, user_id=session.user_id)
 
         report: ScoreReport = compute_score(
             diff=parsed,
@@ -474,8 +472,7 @@ class GradingRunner:
         from app.grading.diagnostics import compute_critical_moments
 
         critical_moments = [
-            cm.to_dict()
-            for cm in compute_critical_moments(events=events, manifest=manifest)
+            cm.to_dict() for cm in compute_critical_moments(events=events, manifest=manifest)
         ]
 
         submission = Submission(
@@ -529,7 +526,9 @@ class GradingRunner:
                 # Include the denominator so the Timeline and OG-image can
                 # render ``score / effective_max`` (e.g. 70/90 when a
                 # dimension is pending) without re-fetching the report.
-                "effective_max": int(effective_max) if isinstance(effective_max, (int, float)) else 100,
+                "effective_max": int(effective_max)
+                if isinstance(effective_max, (int, float))
+                else 100,
                 # P0-2 — the post-mortem walkthrough's critical-moment
                 # scrubber relies on these. Including them in the live
                 # event lets a subscriber (Timeline, future toast)
@@ -601,9 +600,7 @@ class GradingRunner:
         # the timestamp lands even when the User instance isn't loaded into
         # this session's identity map.
         await db.execute(
-            sa_update(User)
-            .where(User.id == session.user_id)
-            .values(tutorial_completed_at=now)
+            sa_update(User).where(User.id == session.user_id).values(tutorial_completed_at=now)
         )
 
         session.status = "graded"
@@ -882,11 +879,7 @@ async def _build_prompt_judgements(  # noqa: PLR0915
         prior: str | None = None
         if idx > 0:
             prior_turn = sorted_turns[idx - 1]
-            prior = (
-                prior_turn.get("agent_response")
-                or prior_turn.get("response")
-                or None
-            )
+            prior = prior_turn.get("agent_response") or prior_turn.get("response") or None
         key = (prompt_text, prior or "")
         if key in seen:
             continue
@@ -901,9 +894,7 @@ async def _build_prompt_judgements(  # noqa: PLR0915
     # Falls back to the int version when the manifest didn't carry a
     # sha (older fixtures); the int form is at least stable per-mission.
     mission_rev = str(
-        getattr(manifest, "manifest_sha256", None)
-        or getattr(manifest, "version", "1")
-        or "1"
+        getattr(manifest, "manifest_sha256", None) or getattr(manifest, "version", "1") or "1"
     )
     expected_files = list(getattr(manifest, "expected_files", []) or [])
     expected_context = getattr(manifest, "expected_context", None)
@@ -913,9 +904,7 @@ async def _build_prompt_judgements(  # noqa: PLR0915
         else []
     )
     failure_mode = getattr(manifest, "failure_mode", None)
-    failure_title = (
-        str(getattr(failure_mode, "title", "") or "") if failure_mode else None
-    )
+    failure_title = str(getattr(failure_mode, "title", "") or "") if failure_mode else None
 
     def _ctx_for(prior: str | None) -> PromptJudgeContext:
         return PromptJudgeContext(
@@ -930,9 +919,7 @@ async def _build_prompt_judgements(  # noqa: PLR0915
     async def _cache_get(cache_key: str) -> JudgementResult | None:
         row = (
             await db.execute(
-                select(PromptJudgementRow).where(
-                    PromptJudgementRow.cache_key == cache_key
-                )
+                select(PromptJudgementRow).where(PromptJudgementRow.cache_key == cache_key)
             )
         ).scalar_one_or_none()
         if row is None:
@@ -1000,9 +987,7 @@ async def _build_prompt_judgements(  # noqa: PLR0915
     cold_pairs: list[tuple[str, str | None]] = []
     for prompt_text, prior in pairs:
         ctx = _ctx_for(prior)
-        cache_only = PromptJudge(
-            client=None, cache_get=_cache_get, cache_put=None, enabled=False
-        )
+        cache_only = PromptJudge(client=None, cache_get=_cache_get, cache_put=None, enabled=False)
         j = await cache_only.score_one(prompt_text, ctx)
         if j.score is not None:
             warm[prompt_text] = j
@@ -1027,17 +1012,13 @@ async def _build_prompt_judgements(  # noqa: PLR0915
 
     for prompt_text, prior in cold_pairs:
         ctx = _ctx_for(prior)
-        judge = PromptJudge(
-            cache_get=_cache_get, cache_put=_cache_put_factory(prior)
-        )
+        judge = PromptJudge(cache_get=_cache_get, cache_put=_cache_put_factory(prior))
         result = await judge.score_one(prompt_text, ctx)
         warm[prompt_text] = result
     return warm
 
 
-async def _load_completed_mission_ids(
-    *, db: AsyncSession, user_id: uuid.UUID
-) -> list[str]:
+async def _load_completed_mission_ids(*, db: AsyncSession, user_id: uuid.UUID) -> list[str]:
     """Return every mission id this user has already graded.
 
     Used by the diagnostic narrative so we don't recommend missions the
@@ -1046,8 +1027,7 @@ async def _load_completed_mission_ids(
     """
     rows = (
         await db.execute(
-            select(SessionRow.mission_id)
-            .where(
+            select(SessionRow.mission_id).where(
                 SessionRow.user_id == user_id,
                 SessionRow.status == "graded",
             )

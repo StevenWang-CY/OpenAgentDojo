@@ -184,14 +184,10 @@ _EVIDENCE_EVENT_TYPES: dict[str, tuple[str, ...]] = {
 
 # For ``verification`` we only want command.run events whose category is in
 # the verification set. Other dimensions accept every matching event.
-_VERIFICATION_COMMAND_CATEGORIES: frozenset[str] = frozenset(
-    {"test", "typecheck", "lint"}
-)
+_VERIFICATION_COMMAND_CATEGORIES: frozenset[str] = frozenset({"test", "typecheck", "lint"})
 
 
-def _attach_evidence(
-    dimensions: dict[str, DimensionScore], events: list[dict[str, Any]]
-) -> None:
+def _attach_evidence(dimensions: dict[str, DimensionScore], events: list[dict[str, Any]]) -> None:
     """Stamp ``evidence_event_ids`` onto every dimension in-place.
 
     Output is **sorted ascending and de-duplicated** so:
@@ -381,9 +377,7 @@ def _hidden_test_suites(
     return [r for r in test_results if "hidden" in r.suite.lower()]
 
 
-def _hidden_tests_passed(
-    test_results: list[TestRunResult], manifest: Any | None = None
-) -> bool:
+def _hidden_tests_passed(test_results: list[TestRunResult], manifest: Any | None = None) -> bool:
     """Return True iff every hidden suite exited 0.
 
     Uses the shared :func:`app.grading.runner.is_hidden_suite` predicate so
@@ -450,9 +444,7 @@ def _manifest_has_visible_suites(manifest: Any | None) -> bool:
     return len(cmds) > 0
 
 
-def _visible_tests_passed(
-    test_results: list[TestRunResult], manifest: Any | None = None
-) -> bool:
+def _visible_tests_passed(test_results: list[TestRunResult], manifest: Any | None = None) -> bool:
     """Return True iff every visible *unit/integration* suite exited 0.
 
     Lint and typecheck are excluded from this gate — they have their own
@@ -479,8 +471,7 @@ def _visible_tests_passed(
     visible = [
         r
         for r in test_results
-        if not is_hidden_suite(manifest, r.suite)
-        and r.suite.lower() not in {"lint", "typecheck"}
+        if not is_hidden_suite(manifest, r.suite) and r.suite.lower() not in {"lint", "typecheck"}
     ]
     if not _manifest_has_visible_suites(manifest):
         # No visible suites configured by the mission manifest → N/A.
@@ -534,9 +525,7 @@ def _score_final_correctness(
     # one who fixes 0/10. The previous rule (binary: all-pass → 12, any-fail
     # → 0) collapsed both into the same score and discarded the granularity
     # the hidden suites already carry.
-    hidden_passed_n, hidden_total_n, hidden_per_suite = _hidden_test_counts(
-        test_results, manifest
-    )
+    hidden_passed_n, hidden_total_n, hidden_per_suite = _hidden_test_counts(test_results, manifest)
     if hidden_total_n == 0:
         # No hidden suites configured — treat as zero credit + zero ceiling
         # adjustment. Matches the legacy "no hidden tests = failed" rule.
@@ -547,8 +536,7 @@ def _score_final_correctness(
         hidden_credit = round(12 * ratio)
         if hidden_passed_n == hidden_total_n:
             signals.append(
-                f"+{hidden_credit}: all hidden tests pass "
-                f"({hidden_passed_n}/{hidden_total_n})"
+                f"+{hidden_credit}: all hidden tests pass ({hidden_passed_n}/{hidden_total_n})"
             )
         else:
             signals.append(
@@ -557,9 +545,7 @@ def _score_final_correctness(
                 f"(proportional credit of 12)"
             )
         for suite_name, suite_passed, suite_total in hidden_per_suite:
-            signals.append(
-                f"  hidden suite {suite_name}: {suite_passed}/{suite_total} passed"
-            )
+            signals.append(f"  hidden suite {suite_name}: {suite_passed}/{suite_total} passed")
     score += hidden_credit
 
     if visible_na:
@@ -657,9 +643,7 @@ def _score_verification(
     else:
         # Bucket by outcome. Any passing run → engagement is implicit.
         # Otherwise check for follow-up action after the most recent failure.
-        any_pass = any(
-            int(p.get("exit_code", 0) or 0) == 0 for _, p in targeted_test_events
-        )
+        any_pass = any(int(p.get("exit_code", 0) or 0) == 0 for _, p in targeted_test_events)
         if any_pass:
             score += 6
             signals.append("+6: targeted test command run (and passed)")
@@ -782,10 +766,7 @@ def _score_agent_review(
     dwell_ms = _diff_dwell_milliseconds(events)
     if diff_after_patch and dwell_ms >= 5000:
         score += 6
-        signals.append(
-            f"+6: diff opened after the most recent patch applied "
-            f"(dwell {dwell_ms} ms)"
-        )
+        signals.append(f"+6: diff opened after the most recent patch applied (dwell {dwell_ms} ms)")
     elif diff_after_patch:
         # Open-and-close inside 5s — give partial credit (+3) for at
         # least opening the panel; full credit requires real review time.
@@ -822,8 +803,7 @@ def _score_agent_review(
         signals.append("+5: meaningful file edit or revert (>=1 line changed)")
     elif _any_event(events, "file.edited"):
         signals.append(
-            "+0: file.edited events present but all were no-op (0 lines "
-            "changed) — not credited"
+            "+0: file.edited events present but all were no-op (0 lines changed) — not credited"
         )
     else:
         signals.append("+0: no file edited/reverted")
@@ -988,8 +968,7 @@ def _score_prompt_quality(
         # keyword but record explicitly so the user knows the judge was
         # bypassed.
         signals.append(
-            f"judge unavailable for all {len(tail)} tail prompt(s); "
-            "reverted to keyword fallback"
+            f"judge unavailable for all {len(tail)} tail prompt(s); reverted to keyword fallback"
         )
 
     must_include: list[str] = []
@@ -1140,9 +1119,7 @@ def _score_context_selection(
 
     def _score_selection(files: list[str]) -> tuple[int, float, float, int]:
         selected_set = set(files)
-        required_hit = (
-            len(selected_set & required_set) / len(required_set) if required_set else 0.0
-        )
+        required_hit = len(selected_set & required_set) / len(required_set) if required_set else 0.0
         recommended_hit = len(selected_set & recommended_set) / max(1, len(recommended_set))
         discouraged_hit = len(selected_set & discouraged_set)
         raw = round(required_hit * 7 + recommended_hit * 3) - min(3, discouraged_hit)
@@ -1368,9 +1345,7 @@ def _score_diff_minimality(diff: ParsedDiff, manifest: Any) -> DimensionScore:
             raw_p50,
             getattr(manifest, "id", "<unknown>"),
         )
-        signals.append(
-            f"manifest p50={raw_p50!r} out of band — using fallback p50=20"
-        )
+        signals.append(f"manifest p50={raw_p50!r} out of band — using fallback p50=20")
         p50 = 20
     else:
         p50 = raw_p50
@@ -1384,9 +1359,7 @@ def _score_diff_minimality(diff: ParsedDiff, manifest: Any) -> DimensionScore:
     # correctly.
     if churn == 0:
         signals.append("churn=0 → 0/10 (no changes submitted)")
-        signals.append(
-            f"churn=max(added={added}, removed={removed})={churn} p50={p50}"
-        )
+        signals.append(f"churn=max(added={added}, removed={removed})={churn} p50={p50}")
         return DimensionScore(score=0, max_score=max_score, signals=signals)
     ratio = churn / max(1, p50)
 
@@ -1406,9 +1379,7 @@ def _score_diff_minimality(diff: ParsedDiff, manifest: Any) -> DimensionScore:
         score = 0
         signals.append(f"ratio={ratio:.2f} > 3.0 → 0/10")
 
-    signals.append(
-        f"churn=max(added={added}, removed={removed})={churn} p50={p50}"
-    )
+    signals.append(f"churn=max(added={added}, removed={removed})={churn} p50={p50}")
     return DimensionScore(score=score, max_score=max_score, signals=signals)
 
 
@@ -1438,8 +1409,7 @@ def _narrative(
     # ``app.grading.dimensions`` automatically reflows the narrative
     # thresholds (the old hard-coded table drifted whenever a max changed).
     thresholds = {
-        name: (round(max_s * 0.8), round(max_s * 0.4))
-        for name, max_s in DIMENSION_MAX.items()
+        name: (round(max_s * 0.8), round(max_s * 0.4)) for name, max_s in DIMENSION_MAX.items()
     }
     labels = {
         "final_correctness": "Correctness",
@@ -1531,9 +1501,7 @@ def compute_score(
         ),
         "verification": _score_verification(events, validator_results, manifest),
         "agent_review": _score_agent_review(events, manifest),
-        "prompt_quality": _score_prompt_quality(
-            agent_turns, manifest, prompt_judgements
-        ),
+        "prompt_quality": _score_prompt_quality(agent_turns, manifest, prompt_judgements),
         "context_selection": _score_context_selection(events, manifest),
         "safety": _score_safety(events, validator_results, manifest),
         "diff_minimality": _score_diff_minimality(diff, manifest),
@@ -1545,9 +1513,7 @@ def compute_score(
     # the total AND from the effective maximum so the UI can render
     # "{total} / {effective_max}" honestly.
     pending_dims = [ds for ds in dimensions.values() if ds.score < 0]
-    effective_max = max(
-        1, 100 - sum(ds.max_score for ds in pending_dims)
-    )
+    effective_max = max(1, 100 - sum(ds.max_score for ds in pending_dims))
     total = sum(ds.score for ds in dimensions.values() if ds.score >= 0)
     total = max(0, min(total, effective_max))
 

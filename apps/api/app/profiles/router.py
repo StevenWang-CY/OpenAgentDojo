@@ -230,9 +230,7 @@ class _BestAttempt:
     score_cap_reason: str | None
 
 
-async def _best_per_mission(
-    db: AsyncSession, user_id: uuid.UUID
-) -> list[_BestAttempt]:
+async def _best_per_mission(db: AsyncSession, user_id: uuid.UUID) -> list[_BestAttempt]:
     """For each mission, return the user's best attempt (P0-3 policy).
 
     Selection rule (per ADR 0009):
@@ -337,9 +335,7 @@ async def _fetch_dimension_trends(
                 # Skipping null (pending) or non-numeric — both unmeasurable.
                 continue
             trends.setdefault(dim_name, []).append(
-                DimensionTrendPoint(
-                    completed_at=completed_at, score=int(raw)
-                )
+                DimensionTrendPoint(completed_at=completed_at, score=int(raw))
             )
     return trends
 
@@ -442,9 +438,7 @@ async def get_profile(
     # mission history to reconstruct a complete supervision profile, so
     # we gate it behind authenticated self-access.
     is_self_view = viewer is not None and viewer.id == user.id
-    dimension_trends = (
-        await _fetch_dimension_trends(db, user.id) if is_self_view else {}
-    )
+    dimension_trends = await _fetch_dimension_trends(db, user.id) if is_self_view else {}
 
     return PublicProfile(
         # ``user.handle`` is nullable in the DB but non-null whenever we got
@@ -618,9 +612,7 @@ async def get_my_skills(
                 mission_titles=meta["mission_titles"],
                 sessions_attempted=a.get("attempted", 0),
                 sessions_passed=a.get("passed", 0),
-                avg_score=(
-                    round(sum(scores) / len(scores), 1) if scores else None
-                ),
+                avg_score=(round(sum(scores) / len(scores), 1) if scores else None),
                 best_score=max(scores) if scores else None,
                 last_attempted_at=a.get("last_attempted_at"),
             )

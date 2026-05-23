@@ -140,9 +140,7 @@ async def consume_magic_token(db: AsyncSession, raw_token: str) -> User | None:
     # ``timestamptz`` vs SQLite naive datetimes don't compare cleanly in
     # Python).
     row: MagicLinkToken | None = (
-        await db.execute(
-            select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash)
-        )
+        await db.execute(select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash))
     ).scalar_one_or_none()
 
     if row is None:

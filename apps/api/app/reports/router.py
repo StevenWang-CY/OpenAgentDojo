@@ -153,9 +153,7 @@ def _read_ideal_solution_diff(missions_root: Path, mission_id: str) -> str | Non
     except FileNotFoundError:
         return None
     except Exception as exc:
-        logger.warning(
-            "[reports] could not read ideal_solution.diff for {}: {}", mission_id, exc
-        )
+        logger.warning("[reports] could not read ideal_solution.diff for {}: {}", mission_id, exc)
         return None
 
 
@@ -177,9 +175,7 @@ def _read_agent_patch_diff(missions_root: Path, mission_id: str) -> str | None:
     except FileNotFoundError:
         return None
     except Exception as exc:
-        logger.warning(
-            "[reports] could not read agent_patch.diff for {}: {}", mission_id, exc
-        )
+        logger.warning("[reports] could not read agent_patch.diff for {}: {}", mission_id, exc)
         return None
 
 

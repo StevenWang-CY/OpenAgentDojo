@@ -426,7 +426,7 @@ class LocalSandboxDriver(SandboxDriver):
         hidden = getattr(mission, "hidden_tests", None)
         raw = getattr(hidden, "command", default_cmd) if hidden is not None else default_cmd
         raw = raw or default_cmd
-        return _re.sub(r'(?<![\w/])hidden_tests/', '"$GRADER_DIR"/', raw)
+        return _re.sub(r"(?<![\w/])hidden_tests/", '"$GRADER_DIR"/', raw)
 
     async def _run_test_phase(
         self,

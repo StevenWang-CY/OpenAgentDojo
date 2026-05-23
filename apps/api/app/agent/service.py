@@ -451,9 +451,7 @@ class AgentService:
             # the structured log so an operator can debug, but only surface a
             # generic message to the client — the raw ``str(exc)`` can leak
             # internal driver/file paths that the user has no business seeing.
-            logger.opt(exception=True).warning(
-                "apply_diff raised for turn {}: {}", turn_id, exc
-            )
+            logger.opt(exception=True).warning("apply_diff raised for turn {}: {}", turn_id, exc)
             generic_error = "patch apply failed — see server logs"
             async with _safe_begin(db):
                 await emitter.emit(

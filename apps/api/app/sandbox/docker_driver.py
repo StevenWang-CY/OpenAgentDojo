@@ -481,15 +481,15 @@ class DockerSandboxDriver(SandboxDriver):
             hidden_cfg = getattr(mission, "hidden_tests", None)
             default_cmd = "bash /grader/hidden_tests/runner.sh"
             raw_cmd = (
-                getattr(hidden_cfg, "command", default_cmd) if hidden_cfg is not None else default_cmd
+                getattr(hidden_cfg, "command", default_cmd)
+                if hidden_cfg is not None
+                else default_cmd
             ) or default_cmd
             # Word-boundary-safe rewrite: only legacy ``hidden_tests/``
             # references (no ``/grader/`` prefix already) get rewritten to
             # the canonical mount path.
             hidden_cmd = re.sub(r"(?<![\w/])hidden_tests/", "/grader/hidden_tests/", raw_cmd)
-            wrapped = (
-                f"WORKSPACE_DIR=/workspace GRADER_DIR=/grader/hidden_tests {hidden_cmd}"
-            )
+            wrapped = f"WORKSPACE_DIR=/workspace GRADER_DIR=/grader/hidden_tests {hidden_cmd}"
             tr = await self._run_test_phase(handle, "hidden", wrapped, 180)
             test_results["hidden"] = _docker_test_run_to_dict(tr)
             logs["hidden"] = tr.stdout + "\n--- stderr ---\n" + tr.stderr

@@ -292,7 +292,8 @@ class MissionManifest(BaseModel):
         """
         weights = self.scoring_weights
         weight_sum = sum(
-            getattr(weights, k) for k in (
+            getattr(weights, k)
+            for k in (
                 "final_correctness",
                 "verification",
                 "agent_review",

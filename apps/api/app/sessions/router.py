@@ -534,8 +534,7 @@ async def post_command(
     truncated_stdout = result.stdout[-MAX_STDIO_BYTES:] if result.stdout else ""
     truncated_stderr = result.stderr[-MAX_STDIO_BYTES:] if result.stderr else ""
     stdio_truncated = (
-        len(result.stdout or "") > MAX_STDIO_BYTES
-        or len(result.stderr or "") > MAX_STDIO_BYTES
+        len(result.stdout or "") > MAX_STDIO_BYTES or len(result.stderr or "") > MAX_STDIO_BYTES
     )
 
     return CommandRunResponse(
@@ -662,9 +661,7 @@ async def post_tutorial_step(
     row = await _require_owned_session(db, session_id, user)
     _require_mutable_session(row)
 
-    event_type = (
-        "tutorial.step_completed" if body.action == "completed" else "tutorial.dismissed"
-    )
+    event_type = "tutorial.step_completed" if body.action == "completed" else "tutorial.dismissed"
     redis = await get_redis()
     emitter = EventEmitter(db=db, redis_client=redis)
     await emitter.emit(
@@ -790,9 +787,7 @@ async def post_give_up(
             status_code=409,
             detail={
                 "code": "session_not_active",
-                "message": (
-                    f"session is {row.status!s} — give-up requires an active session"
-                ),
+                "message": (f"session is {row.status!s} — give-up requires an active session"),
                 "session_status": row.status,
             },
         )
@@ -810,8 +805,7 @@ async def post_give_up(
             detail={
                 "code": "give_up_not_supported_for_tutorial",
                 "message": (
-                    "give-up isn't available on the orientation tutorial — "
-                    "just complete or skip it"
+                    "give-up isn't available on the orientation tutorial — just complete or skip it"
                 ),
                 "session_status": row.status,
             },
@@ -846,9 +840,7 @@ async def post_give_up(
             status_code=425,
             detail={
                 "code": "give_up_not_yet_available",
-                "message": (
-                    "give-up requires at least 10 minutes in session"
-                ),
+                "message": ("give-up requires at least 10 minutes in session"),
                 "seconds_remaining": seconds_remaining,
                 "seconds_required": gate_seconds,
             },
@@ -957,8 +949,6 @@ async def get_submission(
         ideal_solution_diff=_read_ideal_solution_diff(
             settings.missions_root, session_row.mission_id
         ),
-        agent_patch_diff=_read_agent_patch_diff(
-            settings.missions_root, session_row.mission_id
-        ),
+        agent_patch_diff=_read_agent_patch_diff(settings.missions_root, session_row.mission_id),
         mission_id=session_row.mission_id,
     )

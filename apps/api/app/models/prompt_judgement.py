@@ -32,18 +32,14 @@ class PromptJudgement(Base):
     )
     # SHA-256 hex of (prompt_text, mission_id, mission_revision, rubric_version).
     # Uniqueness is the cache invariant: same key → identical judgement.
-    cache_key: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True, index=True
-    )
+    cache_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     mission_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     # Source of truth for which mission revision this judgement was made
     # against. Mirrors ``PromptJudgeContext.mission_revision`` (which is the
     # manifest content-hash, NOT the integer ``manifest.version`` — the
     # latter is too easy to forget to bump). Auditing rows by mission
     # revision lets ops detect stale judgements after a content edit.
-    mission_revision: Mapped[str] = mapped_column(
-        String(128), nullable=False, server_default="1"
-    )
+    mission_revision: Mapped[str] = mapped_column(String(128), nullable=False, server_default="1")
     # SHA-256 of the prior agent response the prompt was judged against.
     # Persisted for audit so a row can be traced back to the exact
     # conversational context; the cache key already hashes this value, so

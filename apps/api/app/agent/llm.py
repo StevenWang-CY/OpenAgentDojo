@@ -78,7 +78,9 @@ def _retryable(exc: BaseException) -> bool:
         try:
             return 500 <= exc.response.status_code < 600
         except AttributeError:
-            logger.debug("LLM HTTPStatusError missing response.status_code, treating as non-retryable")
+            logger.debug(
+                "LLM HTTPStatusError missing response.status_code, treating as non-retryable"
+            )
             return False
     return False
 

@@ -46,9 +46,7 @@ def _component(ok: bool, checked_at: str) -> dict[str, str]:
     }
 
 
-def _worker_component(
-    ok: bool, checked_at: str, *, note: str | None = None
-) -> dict[str, str]:
+def _worker_component(ok: bool, checked_at: str, *, note: str | None = None) -> dict[str, str]:
     """Worker component — adds an optional ``note`` (e.g. ``"in-process"``)."""
     payload: dict[str, str] = _component(ok, checked_at)
     if note:
@@ -128,9 +126,7 @@ async def status(request: Request, response: Response) -> dict[str, Any]:
     # worker process, so the broker check still applies (RQ may be unused but
     # we don't want to falsely report DOWN) — we just annotate the mode.
     if settings.provision_in_process:
-        components["workers"] = _worker_component(
-            True, checked_at, note=_WORKERS_NOTE_IN_PROCESS
-        )
+        components["workers"] = _worker_component(True, checked_at, note=_WORKERS_NOTE_IN_PROCESS)
     else:
         components["workers"] = _component(redis_ok, checked_at)
 
