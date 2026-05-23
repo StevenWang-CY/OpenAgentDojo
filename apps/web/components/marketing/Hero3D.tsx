@@ -280,7 +280,7 @@ const SCENE_CSS = `
   position: relative;
   perspective: 2400px;
   perspective-origin: 30% 55%;
-  min-height: 760px;
+  min-height: 800px;
 }
 .scene-stage {
   position: absolute;
@@ -291,15 +291,18 @@ const SCENE_CSS = `
    * real edge thickness on every glass surface.
    *
    * Transform reads right-to-left:
-   *   1) scale(1.13)       — composition reads bigger
-   *   2) rotateX/Y         — 3/4 perspective tilt
-   *   3) translateY(28px)  — drops the whole scaled+tilted stage
-   *                          down a touch so it sits lower against
-   *                          the heading on the left column
+   *   1) scale(1.18)            — composition reads bigger
+   *   2) rotateX/Y              — 3/4 perspective tilt
+   *   3) translate(64px, 60px)  — drops the scaled+tilted stage
+   *                               down + right so the bot-tile
+   *                               clears the heading's right edge
+   *                               on the left column instead of
+   *                               overlapping it
    * transform-origin pulled up to 36% biases the scale growth
-   * downward as well, compounding with the translateY for a clean
-   * "bigger AND lower" feel without touching per-element coords. */
-  transform: translateY(28px) rotateY(-9deg) rotateX(2deg) scale(1.13);
+   * downward, compounding with the translate for a clean
+   * "bigger, lower, righter" feel without touching per-element
+   * coords. */
+  transform: translate(64px, 60px) rotateY(-9deg) rotateX(2deg) scale(1.18);
   transform-origin: 50% 36%;
 }
 
