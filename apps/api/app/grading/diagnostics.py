@@ -297,7 +297,7 @@ def _cause_diff_minimality(signals: list[str]) -> str:
         )
     if _has_signal(signals, "> 3.0"):
         return (
-            "Your diff is more than 3× the size of the ideal fix. The "
+            "Your diff is more than 3x the size of the ideal fix. The "
             "agent probably did an excessive rewrite — push back and ask "
             "it to make the smallest change that fixes the bug."
         )

@@ -19,6 +19,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.grading.dimensions import DIMENSION_MAX
+
 Difficulty = Literal["beginner", "intermediate", "advanced"]
 LanguageRuntime = Literal["node20", "python312"]
 MissionKind = Literal["standard", "tutorial"]
@@ -160,8 +162,6 @@ Validator = Annotated[
 # Previously this duplicated the §11.1 plan numbers (30/20/15/10/10/10/5) and
 # silently drifted from the runtime rubric (30/15/15/10/10/10/10) — every
 # mission YAML asserted weights the grader never honoured.
-from app.grading.dimensions import DIMENSION_MAX
-
 SCORING_WEIGHTS_CANONICAL: dict[str, int] = dict(DIMENSION_MAX)
 
 

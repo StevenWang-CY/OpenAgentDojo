@@ -111,8 +111,8 @@ export function SkillsView() {
         </h1>
         <p className="mt-2.5 max-w-2xl text-[var(--color-muted-foreground)]">
           Each row is a supervision failure mode the platform tests. Pass
-          ratio = how often you correctly caught the agent's mistake before
-          submitting.
+          ratio = how often you correctly caught the agent&rsquo;s mistake
+          before submitting.
         </p>
         <p className="mt-1 font-mono text-xs text-[var(--color-muted-foreground)] tabular-nums">
           {catalog.total_failure_modes} failure mode

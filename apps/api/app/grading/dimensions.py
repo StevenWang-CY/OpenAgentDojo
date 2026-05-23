@@ -14,5 +14,5 @@ RUBRIC_DIMENSIONS: Final[tuple[tuple[str, int], ...]] = (
 )
 
 DIMENSION_NAMES: Final[tuple[str, ...]] = tuple(name for name, _ in RUBRIC_DIMENSIONS)
-DIMENSION_MAX: Final[dict[str, int]] = {name: m for name, m in RUBRIC_DIMENSIONS}
+DIMENSION_MAX: Final[dict[str, int]] = dict(RUBRIC_DIMENSIONS)
 RUBRIC_TOTAL: Final[int] = sum(DIMENSION_MAX.values())

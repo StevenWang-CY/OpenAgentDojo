@@ -398,7 +398,7 @@ class SandboxPool:
                     exc,
                 )
 
-    async def _sweep_orphans_once(self) -> int:
+    async def _sweep_orphans_once(self) -> int:  # noqa: PLR0912
         """Flip orphaned in-flight sessions to a terminal state.
 
         Three cases:

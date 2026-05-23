@@ -53,7 +53,7 @@ export function YourAttemptsStrip({ attempts }: YourAttemptsStripProps) {
           id="your-attempts-heading"
           className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--color-muted-foreground)]"
         >
-          // your attempts
+          {"// your attempts"}
         </h2>
         <p className="font-mono text-[10.5px] text-[var(--color-muted-foreground)]">
           {attempts.count}× attempted

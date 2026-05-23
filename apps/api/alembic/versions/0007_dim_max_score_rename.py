@@ -13,9 +13,14 @@ without a ``score_report``, without a ``dimensions`` object, or whose
 dimensions never carried ``max_score`` are skipped — the SQL is idempotent
 and can be re-run safely.
 
-Revision ID: 0007_rename_score_dim_max_score_to_max
+Revision ID: 0007_dim_max_score_rename
 Revises: 0006_session_last_activity
 Create Date: 2026-05-21
+
+The full descriptive name overflowed the default alembic_version.version_num
+varchar(32) column on Postgres (the SQLite test harness has no length check),
+so the revision identifier is shortened to fit; the migration body itself is
+unchanged.
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ from typing import Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0007_rename_score_dim_max_score_to_max"
+revision: str = "0007_dim_max_score_rename"
 down_revision: Union[str, None] = "0006_session_last_activity"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

@@ -111,7 +111,6 @@ export function GiveUpDialog({
       // (We deliberately don't throw — workspace shell tolerates a stale
       // started_at by displaying the rest of the surface read-only.)
       if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console -- diagnostic only
         console.warn(
           "[GiveUpDialog] invalid sessionStartedAt:",
           sessionStartedAt,

@@ -134,7 +134,7 @@ async def terminal_ws(
         await _bridge_docker_socket(websocket, attach)
 
 
-async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> None:
+async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> None:  # noqa: PLR0915
     pty_fd, proc, ptyid = attach
     loop = asyncio.get_running_loop()
     closed = asyncio.Event()

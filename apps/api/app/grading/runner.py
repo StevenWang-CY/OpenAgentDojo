@@ -835,7 +835,7 @@ async def _load_events(db: AsyncSession, session_id: uuid.UUID) -> list[dict[str
     ]
 
 
-async def _build_prompt_judgements(
+async def _build_prompt_judgements(  # noqa: PLR0915
     *,
     db: AsyncSession,
     manifest: Any,

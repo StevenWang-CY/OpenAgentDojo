@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException
@@ -405,9 +406,6 @@ def _load_manifest_for(root, mission_id: str) -> Any | None:
         if m.manifest.id == mission_id:
             return m.manifest
     return None
-
-
-from dataclasses import dataclass
 
 
 @dataclass(slots=True)

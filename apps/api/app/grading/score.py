@@ -965,10 +965,10 @@ def _score_prompt_quality(
             return DimensionScore(
                 score=-1,  # sentinel: read by ScoreReport.total to skip
                 max_score=max_score,
-                signals=signals
-                + [
+                signals=[
+                    *signals,
                     "no judgeable prompts in window — dimension excluded "
-                    "from total (max becomes 90)"
+                    "from total (max becomes 90)",
                 ],
             )
         if per_turn_scores:

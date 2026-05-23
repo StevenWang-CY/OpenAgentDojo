@@ -111,7 +111,7 @@ async def _claim_for_submit(db: AsyncSession, session: SessionRow) -> bool:
     return True
 
 
-async def submit_session(
+async def submit_session(  # noqa: PLR0915
     db: AsyncSession,
     session: SessionRow,
     request: Request,

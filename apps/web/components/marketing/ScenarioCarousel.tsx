@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
  * returned an empty catalog (we render a real empty state instead).
  */
 export function ScenarioCarousel() {
-  const { data, isLoading, error, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["missions"],
     queryFn: ({ signal }) => listMissions(signal),
     retry: (failureCount, e) => {
@@ -46,7 +46,7 @@ export function ScenarioCarousel() {
     >
       <div className="mx-auto max-w-6xl px-6 py-24">
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
-          // mission catalog
+          {"// mission catalog"}
         </p>
         <h2
           id="scenarios-heading"

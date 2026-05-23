@@ -158,7 +158,7 @@ async def create_session(
             )
         ).scalar_one_or_none()
         if racing_id is not None:
-            raise ActiveSessionExistsError(racing_id)
+            raise ActiveSessionExistsError(racing_id) from None
         raise
     return row
 

@@ -56,7 +56,7 @@ class LocalSandboxDriver(SandboxDriver):
         # ("." resolves to /private/tmp/... while handle.workdir was still
         # /tmp/..." — different paths even though they point at the same
         # inode), and the file tree / file-read endpoints all return 500.
-        workdir = Path(tempfile.mkdtemp(prefix=f"arena-{sid}-", dir=str(self.root))).resolve()
+        workdir = Path(tempfile.mkdtemp(prefix=f"arena-{sid}-", dir=str(self.root))).resolve()  # noqa: ASYNC240
 
         repo_pack = self._mission_repo_pack(mission)
         if repo_pack is not None:

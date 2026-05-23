@@ -42,7 +42,7 @@ export function Hero() {
           {/* LEFT: copy + CTAs */}
           <div>
             <p className="font-mono text-xs text-[var(--color-muted-foreground)]">
-              <span className="text-[var(--color-primary)]">//</span>{" "}
+              <span className="text-[var(--color-primary)]">{"//"}</span>{" "}
               supervision training · OpenAgentDojo v1
             </p>
 
