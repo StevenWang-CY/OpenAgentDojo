@@ -279,8 +279,8 @@ const SCENE_CSS = `
 .scene-wrap {
   position: relative;
   perspective: 2400px;
-  perspective-origin: 30% 50%;
-  min-height: 580px;
+  perspective-origin: 30% 55%;
+  min-height: 760px;
 }
 .scene-stage {
   position: absolute;
@@ -288,20 +288,31 @@ const SCENE_CSS = `
   transform-style: preserve-3d;
   /* Reference photo is shot near head-on with a small 3/4 reveal.
    * A lighter tilt keeps inner text readable while still showing
-   * real edge thickness on every glass surface. */
-  transform: rotateY(-9deg) rotateX(2deg);
+   * real edge thickness on every glass surface.
+   *
+   * Transform reads right-to-left:
+   *   1) scale(1.13)       — composition reads bigger
+   *   2) rotateX/Y         — 3/4 perspective tilt
+   *   3) translateY(28px)  — drops the whole scaled+tilted stage
+   *                          down a touch so it sits lower against
+   *                          the heading on the left column
+   * transform-origin pulled up to 36% biases the scale growth
+   * downward as well, compounding with the translateY for a clean
+   * "bigger AND lower" feel without touching per-element coords. */
+  transform: translateY(28px) rotateY(-9deg) rotateX(2deg) scale(1.13);
+  transform-origin: 50% 36%;
 }
 
 /* Contact shadow where the device meets the plinth top — a narrow
  * diffuse band that grounds the device into the slab. */
 .device-contact {
   position: absolute;
-  top: 318px;
+  top: 396px;
   left: 8%; right: 10%;
-  height: 8px;
+  height: 10px;
   background: radial-gradient(ellipse 80% 100% at 50% 0%,
-    oklch(40% 0.02 245 / 0.22), transparent 75%);
-  filter: blur(3px);
+    oklch(38% 0.02 245 / 0.28), transparent 75%);
+  filter: blur(3.5px);
   transform: translateZ(-5px);
   pointer-events: none;
 }
@@ -349,138 +360,180 @@ const SCENE_CSS = `
   pointer-events: none;
 }
 
-.sq-1 { width: 68px; height: 68px; top: 18px;  left: 12%;
+.sq-1 { width: 68px; height: 68px; top: 96px;  left: 12%;
         transform: translateZ(-40px) rotate(-2deg); }
-.sq-2 { width: 48px; height: 48px; top: 34px;  right: 4%;
+.sq-2 { width: 48px; height: 48px; top: 112px; right: 4%;
         transform: translateZ(-55px) rotate(3deg); }
-.sq-3 { width: 84px; height: 84px; top: 198px; right: -5%;
+.sq-3 { width: 84px; height: 84px; top: 276px; right: -5%;
         transform: translateZ(-50px) rotate(4deg); }
-.sq-4 { width: 42px; height: 42px; top: 88px;  right: -2%;
+.sq-4 { width: 42px; height: 42px; top: 166px; right: -2%;
         transform: translateZ(-65px) rotate(-3deg); }
-.sq-5 { width: 56px; height: 56px; top: 270px; left: -3%;
+.sq-5 { width: 56px; height: 56px; top: 350px; left: -3%;
         transform: translateZ(-30px) rotate(-1deg); }
-.sq-6 { width: 38px; height: 38px; top: 156px; right: 6%;
+.sq-6 { width: 38px; height: 38px; top: 234px; right: 6%;
         transform: translateZ(-25px) rotate(2deg); }
 
-/* Pedestal — a real glass slab with TOP face, FRONT face, and a thin
- * specular bottom rim highlight. */
+/* Pedestal — a real chunky glass slab. THREE composed elements:
+ *   .plinth-top    polished top reflective surface (the device rests on)
+ *   .plinth-front  substantial front face — the visible 3D mass, ~64px
+ *                  tall, with a clear vertical depth gradient
+ *   .plinth-rim    thin specular highlight along the bottom edge that
+ *                  catches the floor light
+ * Together they read as ~92px of solid glass thickness — chunkier than
+ * a shelf, lighter than a monitor stand. Extends ~6% past the device on
+ * each side, matching the reference's wider-than-device base. */
 .plinth-top {
   position: absolute;
-  top: 322px;
-  left: -4%; right: -4%;
-  height: 18px;
-  border-radius: 14px 14px 5px 5px;
+  top: 400px;
+  left: -6%; right: -6%;
+  height: 26px;
+  border-radius: 16px 16px 6px 6px;
   background:
-    radial-gradient(120% 200% at 50% -40%,
-      oklch(100% 0 0 / 0.4) 0%, transparent 60%),
+    /* Long horizontal reflection band across the top surface */
+    linear-gradient(90deg,
+      transparent 0%,
+      oklch(100% 0 0 / 0.55) 18%,
+      oklch(100% 0 0 / 0.75) 50%,
+      oklch(100% 0 0 / 0.5) 82%,
+      transparent 100%),
+    /* Soft radial catchlight from above */
+    radial-gradient(120% 220% at 50% -30%,
+      oklch(100% 0 0 / 0.55) 0%, transparent 65%),
     linear-gradient(180deg,
-      oklch(100% 0 0 / 0.85) 0%,
-      oklch(98% 0.006 245 / 0.7) 60%,
-      oklch(94% 0.012 245 / 0.55) 100%);
-  backdrop-filter: blur(26px) saturate(140%);
-  -webkit-backdrop-filter: blur(26px) saturate(140%);
-  border: 1px solid oklch(100% 0 0 / 0.8);
+      oklch(100% 0 0 / 0.92) 0%,
+      oklch(98% 0.006 245 / 0.78) 55%,
+      oklch(94% 0.014 245 / 0.6) 100%);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid oklch(100% 0 0 / 0.85);
   border-top-color: oklch(100% 0 0 / 1);
   border-left-color: oklch(100% 0 0 / 0.95);
-  border-bottom-color: oklch(100% 0 0 / 0.3);
+  border-bottom-color: oklch(100% 0 0 / 0.32);
   border-right-color: oklch(100% 0 0 / 0.22);
   box-shadow:
-    0 2px 3px -1px oklch(60% 0.03 245 / 0.18),
-    inset 0 2.5px 0 oklch(100% 0 0 / 1),
-    inset 1.5px 0 0 oklch(100% 0 0 / 0.88),
-    inset 0 -1.5px 0 oklch(70% 0.025 245 / 0.22);
+    0 3px 4px -1px oklch(58% 0.03 245 / 0.22),
+    inset 0 3px 0 oklch(100% 0 0 / 1),
+    inset 2px 0 0 oklch(100% 0 0 / 0.9),
+    inset 0 -2px 0 oklch(68% 0.03 245 / 0.28);
   transform: translateZ(-8px);
 }
 .plinth-front {
   position: absolute;
-  top: 340px;
-  left: -3.5%; right: -3.5%;
-  height: 46px;
-  border-radius: 0 0 13px 13px;
-  background: linear-gradient(180deg,
-    oklch(98% 0.006 245 / 0.75) 0%,
-    oklch(94% 0.012 245 / 0.62) 18%,
-    oklch(90% 0.022 245 / 0.5) 55%,
-    oklch(84% 0.032 245 / 0.42) 100%);
-  backdrop-filter: blur(24px) saturate(135%);
-  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  top: 424px;
+  left: -5.5%; right: -5.5%;
+  height: 66px;
+  border-radius: 0 0 14px 14px;
+  background:
+    /* Subtle vertical specular highlight near the top edge */
+    linear-gradient(180deg,
+      oklch(100% 0 0 / 0.42) 0%,
+      transparent 18%),
+    /* Main depth gradient: lighter at top, cooler/darker toward the
+     * bottom — what makes the front face read as a real 3D plane */
+    linear-gradient(180deg,
+      oklch(98% 0.006 245 / 0.78) 0%,
+      oklch(94% 0.014 245 / 0.65) 22%,
+      oklch(88% 0.026 245 / 0.55) 58%,
+      oklch(80% 0.038 245 / 0.48) 100%);
+  backdrop-filter: blur(26px) saturate(135%);
+  -webkit-backdrop-filter: blur(26px) saturate(135%);
   border: 1px solid oklch(100% 0 0 / 0.5);
   border-top: 0;
-  border-bottom-color: oklch(72% 0.045 245 / 0.4);
+  border-bottom-color: oklch(68% 0.05 245 / 0.45);
   box-shadow:
-    0 44px 56px -22px oklch(40% 0.025 245 / 0.32),
-    0 22px 32px -12px oklch(40% 0.025 245 / 0.22),
-    0 6px 14px oklch(40% 0.025 245 / 0.1),
-    inset 0 1px 0 oklch(100% 0 0 / 0.78),
-    inset 0 -2.5px 0 oklch(72% 0.045 245 / 0.36),
-    inset 1.5px 0 0 oklch(100% 0 0 / 0.62),
-    inset -1.5px 0 0 oklch(72% 0.045 245 / 0.25);
+    /* Large diffuse cast shadow on the floor below the plinth */
+    0 56px 70px -22px oklch(38% 0.03 245 / 0.38),
+    0 28px 42px -14px oklch(38% 0.03 245 / 0.26),
+    0 8px 18px oklch(38% 0.03 245 / 0.12),
+    /* Bright top edge — catches light from the same source the top
+     * face's reflection comes from */
+    inset 0 1.5px 0 oklch(100% 0 0 / 0.85),
+    /* Cooler bottom edge — the slab's bottom rim falling into shadow */
+    inset 0 -3px 0 oklch(68% 0.05 245 / 0.42),
+    /* Side highlights confirming the front IS a flat 3D face */
+    inset 2px 0 0 oklch(100% 0 0 / 0.7),
+    inset -2px 0 0 oklch(68% 0.05 245 / 0.3);
   transform: translateZ(-28px);
 }
 .plinth-rim {
   position: absolute;
-  top: 384px;
+  top: 488px;
   left: 4%; right: 4%;
   height: 2px;
   border-radius: 1px;
   background: linear-gradient(90deg,
     transparent 0%,
-    oklch(100% 0 0 / 0.55) 20%,
-    oklch(100% 0 0 / 0.7) 50%,
-    oklch(100% 0 0 / 0.4) 80%,
+    oklch(100% 0 0 / 0.65) 20%,
+    oklch(100% 0 0 / 0.8) 50%,
+    oklch(100% 0 0 / 0.45) 80%,
     transparent 100%);
   filter: blur(0.6px);
   transform: translateZ(-22px);
   pointer-events: none;
 }
 
-/* Device frame */
+/* Device frame — translucent glass HOUSING with visibly thick bezel.
+ * Increased padding (20px vs 14px) makes the white frame around the
+ * inner cards substantial, the way the reference photo's device clearly
+ * shows ~18-22px of glass bezel on every side. The radial highlight at
+ * 0%,0% + bright inset top/left edges sell the glass picking up light
+ * from upper-left; the bottom/right edges fall into cooler shadow,
+ * which is what makes the housing read as a 3D object rather than a
+ * sticker. */
 .device {
   position: absolute;
-  top: 30px; right: 4%;
+  top: 108px; right: 4%;
   width: 78%; max-width: 470px;
   min-height: 300px;
-  padding: 14px;
-  border-radius: 22px;
+  padding: 20px;
+  border-radius: 24px;
   transform: translateZ(40px);
   background:
-    radial-gradient(120% 100% at 0% 0%,
-      oklch(100% 0 0 / 0.5) 0%, oklch(100% 0 0 / 0.18) 65%),
+    radial-gradient(130% 110% at 0% 0%,
+      oklch(100% 0 0 / 0.55) 0%, oklch(100% 0 0 / 0.18) 60%),
     linear-gradient(140deg,
-      oklch(100% 0 0 / 0.4) 0%, oklch(96% 0.008 245 / 0.28) 100%);
-  backdrop-filter: blur(28px) saturate(145%);
-  -webkit-backdrop-filter: blur(28px) saturate(145%);
-  border: 1px solid oklch(100% 0 0 / 0.6);
-  border-top-color: oklch(100% 0 0 / 0.95);
-  border-left-color: oklch(100% 0 0 / 0.8);
-  border-bottom-color: oklch(100% 0 0 / 0.22);
+      oklch(100% 0 0 / 0.42) 0%, oklch(96% 0.008 245 / 0.26) 100%);
+  backdrop-filter: blur(30px) saturate(150%);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  border: 1px solid oklch(100% 0 0 / 0.62);
+  border-top-color: oklch(100% 0 0 / 1);
+  border-left-color: oklch(100% 0 0 / 0.88);
+  border-bottom-color: oklch(100% 0 0 / 0.24);
   border-right-color: oklch(100% 0 0 / 0.18);
   box-shadow:
-    0 60px 90px -32px oklch(38% 0.03 250 / 0.38),
-    0 28px 48px -18px oklch(38% 0.03 250 / 0.22),
-    0 6px 14px oklch(38% 0.03 250 / 0.1),
-    inset 0 2px 0 oklch(100% 0 0 / 0.95),
-    inset 2px 0 0 oklch(100% 0 0 / 0.6),
-    inset 0 -1.5px 0 oklch(70% 0.02 250 / 0.18),
-    inset -1.5px 0 0 oklch(70% 0.02 250 / 0.12);
+    /* Outer cast shadow stack — large diffuse + tight contact */
+    0 64px 96px -32px oklch(38% 0.03 250 / 0.42),
+    0 30px 52px -18px oklch(38% 0.03 250 / 0.26),
+    0 8px 16px oklch(38% 0.03 250 / 0.12),
+    /* Bright top + left highlights catching the upper-left light */
+    inset 0 2.5px 0 oklch(100% 0 0 / 1),
+    inset 2.5px 0 0 oklch(100% 0 0 / 0.7),
+    /* Bottom + right edges fall into cool shadow */
+    inset 0 -2px 0 oklch(68% 0.025 250 / 0.22),
+    inset -2px 0 0 oklch(68% 0.025 250 / 0.16);
 }
+/* Device-back: visible glass thickness on the right edge. Offset further
+ * right + down so it reads as a real back panel behind the device, not
+ * a drop shadow. */
 .device-back {
   position: absolute;
-  top: 64px; right: -5%;
+  top: 144px; right: -6%;
   width: 78%; max-width: 470px;
   height: 296px;
-  border-radius: 22px;
+  border-radius: 24px;
   background: linear-gradient(140deg,
-    oklch(100% 0 0 / 0.5), oklch(95% 0.012 245 / 0.22));
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid oklch(100% 0 0 / 0.52);
-  border-top-color: oklch(100% 0 0 / 0.84);
+    oklch(100% 0 0 / 0.52), oklch(94% 0.014 245 / 0.24));
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid oklch(100% 0 0 / 0.55);
+  border-top-color: oklch(100% 0 0 / 0.88);
   border-left-color: oklch(100% 0 0 / 0.62);
+  border-right-color: oklch(100% 0 0 / 0.2);
   box-shadow:
-    0 30px 46px -22px oklch(38% 0.03 250 / 0.24),
-    inset 0 1.5px 0 oklch(100% 0 0 / 0.82),
-    inset 1.5px 0 0 oklch(100% 0 0 / 0.48);
+    0 32px 50px -22px oklch(38% 0.03 250 / 0.26),
+    inset 0 2px 0 oklch(100% 0 0 / 0.86),
+    inset 1.5px 0 0 oklch(100% 0 0 / 0.5),
+    inset -1.5px 0 0 oklch(68% 0.025 250 / 0.18);
   transform: translateZ(8px);
   pointer-events: none;
 }
@@ -489,7 +542,7 @@ const SCENE_CSS = `
   font-weight: 600;
   color: var(--color-foreground);
   letter-spacing: -0.01em;
-  padding: 4px 6px 10px;
+  padding: 2px 4px 14px;
   margin: 0;
 }
 
@@ -500,14 +553,15 @@ const SCENE_CSS = `
   gap: 10px;
 }
 .inner-card {
-  background: oklch(100% 0 0 / 0.94);
+  background: oklch(100% 0 0 / 0.96);
   border-radius: 14px;
-  border: 1px solid oklch(100% 0 0 / 0.85);
+  border: 1px solid oklch(92% 0.008 245 / 0.6);
   border-top-color: oklch(100% 0 0 / 1);
-  border-bottom-color: oklch(94% 0.005 245);
-  padding: 10px 14px;
+  border-bottom-color: oklch(92% 0.008 245);
+  padding: 12px 14px;
   box-shadow:
-    0 1px 2px oklch(38% 0.03 250 / 0.06),
+    0 2px 5px -2px oklch(38% 0.03 250 / 0.1),
+    0 1px 2px oklch(38% 0.03 250 / 0.05),
     inset 0 1px 0 oklch(100% 0 0 / 1);
 }
 
@@ -581,7 +635,7 @@ const SCENE_CSS = `
  * gradient bottom-right matches the reference's strong color presence. */
 .bot-tile {
   position: absolute;
-  top: 140px; left: 4%;
+  top: 218px; left: 4%;
   width: 124px; height: 124px;
   border-radius: 24px;
   display: grid; place-items: center;
@@ -609,7 +663,7 @@ const SCENE_CSS = `
 }
 .bot-tile-back {
   position: absolute;
-  top: 148px; left: 1%;
+  top: 226px; left: 1%;
   width: 124px; height: 124px;
   border-radius: 24px;
   background: linear-gradient(160deg,
@@ -625,11 +679,21 @@ const SCENE_CSS = `
 .bot-tile svg { width: 64px; height: 64px; color: oklch(54% 0.18 264); }
 
 @media (max-width: 760px) {
-  .scene-wrap { min-height: 460px; margin-top: 24px; }
+  .scene-wrap { min-height: 520px; margin-top: 24px; }
   .scene-stage { transform: rotateY(-8deg) rotateX(2deg); }
-  .device { right: 4%; width: 86%; }
-  .device-back { right: 0%; width: 86%; }
-  .bot-tile { left: 0%; top: 124px; }
-  .bot-tile-back { left: -3%; top: 132px; }
+  .device { top: 48px; right: 4%; width: 86%; }
+  .device-back { top: 82px; right: 0%; width: 86%; }
+  .device-contact { top: 336px; }
+  .bot-tile { left: 0%; top: 158px; }
+  .bot-tile-back { left: -3%; top: 166px; }
+  .plinth-top { top: 340px; }
+  .plinth-front { top: 364px; }
+  .plinth-rim { top: 428px; }
+  .sq-1 { top: 36px; }
+  .sq-2 { top: 52px; }
+  .sq-3 { top: 216px; }
+  .sq-4 { top: 106px; }
+  .sq-5 { top: 290px; }
+  .sq-6 { top: 174px; }
 }
 `;
