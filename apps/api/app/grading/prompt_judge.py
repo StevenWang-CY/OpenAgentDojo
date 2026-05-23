@@ -330,7 +330,8 @@ class PromptJudge:
                 # cached object that an in-memory test fixture might be
                 # holding (the production DB-row path returns a freshly
                 # built dataclass per call, which has the same effect).
-                return replace(cached, cache_hit=True)
+                refreshed: PromptJudgement = replace(cached, cache_hit=True)
+                return refreshed
         if not self._enabled:
             return PromptJudgement(
                 cache_key=cache_key,

@@ -889,12 +889,12 @@ async def post_give_up(
     # cap was binding (true), or was it under 50 already (false)? Both
     # cases still record the deliberate forfeit; the dimension distinguishes
     # "stopped a strong attempt" from "stopped a weak attempt".
-    cap_was_binding = submission.total_score < (
-        submission.score_report.get("uncapped_total")
-        if isinstance(submission.score_report, dict)
-        and isinstance(submission.score_report.get("uncapped_total"), int)
-        else submission.total_score
-    )
+    uncapped: int = submission.total_score
+    if isinstance(submission.score_report, dict):
+        candidate = submission.score_report.get("uncapped_total")
+        if isinstance(candidate, int):
+            uncapped = candidate
+    cap_was_binding = submission.total_score < uncapped
     give_ups_total.labels(
         mission_id=row.mission_id,
         cap_applied="true" if cap_was_binding else "false",

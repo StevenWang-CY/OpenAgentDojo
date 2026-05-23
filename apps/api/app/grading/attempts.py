@@ -74,7 +74,7 @@ def candidate_beats(candidate: Any, current: Any) -> bool:
         return False
     if curr_t is None:
         return True
-    return cand_t > curr_t
+    return bool(cand_t > curr_t)
 
 
 def _score_int(obj: Any) -> int:

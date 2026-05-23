@@ -53,7 +53,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def dispatch(self, request: Request, call_next):
         request_id = _coerce_incoming(request.headers.get(REQUEST_ID_HEADER))
         request.state.request_id = request_id
 

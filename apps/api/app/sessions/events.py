@@ -94,7 +94,7 @@ def _is_redis_transport_error(exc: BaseException) -> bool:
     Imported lazily so the runtime doesn't pull ``redis`` at module import.
     """
     try:
-        from redis import exceptions as redis_exc  # type: ignore
+        from redis import exceptions as redis_exc
     except Exception:  # pragma: no cover — redis missing entirely
         return False
     return isinstance(exc, (redis_exc.ConnectionError, redis_exc.TimeoutError))

@@ -136,4 +136,4 @@ def dump_calibration_yaml(c: CalibrationFile) -> str:
             for s in c.scenarios
         ],
     }
-    return yaml.safe_dump(payload, sort_keys=False)
+    return str(yaml.safe_dump(payload, sort_keys=False))
