@@ -55,22 +55,56 @@ def test_uses_selection_before_last_prompt_not_the_final_clear() -> None:
     )
 
 
-def test_no_prompt_yet_falls_back_to_max_across_selections() -> None:
+def test_no_prompt_yet_falls_back_to_latest_selection() -> None:
+    """Without a submitted prompt, score the supervisor's most recent
+    deliberate selection — not the best one they ever made. The previous
+    rule (max across all selections) let brute-force enumeration inflate
+    the score; the new rule rewards the final considered choice."""
     manifest = _Manifest(
         expected_context=_ExpectedContext(required=["src/a.ts", "src/b.ts"])
     )
     events = [
-        _evt("context.selected", {"files": ["src/a.ts"]},
-             "2026-05-22T10:00:00Z"),
-        # Better selection later — should be used because no prompt submitted.
+        # Best selection — but not the operative one.
         _evt("context.selected", {"files": ["src/a.ts", "src/b.ts"]},
+             "2026-05-22T10:00:00Z"),
+        # Latest selection — only this one counts.
+        _evt("context.selected", {"files": ["src/a.ts"]},
              "2026-05-22T10:01:00Z"),
     ]
     score = _score_context_selection(events, manifest)
-    # max recall over the two selections → full credit.
-    assert score.score == 7, (
-        f"max-across-selections fallback should yield 7 (required only); "
+    # Latest had 1/2 required → round(0.5 * 7 + 0 * 3) = round(3.5) = 4.
+    assert score.score == 4, (
+        f"latest-selection fallback should yield 4 (half of required); "
         f"got {score.score}; signals={score.signals}"
+    )
+
+
+def test_brute_force_enumeration_does_not_inflate_score() -> None:
+    """Regression guard for P0-2: a supervisor who cycles through every
+    plausible file subset before settling on a wrong final selection must
+    not be credited with the best subset they ever tried."""
+    manifest = _Manifest(
+        expected_context=_ExpectedContext(
+            required=["src/a.ts", "src/b.ts", "src/c.ts"]
+        )
+    )
+    # Simulate brute-force exploration: every single-file selection plus the
+    # full required set, then a final wrong selection.
+    events = [
+        _evt("context.selected", {"files": ["src/a.ts"]}, "2026-05-22T10:00:00Z"),
+        _evt("context.selected", {"files": ["src/b.ts"]}, "2026-05-22T10:00:10Z"),
+        _evt("context.selected", {"files": ["src/c.ts"]}, "2026-05-22T10:00:20Z"),
+        _evt("context.selected",
+             {"files": ["src/a.ts", "src/b.ts", "src/c.ts"]},
+             "2026-05-22T10:00:30Z"),  # this would have been full credit
+        _evt("context.selected", {"files": ["unrelated.ts"]},
+             "2026-05-22T10:00:40Z"),  # but they finally picked the wrong file
+    ]
+    score = _score_context_selection(events, manifest)
+    assert score.score == 0, (
+        f"brute-force enumeration must not inflate the score — the final "
+        f"selection had zero required files; got {score.score}; "
+        f"signals={score.signals}"
     )
 
 

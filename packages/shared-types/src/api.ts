@@ -100,10 +100,10 @@ export interface User {
   email: string;
   display_name: string | null;
   github_login: string | null;
-  /** Lowercased mailbox local-part with disambiguating suffix; backend will
-   *  populate from M3 onwards. Optional today since `UserRead` doesn't ship
-   *  it yet. */
-  handle?: string;
+  /** Lowercased mailbox local-part with disambiguating suffix. Backend
+   *  schema (`UserRead.handle: str | None`) is nullable for legacy / not-yet-
+   *  migrated rows — callers must handle the null branch. */
+  handle: string | null;
   created_at: ISODateString;
   last_login_at: ISODateString | null;
   /** CSRF token issued on every /me call (re-uses the existing cookie when
@@ -147,12 +147,31 @@ export type RubricDimension =
   | "diff_minimality";
 
 export interface ScoreDimension {
-  score: number;
+  /** `null` when the dimension is pending measurement (e.g. prompt-quality
+   *  judge cache cold + LLM unavailable). The frontend renders pending
+   *  dimensions with a distinct "—" marker instead of a number. */
+  score: number | null;
   max: number;
   signals: string[];
 }
 
 export type ScoreBreakdown = Record<RubricDimension, ScoreDimension>;
+
+/** One per weak dimension. Tells the user WHY they scored low and WHAT to
+ *  do next. Populated by the diagnostic narrative generator (P2-1). */
+export interface Diagnostic {
+  dimension: RubricDimension;
+  score: number | null;
+  max: number;
+  /** Plain-English explanation of the most likely cause, derived from the
+   *  raw scoring signals (e.g. "you submitted 12s after agent responded
+   *  without opening the diff"). */
+  cause: string;
+  /** Concrete next-step recommendation, often suggesting other missions
+   *  that target this dimension. */
+  recommendation: string;
+  recommended_mission_ids: string[];
+}
 
 export interface ScoreReport {
   total: number;
@@ -161,6 +180,15 @@ export interface ScoreReport {
   weaknesses: string[];
   missed_failure_mode: boolean;
   badges_earned: string[];
+  /** Per-dimension diagnostic + next-mission recommendations. Empty array
+   *  when no weaknesses (the user nailed everything) or when the
+   *  dimension-level signals were insufficient to derive a cause. */
+  feedback_narrative?: Diagnostic[];
+  /** Effective maximum total this report could have reached. 100 in the
+   *  normal case; drops to 90 when prompt_quality is pending, etc. The FE
+   *  should render the score as ``total / effective_max`` rather than
+   *  hardcoding /100 (see apps/api/app/grading/score.py). */
+  effective_max?: number;
 }
 
 export interface ValidatorResult {
@@ -171,10 +199,19 @@ export interface ValidatorResult {
   evidence?: { file?: string; line?: number; snippet?: string }[];
 }
 
+/** One entry in ``visible_test_results`` / ``hidden_test_results``.
+ *  Matches the wire shape ``TestRunResult.to_dict()`` emits server-side
+ *  (apps/api/app/grading/validators/tests_pass.py:26-35). The earlier
+ *  ``{name, passed, duration_ms}`` shape was speculative and never
+ *  matched the actual backend payload. */
 export interface TestResult {
-  name: string;
-  passed: boolean;
-  duration_ms: number | null;
+  suite: string;
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  passed: number;
+  failed: number;
+  skipped: number;
 }
 
 /** `GET /reports/{submission_id}` (and `GET /sessions/{id}/submission`)
@@ -220,6 +257,32 @@ export interface MissionHistoryItem {
   difficulty: Difficulty;
 }
 
+/** One `(completed_at, score)` point on a per-dimension sparkline. */
+export interface DimensionTrendPoint {
+  completed_at: ISODateString;
+  score: number;
+}
+
+/** Per-failure-mode mastery row in the skills catalog (P2-3). */
+export interface FailureModeMastery {
+  failure_mode: string;
+  failure_mode_title: string | null;
+  mission_ids: string[];
+  mission_titles: string[];
+  sessions_attempted: number;
+  sessions_passed: number;
+  avg_score: number | null;
+  best_score: number | null;
+  last_attempted_at: ISODateString | null;
+}
+
+/** `GET /api/v1/profiles/me/skills` payload. */
+export interface SkillsCatalog {
+  failure_modes: FailureModeMastery[];
+  total_missions: number;
+  total_failure_modes: number;
+}
+
 export interface PublicProfile {
   handle: string;
   display_name: string | null;
@@ -227,6 +290,10 @@ export interface PublicProfile {
   badges: EarnedBadge[];
   history: MissionHistoryItem[];
   radar_averages: Partial<Record<RubricDimension, number>>;
+  /** Per-dimension chronological score trail for the longitudinal
+   *  sparklines (P2-2). Oldest first. Pending scores are excluded — the
+   *  trail only contains points the grader could actually measure. */
+  dimension_trends?: Partial<Record<RubricDimension, DimensionTrendPoint[]>>;
   total_missions: number;
   best_score: number | null;
 }

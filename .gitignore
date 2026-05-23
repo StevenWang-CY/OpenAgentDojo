@@ -45,6 +45,10 @@ docker-compose.override.yml
 .local/
 .claude/
 
+# --- Playwright / Vitest local runs ---
+test-results/
+playwright-report/
+
 # --- Generated artifacts ---
 # Generated TS types from the FastAPI OpenAPI schema (committed; CI checks drift).
 # Listed here only as a reminder of what NOT to hand-edit; the actual file is

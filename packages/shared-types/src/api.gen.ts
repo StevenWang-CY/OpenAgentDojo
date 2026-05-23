@@ -140,6 +140,31 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/profiles/me/skills': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Per-failure-mode mastery summary for the logged-in user
+     * @description Return the failure-mode catalog with the user's attempt/pass stats.
+     *
+     *     The catalog groups the 10 supervision failure modes (one per mission)
+     *     and reports, for each, the user's attempt count, pass count, and
+     *     average + best total score. A "pass" is a session whose score_report
+     *     has ``missed_failure_mode == False``.
+     */
+    get: operations['get_my_skills_api_v1_profiles_me_skills_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/profiles/{handle}': {
     parameters: {
       query?: never;
@@ -153,6 +178,11 @@ export interface paths {
      *
      *     No authentication required — public surface per §13.1. Returns 404 with
      *     ``{"detail": "profile not found"}`` when no user owns this handle.
+     *
+     *     The detailed per-dimension longitudinal trail is only returned to the
+     *     profile owner themselves — anonymous and other-user viewers see the
+     *     radar averages but not the trend per session. This avoids leaking a
+     *     fingerprintable skill trajectory of any user by handle.
      */
     get: operations['get_profile_api_v1_profiles__handle__get'];
     put?: never;
@@ -720,6 +750,19 @@ export interface components {
       path: string;
     };
     /**
+     * DimensionTrendPoint
+     * @description One ``(completed_at, score)`` point on a per-dimension sparkline.
+     */
+    DimensionTrendPoint: {
+      /**
+       * Completed At
+       * Format: date-time
+       */
+      completed_at: string;
+      /** Score */
+      score: number;
+    };
+    /**
      * EarnedBadgeRead
      * @description Badge plus when/where it was earned (from ``user_badges``).
      */
@@ -739,6 +782,41 @@ export interface components {
       session_id?: string | null;
       /** Title */
       title: string;
+    };
+    /**
+     * FailureModeMastery
+     * @description Per-failure-mode mastery summary for the logged-in user (P2-3).
+     *
+     *     Powers the "skills" / "failure-mode catalog" page: the user sees, for
+     *     each of the 10 supervision failure modes, how many sessions they
+     *     attempted, how many they passed (hidden tests green), and their
+     *     average score across attempts.
+     */
+    FailureModeMastery: {
+      /** Avg Score */
+      avg_score?: number | null;
+      /** Best Score */
+      best_score?: number | null;
+      /** Failure Mode */
+      failure_mode: string;
+      /** Failure Mode Title */
+      failure_mode_title?: string | null;
+      /** Last Attempted At */
+      last_attempted_at?: string | null;
+      /** Mission Ids */
+      mission_ids?: string[];
+      /** Mission Titles */
+      mission_titles?: string[];
+      /**
+       * Sessions Attempted
+       * @default 0
+       */
+      sessions_attempted: number;
+      /**
+       * Sessions Passed
+       * @default 0
+       */
+      sessions_passed: number;
     };
     /**
      * FileContent
@@ -1010,6 +1088,10 @@ export interface components {
       badges?: components['schemas']['EarnedBadgeRead'][];
       /** Best Score */
       best_score?: number | null;
+      /** Dimension Trends */
+      dimension_trends?: {
+        [key: string]: components['schemas']['DimensionTrendPoint'][];
+      };
       /** Display Name */
       display_name?: string | null;
       /** Handle */
@@ -1147,6 +1229,24 @@ export interface components {
       share_token: string;
       /** Share Url */
       share_url: string;
+    };
+    /**
+     * SkillsCatalog
+     * @description Payload of ``GET /api/v1/profiles/me/skills``.
+     */
+    SkillsCatalog: {
+      /** Failure Modes */
+      failure_modes?: components['schemas']['FailureModeMastery'][];
+      /**
+       * Total Failure Modes
+       * @default 0
+       */
+      total_failure_modes: number;
+      /**
+       * Total Missions
+       * @default 0
+       */
+      total_missions: number;
     };
     /** SubmissionRead */
     SubmissionRead: {
@@ -1460,6 +1560,26 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_my_skills_api_v1_profiles_me_skills_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SkillsCatalog'];
         };
       };
     };

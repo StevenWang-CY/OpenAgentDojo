@@ -62,6 +62,13 @@ class MissionHistoryItemRead(BaseModel):
     difficulty: Difficulty
 
 
+class DimensionTrendPoint(BaseModel):
+    """One ``(completed_at, score)`` point on a per-dimension sparkline."""
+
+    completed_at: datetime
+    score: int
+
+
 class PublicProfile(BaseModel):
     """Payload of `GET /api/v1/profiles/{handle}`.
 
@@ -78,13 +85,51 @@ class PublicProfile(BaseModel):
     # Only dimensions that appeared in at least one of the user's submissions
     # are populated; absent keys mean the dimension was never scored.
     radar_averages: dict[str, float] = Field(default_factory=dict)
+    # Per-dimension chronological score trail for the longitudinal sparklines
+    # (P2-2). Each dimension maps to a list of ``(completed_at, score)``
+    # points, oldest first. Pending dimension scores (``null``) are skipped
+    # — a sparkline plots only points the grader could actually measure.
+    dimension_trends: dict[str, list[DimensionTrendPoint]] = Field(
+        default_factory=dict
+    )
     total_missions: int = 0
     best_score: int | None = None
 
 
+class FailureModeMastery(BaseModel):
+    """Per-failure-mode mastery summary for the logged-in user (P2-3).
+
+    Powers the "skills" / "failure-mode catalog" page: the user sees, for
+    each of the 10 supervision failure modes, how many sessions they
+    attempted, how many they passed (hidden tests green), and their
+    average score across attempts.
+    """
+
+    failure_mode: str
+    failure_mode_title: str | None = None
+    mission_ids: list[str] = Field(default_factory=list)
+    mission_titles: list[str] = Field(default_factory=list)
+    sessions_attempted: int = 0
+    sessions_passed: int = 0
+    avg_score: float | None = None
+    best_score: int | None = None
+    last_attempted_at: datetime | None = None
+
+
+class SkillsCatalog(BaseModel):
+    """Payload of ``GET /api/v1/profiles/me/skills``."""
+
+    failure_modes: list[FailureModeMastery] = Field(default_factory=list)
+    total_missions: int = 0
+    total_failure_modes: int = 0
+
+
 __all__ = [
     "BadgeRead",
+    "DimensionTrendPoint",
     "EarnedBadgeRead",
+    "FailureModeMastery",
     "MissionHistoryItemRead",
     "PublicProfile",
+    "SkillsCatalog",
 ]

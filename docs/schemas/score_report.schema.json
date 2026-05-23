@@ -37,7 +37,7 @@
         },
         "verification": {
           "$ref": "#/$defs/dimension",
-          "description": "Command-run discipline (tests, typecheck, lint, regression). Max 20."
+          "description": "Command-run discipline (tests, typecheck, lint, regression). Max 15."
         },
         "agent_review": {
           "$ref": "#/$defs/dimension",
@@ -57,7 +57,7 @@
         },
         "diff_minimality": {
           "$ref": "#/$defs/dimension",
-          "description": "Lines added relative to expected_diff_lines_p50. Max 5."
+          "description": "Lines added relative to expected_diff_lines_p50. Max 10."
         }
       }
     },
@@ -82,18 +82,39 @@
       "uniqueItems": true
     },
     "feedback_narrative": {
-      "type": "string",
-      "description": "Optional longer-form markdown feedback for the post-mission report."
+      "type": "array",
+      "description": "Per-dimension diagnostic + next-mission recommendation. One entry per weakness, ordered by severity. Empty when there are no weaknesses or when the dimension's signals were insufficient to derive a cause.",
+      "items": { "$ref": "#/$defs/diagnostic" }
     }
   },
   "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension", "score", "max", "cause", "recommendation", "recommended_mission_ids"],
+      "properties": {
+        "dimension": { "type": "string" },
+        "score": {
+          "type": ["integer", "null"],
+          "description": "null when the dimension is pending (e.g. prompt-quality judge cache cold + LLM unavailable)."
+        },
+        "max": { "type": "integer" },
+        "cause": { "type": "string" },
+        "recommendation": { "type": "string" },
+        "recommended_mission_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "dimension": {
       "type": "object",
       "additionalProperties": false,
       "required": ["score", "max", "signals"],
       "properties": {
         "score": {
-          "type": "integer",
+          "type": ["integer", "null"],
+          "description": "null when measurement is pending (P0-1).",
           "minimum": 0,
           "maximum": 100
         },

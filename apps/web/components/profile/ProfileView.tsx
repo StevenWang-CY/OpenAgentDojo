@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, UserX } from "lucide-react";
+import type { PublicProfile } from "@arena/shared-types";
 import { ApiError, getProfile } from "@/lib/api";
 import { ProfileHeader } from "./ProfileHeader";
 import { BadgeGrid } from "./BadgeGrid";
@@ -118,6 +119,29 @@ export function ProfileView({ handle }: ProfileViewProps) {
       />
       <BadgeGrid badges={profile.badges} />
 
+      <div className="mt-4 flex justify-end">
+        <Button asChild variant="secondary" size="sm">
+          <Link href="/skills">View skill mastery →</Link>
+        </Button>
+      </div>
+
+      {profile.dimension_trends &&
+      Object.keys(profile.dimension_trends).length > 0 ? (
+        <>
+          <SectionHeading
+            title="dimension trends"
+            count={`${
+              Object.values(profile.dimension_trends).reduce(
+                (acc, arr) => acc + (arr?.length ?? 0),
+                0,
+              )
+            } scored sessions`}
+            id="trends-heading"
+          />
+          <DimensionTrends trends={profile.dimension_trends} />
+        </>
+      ) : null}
+
       <SectionHeading
         title="mission history"
         count={`${profile.history.length} session${profile.history.length === 1 ? "" : "s"}`}
@@ -125,6 +149,149 @@ export function ProfileView({ handle }: ProfileViewProps) {
       />
       <MissionHistoryTable items={profile.history} />
     </main>
+  );
+}
+
+const DIMENSION_LABELS: Record<string, string> = {
+  final_correctness: "Final patch correctness",
+  verification: "Verification discipline",
+  agent_review: "Agent output review",
+  prompt_quality: "Prompt quality",
+  context_selection: "Context selection",
+  safety: "Safety awareness",
+  diff_minimality: "Diff minimality",
+};
+
+const DIMENSION_MAX: Record<string, number> = {
+  final_correctness: 30,
+  verification: 15,
+  agent_review: 15,
+  prompt_quality: 10,
+  context_selection: 10,
+  safety: 10,
+  diff_minimality: 10,
+};
+
+const DIMENSION_ORDER = [
+  "final_correctness",
+  "verification",
+  "agent_review",
+  "prompt_quality",
+  "context_selection",
+  "safety",
+  "diff_minimality",
+];
+
+function DimensionTrends({
+  trends,
+}: {
+  trends: NonNullable<PublicProfile["dimension_trends"]>;
+}) {
+  return (
+    <ul className="mt-4 grid gap-3" data-testid="dimension-trends">
+      {DIMENSION_ORDER.filter((d) => (trends[d as keyof typeof trends]?.length ?? 0) > 0).map(
+        (dim) => {
+          const points = trends[dim as keyof typeof trends] ?? [];
+          const max = DIMENSION_MAX[dim] ?? 10;
+          const last5 = points.slice(-5);
+          const latest = last5[last5.length - 1]?.score ?? null;
+          const earliest =
+            points.length > 1 ? (points[0]?.score ?? null) : null;
+          const delta =
+            latest != null && earliest != null && points.length > 1
+              ? latest - earliest
+              : null;
+          return (
+            <li
+              key={dim}
+              className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-[var(--color-border)] pb-2 last:border-b-0"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">
+                  {DIMENSION_LABELS[dim] ?? dim}
+                </p>
+                <p className="font-mono text-[10.5px] text-[var(--color-muted-foreground)] tabular-nums">
+                  {points.length} session
+                  {points.length === 1 ? "" : "s"}
+                  {delta != null ? (
+                    <>
+                      {" · "}
+                      <span
+                        className={
+                          delta > 0
+                            ? "text-[var(--color-success)]"
+                            : delta < 0
+                              ? "text-[var(--color-danger)]"
+                              : ""
+                        }
+                      >
+                        {delta > 0 ? "+" : ""}
+                        {delta} vs first
+                      </span>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+              {last5.length > 0 ? (
+                <Sparkline values={last5.map((p) => p.score)} max={max} />
+              ) : (
+                <span
+                  aria-hidden
+                  className="inline-block w-24 text-center font-mono text-xs text-[var(--color-muted-foreground)]"
+                >
+                  —
+                </span>
+              )}
+              <p className="font-mono text-xs tabular-nums text-[var(--color-muted-foreground)] min-w-[3.5rem] text-right">
+                <b className="font-semibold text-[var(--color-foreground)]">
+                  {latest ?? "—"}
+                </b>
+                /{max}
+              </p>
+            </li>
+          );
+        },
+      )}
+    </ul>
+  );
+}
+
+function Sparkline({ values, max }: { values: number[]; max: number }) {
+  // Defensive guard: callers should pre-check and render an inline "—"
+  // in the score cell when there are no values, so this branch is
+  // unreachable in normal usage. Kept to avoid a stray SVG with no points.
+  if (values.length === 0) return null;
+  const w = 96;
+  const h = 24;
+  const pad = 2;
+  const span = Math.max(values.length - 1, 1);
+  const pts = values.map((v, i) => {
+    const x = pad + (i * (w - pad * 2)) / span;
+    const ratio = max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
+    const y = h - pad - ratio * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const last = values[values.length - 1] ?? 0;
+  const lastRatio = max > 0 ? Math.min(1, Math.max(0, last / max)) : 0;
+  const lastX = pad + ((values.length - 1) * (w - pad * 2)) / span;
+  const lastY = h - pad - lastRatio * (h - pad * 2);
+  return (
+    <svg
+      role="img"
+      aria-label={`Sparkline of ${values.length} recent scores, latest ${last} of ${max}`}
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      className="text-[var(--color-foreground)]"
+    >
+      <polyline
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        points={pts.join(" ")}
+      />
+      <circle cx={lastX} cy={lastY} r="2" fill="currentColor" />
+    </svg>
   );
 }
 

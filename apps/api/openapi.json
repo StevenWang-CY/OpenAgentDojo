@@ -236,6 +236,26 @@
         "title": "DiffOpenedBody",
         "type": "object"
       },
+      "DimensionTrendPoint": {
+        "description": "One ``(completed_at, score)`` point on a per-dimension sparkline.",
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "score": {
+            "title": "Score",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "completed_at",
+          "score"
+        ],
+        "title": "DimensionTrendPoint",
+        "type": "object"
+      },
       "EarnedBadgeRead": {
         "description": "Badge plus when/where it was earned (from ``user_badges``).",
         "properties": {
@@ -281,6 +301,89 @@
           "earned_at"
         ],
         "title": "EarnedBadgeRead",
+        "type": "object"
+      },
+      "FailureModeMastery": {
+        "description": "Per-failure-mode mastery summary for the logged-in user (P2-3).\n\nPowers the \"skills\" / \"failure-mode catalog\" page: the user sees, for\neach of the 10 supervision failure modes, how many sessions they\nattempted, how many they passed (hidden tests green), and their\naverage score across attempts.",
+        "properties": {
+          "avg_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Score"
+          },
+          "best_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Score"
+          },
+          "failure_mode": {
+            "title": "Failure Mode",
+            "type": "string"
+          },
+          "failure_mode_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Mode Title"
+          },
+          "last_attempted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempted At"
+          },
+          "mission_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mission Ids",
+            "type": "array"
+          },
+          "mission_titles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mission Titles",
+            "type": "array"
+          },
+          "sessions_attempted": {
+            "default": 0,
+            "title": "Sessions Attempted",
+            "type": "integer"
+          },
+          "sessions_passed": {
+            "default": 0,
+            "title": "Sessions Passed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "failure_mode"
+        ],
+        "title": "FailureModeMastery",
         "type": "object"
       },
       "FileContent": {
@@ -794,6 +897,16 @@
             ],
             "title": "Best Score"
           },
+          "dimension_trends": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/DimensionTrendPoint"
+              },
+              "type": "array"
+            },
+            "title": "Dimension Trends",
+            "type": "object"
+          },
           "display_name": {
             "anyOf": [
               {
@@ -1094,6 +1207,30 @@
           "expires_at"
         ],
         "title": "ShareTokenRead",
+        "type": "object"
+      },
+      "SkillsCatalog": {
+        "description": "Payload of ``GET /api/v1/profiles/me/skills``.",
+        "properties": {
+          "failure_modes": {
+            "items": {
+              "$ref": "#/components/schemas/FailureModeMastery"
+            },
+            "title": "Failure Modes",
+            "type": "array"
+          },
+          "total_failure_modes": {
+            "default": 0,
+            "title": "Total Failure Modes",
+            "type": "integer"
+          },
+          "total_missions": {
+            "default": 0,
+            "title": "Total Missions",
+            "type": "integer"
+          }
+        },
+        "title": "SkillsCatalog",
         "type": "object"
       },
       "SubmissionRead": {
@@ -1588,9 +1725,31 @@
         ]
       }
     },
+    "/api/v1/profiles/me/skills": {
+      "get": {
+        "description": "Return the failure-mode catalog with the user's attempt/pass stats.\n\nThe catalog groups the 10 supervision failure modes (one per mission)\nand reports, for each, the user's attempt count, pass count, and\naverage + best total score. A \"pass\" is a session whose score_report\nhas ``missed_failure_mode == False``.",
+        "operationId": "get_my_skills_api_v1_profiles_me_skills_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillsCatalog"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Per-failure-mode mastery summary for the logged-in user",
+        "tags": [
+          "profiles"
+        ]
+      }
+    },
     "/api/v1/profiles/{handle}": {
       "get": {
-        "description": "Return the public profile for ``handle``.\n\nNo authentication required — public surface per §13.1. Returns 404 with\n``{\"detail\": \"profile not found\"}`` when no user owns this handle.",
+        "description": "Return the public profile for ``handle``.\n\nNo authentication required — public surface per §13.1. Returns 404 with\n``{\"detail\": \"profile not found\"}`` when no user owns this handle.\n\nThe detailed per-dimension longitudinal trail is only returned to the\nprofile owner themselves — anonymous and other-user viewers see the\nradar averages but not the trend per session. This avoids leaking a\nfingerprintable skill trajectory of any user by handle.",
         "operationId": "get_profile_api_v1_profiles__handle__get",
         "parameters": [
           {

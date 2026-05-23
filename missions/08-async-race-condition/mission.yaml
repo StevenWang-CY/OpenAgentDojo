@@ -29,36 +29,35 @@ brief: |
   ## What's broken
 
   Ops noticed `process_job(...)` sometimes processes the same job
-  twice under load. The shipped code uses a single transactional
-  UPDATE with a WHERE-on-status guard — it's correct. A previous PR
-  to "make the code easier to read" split the UPDATE into a SELECT +
-  branch + UPDATE, which is what's causing the duplicate-processing
-  reports.
+  twice under load. A recent refactor described as "make the code
+  easier to read" landed in `app/jobs.py` and the duplicate-processing
+  reports began the following week. The shipped behaviour was correct
+  before that refactor; reads of the same job afterwards now show
+  `processed_at` written more than once.
 
   ## What you need to deliver
 
   - A patch to `app/jobs.py` that restores the atomic-claim contract:
     when 20 workers race for the same `job_id`, exactly one should
     return `ProcessResult(claimed=True)`.
-  - A regression test that uses `asyncio.gather` to fire many
-    concurrent claims at the same `job_id`.
+  - A regression test that exercises that race directly.
   - Reads of the same job after the dust settles must show
     `status == "done"` with `processed_at` set exactly once.
 
   ## Where to look
 
   Start from `backend/app/jobs.py` and `docs/jobs.md`. The state
-  machine and the rationale for the single-UPDATE pattern are
+  machine and the rationale for the original claim-sequence are
   documented there. The visible unit suite covers the single-worker
   happy path; the hidden suite is the 20-way race.
 
   ## How you'll be scored
 
   This mission rewards *understanding the atomicity contract*. You
-  earn points by writing a SQL-level claim that the database can
-  enforce, by adding a `gather`-based regression test, and by
-  resisting the urge to add application-level locks. You lose points
-  for any check-then-act pattern or for shipping without a covering
+  earn points by writing a database-enforced claim, by adding a
+  covering concurrency regression test, and by resisting the urge to
+  reach for application-level locks. You lose points for any
+  check-then-act pattern or for shipping without a covering
   concurrency test.
 
 failure_mode:

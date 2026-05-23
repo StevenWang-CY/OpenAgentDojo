@@ -40,11 +40,11 @@ def test_avg_of_last_three_used_not_max_of_all() -> None:
         _turn(strong, 4),
     ]
     score = _score_prompt_quality(turns, _Manifest())
-    # The "strong" prompt scores: +2 (>=80 chars) + +2 (test mention)
-    # + +2 (scope phrase "do not modify" / "minimal") = 6.
-    # All 3 last turns score 6 → avg 6.
-    assert score.score == 6, (
-        f"avg-of-last-3 should be 6, got {score.score}; signals={score.signals}"
+    # The "strong" prompt scores: +2 (>=80 chars) + +2 (no required-keyword
+    # set declared, N/A) + +2 (test mention) + +2 (scope phrase
+    # "do not modify" / "minimal") = 8. All 3 last turns score 8 → avg 8.
+    assert score.score == 8, (
+        f"avg-of-last-3 should be 8, got {score.score}; signals={score.signals}"
     )
 
 

@@ -43,7 +43,7 @@ brief: |
 
   - A patch that makes a second submission with the same `formId` a
     no-op (or rejection) on the server. The guard must survive a
-    process restart — an in-memory `Set<string>` is not enough.
+    process restart — in-memory state alone is not enough.
   - A regression test that locks the behaviour down. The hidden grader
     will fire concurrent requests *and* simulate a server restart
     between submits; you won't see those tests until you submit.

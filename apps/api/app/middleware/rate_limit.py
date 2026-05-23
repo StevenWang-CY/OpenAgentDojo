@@ -149,6 +149,24 @@ _RULES: tuple[_Rule, ...] = (
         limit=3,
         key_by="user",
     ),
+    # Profile endpoints perform JSON aggregation + history joins on every
+    # request with no caching. A scraper hitting /profiles/{handle} in a
+    # loop would amplify trivially. Public endpoint → IP key; authed
+    # endpoint → user key.
+    _Rule(
+        name="profile_public",
+        method="GET",
+        pattern=re.compile(r"^/api/v1/profiles/[^/]+/?$"),
+        limit=120,
+        key_by="ip",
+    ),
+    _Rule(
+        name="profile_me_skills",
+        method="GET",
+        pattern=re.compile(r"^/api/v1/profiles/me/skills/?$"),
+        limit=60,
+        key_by="user",
+    ),
 )
 
 

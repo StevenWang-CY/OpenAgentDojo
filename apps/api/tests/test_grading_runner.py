@@ -560,7 +560,15 @@ async def test_submission_graded_breakdown_always_has_seven_dimensions(
     # Stub compute_score to return a report missing the `safety` dimension
     # (and `prompt_quality`, to prove multi-key defaulting works).
     def _stub_compute_score(
-        *, diff, events, validator_results, test_results, manifest, agent_turns
+        *,
+        diff,
+        events,
+        validator_results,
+        test_results,
+        manifest,
+        agent_turns,
+        prompt_judgements=None,
+        completed_mission_ids=None,
     ):
         from app.grading.dimensions import DIMENSION_MAX
 

@@ -33,10 +33,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.grading.badges import award as award_badges
 from app.grading.diff import ParsedDiff
 from app.grading.dimensions import RUBRIC_DIMENSIONS
+from app.grading.prompt_judge import (
+    PromptJudge,
+    PromptJudgeContext,
+    PromptJudgement as JudgementResult,
+)
 from app.grading.score import ScoreReport, compute_score
 from app.grading.validators import ValidatorResult, dispatch
 from app.grading.validators.tests_pass import TestRunResult, validate_tests_pass
 from app.models.agent_turn import AgentTurn
+from app.models.prompt_judgement import PromptJudgement as PromptJudgementRow
 from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
@@ -347,6 +353,23 @@ class GradingRunner:
         events = await _load_events(db, session_id)
         agent_turns = await _load_agent_turns(db, session_id)
 
+        # Pre-compute LLM-judge scores for prompt_quality (P0-1). The judge
+        # is cache-first: replays read from ``prompt_judgements`` and never
+        # call the model. ``compute_score`` itself stays synchronous and
+        # pure — it just consumes the pre-computed lookup. If the LLM is
+        # unavailable on a cold cache, the resulting judgement carries
+        # ``score=None`` and the prompt_quality dimension reports pending.
+        prompt_judgements = await _build_prompt_judgements(
+            db=db, manifest=manifest, agent_turns=agent_turns
+        )
+
+        # Already-attempted missions for this user — the diagnostic
+        # narrative uses this to avoid recommending missions the user
+        # has already tried.
+        completed_mission_ids = await _load_completed_mission_ids(
+            db=db, user_id=session.user_id
+        )
+
         report: ScoreReport = compute_score(
             diff=parsed,
             events=events,
@@ -354,6 +377,8 @@ class GradingRunner:
             test_results=all_test_results,
             manifest=manifest,
             agent_turns=agent_turns,
+            prompt_judgements=prompt_judgements,
+            completed_mission_ids=completed_mission_ids,
         )
 
         # Step 5: award badges (persisted by award()).
@@ -417,6 +442,10 @@ class GradingRunner:
             validator_results=result.validator_results,
             score_report=result.score_report,
             total_score=result.total_score,
+            # Anchor to the exact manifest content this submission was
+            # graded against (the column was added in migration 0008
+            # specifically so replays can detect content drift).
+            manifest_sha256=getattr(manifest, "manifest_sha256", None),
         )
         db.add(submission)
         await db.flush()
@@ -653,6 +682,227 @@ async def _load_events(db: AsyncSession, session_id: uuid.UUID) -> list[dict[str
         }
         for r in rows
     ]
+
+
+async def _build_prompt_judgements(
+    *,
+    db: AsyncSession,
+    manifest: Any,
+    agent_turns: list[dict[str, Any]],
+) -> dict[str, JudgementResult]:
+    """Cache-first lookup of LLM-judge scores for every prompt in the run.
+
+    Replays don't call the model: the ``prompt_judgements`` table is the
+    source of truth (P0-1 determinism contract). On a cold cache, the
+    judge calls Claude Haiku 4.5 via the existing AnthropicClient and
+    writes the verdict back; subsequent grading runs of the same session
+    read from the cache and produce byte-identical totals.
+
+    Returns an empty dict when no prompts exist OR when the LLM stack is
+    not available in the runtime (e.g. ``civitas_core`` not installed in
+    a CI/dev environment with no warm cache for the prompts). The score
+    engine treats an empty lookup as "use the legacy keyword fallback"
+    so test envelopes and laptop-mode grading still produce a usable
+    number — production environments with civitas installed always
+    route through the judge.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.agent.llm import _HAS_CIVITAS
+    from app.grading.prompt_judge import (
+        PROMPT_QUALITY_MAX_SCORE,
+        RUBRIC_VERSION,
+        compute_cache_key,
+        prior_response_sha,
+    )
+
+    # Pair each prompt with the agent_response of the *immediately
+    # preceding* turn — that's what the judge's "engagement" axis grades
+    # against. Two turns whose user-prompt text is identical but whose
+    # prior agent responses differ MUST be scored separately, so the
+    # dedupe key is (prompt, prior_agent_response), not prompt alone.
+    sorted_turns = [t for t in agent_turns if isinstance(t, dict)]
+    pairs: list[tuple[str, str | None]] = []
+    seen: set[tuple[str, str | None]] = set()
+    for idx, turn in enumerate(sorted_turns):
+        prompt_text = turn.get("user_prompt", turn.get("prompt", "")) or ""
+        if not prompt_text:
+            continue
+        prior: str | None = None
+        if idx > 0:
+            prior_turn = sorted_turns[idx - 1]
+            prior = (
+                prior_turn.get("agent_response")
+                or prior_turn.get("response")
+                or None
+            )
+        key = (prompt_text, prior or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append((prompt_text, prior))
+    if not pairs:
+        return {}
+
+    mission_id = str(getattr(manifest, "id", "") or "")
+    # Use the manifest content hash as the cache revision so any
+    # brief / failure_mode / expected_files edit invalidates the cache.
+    # Falls back to the int version when the manifest didn't carry a
+    # sha (older fixtures); the int form is at least stable per-mission.
+    mission_rev = str(
+        getattr(manifest, "manifest_sha256", None)
+        or getattr(manifest, "version", "1")
+        or "1"
+    )
+    expected_files = list(getattr(manifest, "expected_files", []) or [])
+    expected_context = getattr(manifest, "expected_context", None)
+    required_ctx = (
+        list(getattr(expected_context, "required", []) or [])
+        if expected_context is not None
+        else []
+    )
+    failure_mode = getattr(manifest, "failure_mode", None)
+    failure_title = (
+        str(getattr(failure_mode, "title", "") or "") if failure_mode else None
+    )
+
+    def _ctx_for(prior: str | None) -> PromptJudgeContext:
+        return PromptJudgeContext(
+            mission_id=mission_id,
+            mission_revision=mission_rev,
+            expected_files=expected_files,
+            expected_context_required=required_ctx,
+            failure_mode_title=failure_title,
+            prior_agent_response=prior,
+        )
+
+    async def _cache_get(cache_key: str) -> JudgementResult | None:
+        row = (
+            await db.execute(
+                select(PromptJudgementRow).where(
+                    PromptJudgementRow.cache_key == cache_key
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        return JudgementResult(
+            cache_key=row.cache_key,
+            score=row.score,
+            specificity=row.specificity,
+            constraint=row.constraint_axis,
+            engagement=row.engagement,
+            verifiability=row.verifiability,
+            rationale=row.rationale,
+            cache_hit=True,
+        )
+
+    def _cache_put_factory(prior: str | None):
+        async def _cache_put(j: JudgementResult) -> None:
+            # Idempotent insert via SAVEPOINT: a racing concurrent grader
+            # may have written the same cache_key already; we want to
+            # tolerate that without destroying the in-flight grading
+            # transaction's other uncommitted writes (supervision events,
+            # validator flags, etc.). ``begin_nested()`` wraps the insert
+            # in a SAVEPOINT so an IntegrityError only rolls back the
+            # savepoint — the outer transaction is preserved.
+            row = PromptJudgementRow(
+                cache_key=j.cache_key,
+                mission_id=mission_id,
+                mission_revision=mission_rev,
+                prior_agent_response_sha=prior_response_sha(prior),
+                rubric_version=RUBRIC_VERSION,
+                score=int(j.score if j.score is not None else 0),
+                specificity=float(j.specificity),
+                constraint_axis=float(j.constraint),
+                engagement=float(j.engagement),
+                verifiability=float(j.verifiability),
+                rationale=j.rationale or "",
+            )
+            try:
+                async with db.begin_nested():
+                    db.add(row)
+            except IntegrityError as exc:
+                logger.debug(
+                    "prompt_judgements insert raced (key={}): {}",
+                    j.cache_key,
+                    exc,
+                )
+            except Exception as exc:
+                # Non-race failure — log loud but do not poison the
+                # outer transaction; the savepoint context already
+                # rolled back the insert.
+                logger.warning(
+                    "prompt_judgements insert failed (key={}): {}",
+                    j.cache_key,
+                    exc,
+                )
+
+        return _cache_put
+
+    # Touch the constants so import-only linters don't strip them.
+    _ = (PROMPT_QUALITY_MAX_SCORE, compute_cache_key)
+
+    # First pass: cache-only lookup. If every prompt is warm we never need
+    # the LLM at all, even in test/CI environments.
+    warm: dict[str, JudgementResult] = {}
+    cold_pairs: list[tuple[str, str | None]] = []
+    for prompt_text, prior in pairs:
+        ctx = _ctx_for(prior)
+        cache_only = PromptJudge(
+            client=None, cache_get=_cache_get, cache_put=None, enabled=False
+        )
+        j = await cache_only.score_one(prompt_text, ctx)
+        if j.score is not None:
+            warm[prompt_text] = j
+        else:
+            cold_pairs.append((prompt_text, prior))
+    if not cold_pairs:
+        return warm
+
+    # Cold prompts remain — only call the model if the LLM stack is wired
+    # up. Otherwise return what we have warm (an empty dict means the
+    # score engine routes through the keyword fallback for the trailing
+    # 3 prompts; a partial dict means the judge path drives the dimension
+    # and missing entries surface as ``prompt not in judgements lookup``
+    # signals).
+    if not _HAS_CIVITAS:
+        logger.debug(
+            "prompt_judge: civitas_core not available; skipping LLM "
+            "precompute for {} cold prompt(s)",
+            len(cold_pairs),
+        )
+        return warm
+
+    for prompt_text, prior in cold_pairs:
+        ctx = _ctx_for(prior)
+        judge = PromptJudge(
+            cache_get=_cache_get, cache_put=_cache_put_factory(prior)
+        )
+        result = await judge.score_one(prompt_text, ctx)
+        warm[prompt_text] = result
+    return warm
+
+
+async def _load_completed_mission_ids(
+    *, db: AsyncSession, user_id: uuid.UUID
+) -> list[str]:
+    """Return every mission id this user has already graded.
+
+    Used by the diagnostic narrative so we don't recommend missions the
+    user has already attempted. Limited to ``status='graded'`` sessions —
+    abandoned/errored attempts shouldn't burn a recommendation.
+    """
+    rows = (
+        await db.execute(
+            select(SessionRow.mission_id)
+            .where(
+                SessionRow.user_id == user_id,
+                SessionRow.status == "graded",
+            )
+        )
+    ).all()
+    return list({str(row.mission_id) for row in rows if row.mission_id})
 
 
 async def _load_agent_turns(db: AsyncSession, session_id: uuid.UUID) -> list[dict[str, Any]]:

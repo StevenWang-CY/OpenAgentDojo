@@ -38,6 +38,8 @@ _API_DIR = _SCRIPT_DIR.parent
 if str(_API_DIR) not in sys.path:
     sys.path.insert(0, str(_API_DIR))
 
+import re
+
 from app.missions.acceptance import load_acceptance
 from app.missions.loader import LoadedMission, MissionLoader
 
@@ -49,6 +51,100 @@ def _check_seed_contains(seed_path: Path, mission_id: str) -> bool:
     text = seed_path.read_text(encoding="utf-8")
     needles = (f'"{mission_id}"', f"'{mission_id}'")
     return any(n in text for n in needles)
+
+
+# Substrings whose presence in a brief is OK even if they look like code
+# patterns. Author can suppress a true-positive false-flag by adding here
+# with a justification comment.
+_BRIEF_LEAK_ALLOWLIST: set[str] = set()
+
+
+# Patterns that, if they appear in *both* the brief AND ideal_solution.md,
+# indicate the brief is telegraphing a specific implementation idiom rather
+# than describing the symptom. Each pattern is a regex.
+#
+# The heuristic deliberately scopes narrowly to code-style idioms — bare
+# file paths, function names, and API routes are LEGITIMATE context the
+# brief is allowed to name (the supervisor needs to know where to look).
+# What is NOT legitimate: naming the *shape* of the fix (a specific
+# generic type, SQL idiom, language feature) that the supervisor should
+# discover by reading the agent's diff.
+_LEAK_PATTERN_RES: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "generic-type",
+        # e.g. ``Set<string>``, ``Map<int, str>`` — these are code patterns,
+        # not domain vocabulary.
+        re.compile(r"[A-Z][A-Za-z]*<[^>]+>"),
+    ),
+    (
+        "sql-idiom",
+        # SELECT … UPDATE … WHERE patterns — they name the fix shape.
+        re.compile(r"\b(UPDATE|SELECT|INSERT|DELETE)\b[^.\n]*\bWHERE\b", re.IGNORECASE),
+    ),
+    (
+        "cast-syntax",
+        # `as any`, `as unknown`, `as Foo` — TypeScript escape hatches.
+        re.compile(r"\bas\s+(any|unknown|never)\b"),
+    ),
+    (
+        "ts-ignore",
+        re.compile(r"@ts-ignore|@ts-expect-error|# type:\s*ignore"),
+    ),
+    (
+        "method-call-with-args",
+        # e.g. ``setLoading(false)`` — naming the exact call shape leaks
+        # the fix. Bare ``setLoading()`` or ``setLoading`` alone does not.
+        re.compile(r"\b[a-z][A-Za-z]+\([^)]+\)"),
+    ),
+]
+
+
+def _find_leak_patterns(text: str) -> set[tuple[str, str]]:
+    """Return ``{(pattern_label, matched_substring)}`` for every code-idiom
+    match in ``text``."""
+    hits: set[tuple[str, str]] = set()
+    for label, pat in _LEAK_PATTERN_RES:
+        for m in pat.finditer(text):
+            tok = m.group(0).strip()
+            if len(tok) >= 4:
+                hits.add((label, tok))
+    return hits
+
+
+def _check_brief_leak(loaded: LoadedMission) -> list[str]:
+    """Flag code-idiom tokens that appear in both ``mission.yaml.brief`` and
+    ``ideal_solution.md``. The signal of a leak is a *code pattern* (generic
+    type, SQL idiom, cast syntax, method call with args) appearing in both
+    surfaces — not file paths or function-name references, which are
+    legitimate scoping context the brief is allowed to provide.
+
+    Authors can suppress a false positive by adding the exact substring to
+    ``_BRIEF_LEAK_ALLOWLIST`` with a one-line comment explaining why it is
+    domain vocabulary rather than a fix-shape leak."""
+    brief = (loaded.manifest.brief or "").strip()
+    if not brief:
+        return []
+    ideal_path = loaded.folder / "ideal_solution.md"
+    if not ideal_path.exists():
+        return []
+    ideal = ideal_path.read_text(encoding="utf-8")
+    ideal_hits = _find_leak_patterns(ideal)
+    brief_hits = _find_leak_patterns(brief)
+    leaks: list[str] = []
+    for label, tok in sorted(ideal_hits):
+        if tok in _BRIEF_LEAK_ALLOWLIST:
+            continue
+        # Match by substring in either token form — the same code pattern
+        # may have been matched at slightly different boundaries by the
+        # two regex runs.
+        if tok in brief or any(tok in btok for _, btok in brief_hits):
+            leaks.append(
+                f"brief leaks solution idiom [{label}] {tok!r} — also "
+                f"present in ideal_solution.md. Rewrite the brief to name "
+                f"the symptom, not the fix, or add to _BRIEF_LEAK_ALLOWLIST "
+                f"with a justification."
+            )
+    return leaks
 
 
 def _check_one(loaded: LoadedMission, seed_path: Path | None) -> list[str]:  # noqa: PLR0912 — §14.11 checklist is intentionally exhaustive
@@ -97,10 +193,26 @@ def _check_one(loaded: LoadedMission, seed_path: Path | None) -> list[str]:  # n
     if len(m.reward_signals.prompt_quality.must_include_any) < 3:
         errors.append("reward_signals.prompt_quality.must_include_any must list >= 3 keywords")
 
-    # §14.11 item 7 — expected_diff_lines_p50 is set (>0). The manifest's
-    # default is 20; treat 0 / negative as unset.
+    # §14.11 item 7 — expected_diff_lines_p50 is set and plausible.
+    # The diff-minimality dimension divides the submitted diff churn by p50;
+    # an out-of-band value silently shifts the scoring band across the whole
+    # mission. p50=1 makes any non-trivial fix score 0; p50=1000 lets a
+    # full-file rewrite score 10/10. The 3..200 band covers realistic
+    # supervision-task fix sizes (single-line tweak through a small refactor).
     if m.expected_diff_lines_p50 <= 0:
         errors.append("expected_diff_lines_p50 must be > 0")
+    elif m.expected_diff_lines_p50 < 3:
+        errors.append(
+            f"expected_diff_lines_p50={m.expected_diff_lines_p50} is implausibly small "
+            "(< 3). At this value, any realistic fix scores 0/10 on diff_minimality. "
+            "Set to the line count of the ideal solution diff."
+        )
+    elif m.expected_diff_lines_p50 > 200:
+        errors.append(
+            f"expected_diff_lines_p50={m.expected_diff_lines_p50} is implausibly large "
+            "(> 200). At this value, even runaway rewrites score 10/10 on "
+            "diff_minimality. Set to the line count of the ideal solution diff."
+        )
 
     # §14.11 item 8 — mission id appears in catalog seed (best-effort).
     if seed_path is not None and seed_path.exists():
@@ -133,6 +245,12 @@ def _check_one(loaded: LoadedMission, seed_path: Path | None) -> list[str]:  # n
             load_acceptance(acceptance_yaml)
         except Exception as exc:
             errors.append(f"acceptance.yaml failed to parse: {exc}")
+
+    # Brief-leak linter (P1-4): the brief must not telegraph fix idioms that
+    # appear verbatim in the ideal_solution.md. The mission tests supervision
+    # of the AGENT, not the supervisor's ability to grep the brief for a
+    # code-style token.
+    errors.extend(_check_brief_leak(loaded))
 
     return errors
 

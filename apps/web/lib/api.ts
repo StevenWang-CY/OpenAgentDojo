@@ -15,6 +15,7 @@ import type {
   PublicProfile,
   Session,
   SessionDetail,
+  SkillsCatalog,
   Submission,
   SupervisionEvent,
   UnifiedDiff,
@@ -439,6 +440,12 @@ export function getProfile(
   return request<PublicProfile>(`/profiles/${encodeURIComponent(handle)}`, {
     signal,
   });
+}
+
+/** P2-3. GET /api/v1/profiles/me/skills — per-failure-mode mastery for the
+ *  logged-in user. Requires auth. */
+export function getMySkills(signal?: AbortSignal): Promise<SkillsCatalog> {
+  return request<SkillsCatalog>(`/profiles/me/skills`, { signal });
 }
 
 /**

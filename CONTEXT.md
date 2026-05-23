@@ -23,9 +23,10 @@ Single source of truth for the load-bearing nouns and conventions used across co
 ## Determinism rules
 
 1. **Agent patches are deterministic.** Pre-written `.diff` files. No LLM on the apply path.
-2. **Grading is deterministic.** Pure functions over the event log + diff + test results. No LLM on the grading path — ever.
-3. **LLM use** is gated behind `features.llm_narration_enabled` and only allowed to humanize tone of pre-rendered seed text. On error or banned-token output, silently fall back to the seed. See [IMPLEMENTATION_PLAN.md §16.A](IMPLEMENTATION_PLAN.md).
-4. **Replays are byte-identical.** Re-running the grader against the same event stream must produce the exact same `score_report`.
+2. **Grading is deterministic given the event log + the prompt-judgement cache.** The score engine itself is a pure function; the prompt-quality dimension consumes pre-computed LLM-judge verdicts from the `prompt_judgements` table. The cache is the source of truth: on cache hit the model is never called, even if the underlying Claude model is upgraded. To force a rescore campaign, bump `app.grading.prompt_judge.RUBRIC_VERSION` — this changes the cache key, so old rows no longer match and the next grading run re-judges each session under the new rubric. Old rows remain for audit.
+3. **LLM use on the narration path** is gated behind `features.llm_narration_enabled` and only allowed to humanize tone of pre-rendered seed text. On error or banned-token output, silently fall back to the seed. See [IMPLEMENTATION_PLAN.md §16.A](IMPLEMENTATION_PLAN.md).
+4. **LLM use on the grading path** is restricted to the cached prompt judge. If the LLM is unavailable on a cold cache, the prompt-quality dimension reports `score=null` (pending) and is excluded from the total; the report surfaces a `prompt_quality_pending` signal so the user sees measurement uncertainty rather than a fabricated number.
+5. **Replays are byte-identical.** Re-running the grader against the same event stream + warm judgement cache must produce the exact same `score_report`.
 
 ## Conventions
 

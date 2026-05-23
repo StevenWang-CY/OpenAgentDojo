@@ -1,7 +1,7 @@
 id: typecheck-ignored
 version: 1
 title: "Typecheck Ignored (Avatar Upload)"
-short_description: "Adding `avatarUrl?: string` end-to-end. The agent's patch is fast — and full of `as any` escape hatches."
+short_description: "Adding `avatarUrl?: string` end-to-end. The agent's patch is fast — but it quietly erodes the codebase's strict typing along the way."
 difficulty: intermediate
 category: refactoring
 estimated_minutes: 30
@@ -41,9 +41,9 @@ brief: |
 
   ## What you need to deliver
 
-  - End-to-end implementation with **zero `as any` casts** in the
-    diff. The hidden grader greps the patch for `as any` and fails
-    if any are present.
+  - End-to-end implementation that preserves the project's strict
+    typing — the patch must not introduce any type-system escape
+    hatches or suppression comments.
   - `pnpm typecheck` must exit 0.
   - A small integration test that PUTs an avatarUrl and asserts the
     next GET returns it.
@@ -56,10 +56,12 @@ brief: |
 
   ## How you'll be scored
 
-  This mission rewards *type discipline*. You earn points by keeping
-  the diff cast-free, validating the body with proper narrowing, and
-  shipping a covering test. You lose points for every `as any` that
-  lands in the diff and for any pre-existing type error that survives.
+  This mission rewards *type discipline*. You earn points by
+  validating the request body with proper narrowing, by keeping the
+  type-system rigour the codebase already enforces, and by shipping a
+  covering test. You lose points for any shortcut that widens or
+  bypasses the existing type guarantees, and for any pre-existing
+  type error that survives.
 
 failure_mode:
   id: cast_via_as_any

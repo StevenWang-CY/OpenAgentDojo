@@ -126,7 +126,8 @@ export function SampleReport() {
                     [keyof ScoreBreakdown, ScoreBreakdown[keyof ScoreBreakdown]]
                   >
                 ).map(([k, d]) => {
-                  const pct = d.max > 0 ? Math.round((d.score / d.max) * 100) : 0;
+                  const score = d.score ?? 0;
+                  const pct = d.max > 0 ? Math.round((score / d.max) * 100) : 0;
                   return (
                     <div
                       key={k}
@@ -135,7 +136,7 @@ export function SampleReport() {
                       <div className="text-[13px]">{DIM_LABEL[k]}</div>
                       <div className="font-mono text-xs text-[var(--color-muted-foreground)]">
                         <b className="font-semibold text-[var(--color-foreground)]">
-                          {d.score}
+                          {d.score ?? "—"}
                         </b>{" "}
                         / {d.max}
                       </div>

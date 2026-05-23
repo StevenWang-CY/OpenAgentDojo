@@ -43,9 +43,13 @@ export function ScoreRadar({ dimensions, className }: ScoreRadarProps) {
 function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
   const data = (Object.keys(LABELS) as (keyof ScoreBreakdown)[]).map((key) => {
     const dim: ScoreDimension = dimensions[key];
+    // Pending dimensions (score=null) plot as 0 on the radar — the
+    // diagnostic narrative renders "pending" labels elsewhere, so the
+    // axis still shows up but doesn't pretend a number it doesn't have.
+    const safeScore = dim.score ?? 0;
     return {
       dimension: LABELS[key],
-      value: (dim.score / dim.max) * 100,
+      value: dim.max > 0 ? (safeScore / dim.max) * 100 : 0,
       raw: dim.score,
       max: dim.max,
     };
@@ -121,7 +125,8 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
 function ScoreRadarFallback({ dimensions }: { dimensions: ScoreBreakdown }) {
   const rows = (Object.keys(LABELS) as (keyof ScoreBreakdown)[]).map((key) => {
     const dim = dimensions[key];
-    const pct = dim.max > 0 ? Math.round((dim.score / dim.max) * 100) : 0;
+    const safe = dim.score ?? 0;
+    const pct = dim.max > 0 ? Math.round((safe / dim.max) * 100) : 0;
     return { label: LABELS[key], score: dim.score, max: dim.max, pct };
   });
   return (

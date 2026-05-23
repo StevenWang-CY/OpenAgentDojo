@@ -227,16 +227,22 @@ const DIMENSION_ORDER: (keyof ScoreBreakdown)[] = [
   "diff_minimality",
 ];
 
-/** Build the SVG polygon points for the rubric score radar. */
+/** Build the SVG polygon points for the rubric score radar.
+ *  Pending dimensions (score === null) are skipped so they don't render
+ *  as a 0 on the axis — which would misleadingly look like the user
+ *  scored zero on a dimension that simply hasn't been graded yet. */
 function radarPolygon(dims: ScoreBreakdown, radius: number): string {
-  return DIMENSION_ORDER.map((key, i) => {
+  const points: string[] = [];
+  DIMENSION_ORDER.forEach((key, i) => {
     const dim = dims[key];
+    if (dim.score == null) return;
     const ratio = dim.max > 0 ? dim.score / dim.max : 0;
     const angle = (Math.PI * 2 * i) / DIMENSION_ORDER.length - Math.PI / 2;
     const x = Math.cos(angle) * radius * ratio;
     const y = Math.sin(angle) * radius * ratio;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
+    points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+  });
+  return points.join(" ");
 }
 
 function ringPoints(radius: number): string {

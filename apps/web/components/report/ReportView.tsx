@@ -66,6 +66,12 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
   const reportedRef = React.useRef<string | null>(null);
   const total = reportQuery.data?.total_score;
   const missed = reportQuery.data?.score_report?.missed_failure_mode;
+  // Telemetry fires exactly once per submission per mount via `reportedRef`.
+  // We intentionally do NOT include `effectiveShare` in the deps array — it
+  // doesn't change the identity of the report being viewed, and adding it
+  // would cause a duplicate event if a viewer switched between owned-view
+  // and share-token-view of the same submission. The dedupe key is the
+  // submission id, not the URL.
   React.useEffect(() => {
     if (reportQuery.data && reportedRef.current !== submissionId) {
       reportedRef.current = submissionId;
@@ -136,10 +142,17 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
       <ReportHeader
         submissionId={submissionId}
         totalScore={submission.total_score}
+        effectiveMax={report.effective_max ?? 100}
         passed={passed}
         hiddenTestsPassed={countHiddenTestsPassed(report)}
         hiddenTestsTotal={countHiddenTestsTotal(report)}
       />
+
+      {report.feedback_narrative && report.feedback_narrative.length > 0 ? (
+        <Section title="what to work on next" id="diagnostics-heading">
+          <DiagnosticList diagnostics={report.feedback_narrative} />
+        </Section>
+      ) : null}
 
       <Section title="performance overview" id="performance-heading">
         <div className="grid gap-8 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-center">
@@ -192,9 +205,12 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
         </Section>
       ) : null}
 
-      <footer className="mt-10 flex justify-start">
+      <footer className="mt-10 flex flex-wrap items-center justify-between gap-3">
         <Button asChild variant="secondary">
           <Link href="/missions">← Back to missions</Link>
+        </Button>
+        <Button asChild>
+          <Link href={nextMissionHref(report)}>Next mission →</Link>
         </Button>
       </footer>
     </main>
@@ -204,12 +220,14 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
 function ReportHeader({
   submissionId,
   totalScore,
+  effectiveMax,
   passed,
   hiddenTestsPassed,
   hiddenTestsTotal,
 }: {
   submissionId: string;
   totalScore: number;
+  effectiveMax: number;
   passed: boolean;
   hiddenTestsPassed: number | null;
   hiddenTestsTotal: number | null;
@@ -248,13 +266,13 @@ function ReportHeader({
     >
       <h1
         id="report-heading"
-        aria-label={`Score ${totalScore} out of 100`}
+        aria-label={`Score ${totalScore} out of ${effectiveMax}`}
         className="font-mono text-[80px] font-semibold leading-none tracking-[-0.04em] tabular-nums"
       >
         {totalScore}
         <span className="ml-1 text-[26px] font-medium text-[var(--color-muted-foreground)]">
           {" "}
-          / 100
+          / {effectiveMax}
         </span>
       </h1>
 
@@ -332,6 +350,66 @@ function Section({
       </h2>
       {children}
     </section>
+  );
+}
+
+interface DiagnosticEntry {
+  dimension: string;
+  score: number | null;
+  max: number;
+  cause: string;
+  recommendation: string;
+  recommended_mission_ids: string[];
+}
+
+const DIMENSION_LABELS: Record<string, string> = {
+  final_correctness: "Final patch correctness",
+  verification: "Verification discipline",
+  agent_review: "Agent output review",
+  prompt_quality: "Prompt quality",
+  context_selection: "Context selection",
+  safety: "Safety awareness",
+  diff_minimality: "Diff minimality",
+};
+
+function DiagnosticList({ diagnostics }: { diagnostics: DiagnosticEntry[] }) {
+  return (
+    <ol className="grid gap-4" data-testid="feedback-narrative">
+      {diagnostics.map((d, i) => {
+        const label = DIMENSION_LABELS[d.dimension] ?? d.dimension;
+        return (
+          <li
+            key={`${d.dimension}-${i}`}
+            className="border-l-2 border-[var(--color-border-strong)] pl-4"
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="text-sm font-semibold">{label}</h3>
+              <span className="font-mono text-xs text-[var(--color-muted-foreground)] tabular-nums">
+                {d.score == null ? "—" : d.score} / {d.max}
+              </span>
+            </div>
+            <p className="mt-2 text-sm leading-relaxed">{d.cause}</p>
+            <p className="mt-2 text-sm leading-relaxed text-[var(--color-muted-foreground)]">
+              {d.recommendation}
+            </p>
+            {d.recommended_mission_ids.length > 0 ? (
+              <ul className="mt-2 flex flex-wrap gap-1.5">
+                {d.recommended_mission_ids.map((mid) => (
+                  <li key={mid}>
+                    <Link
+                      href={`/missions/${mid}`}
+                      className="inline-flex items-center gap-1 rounded border border-[var(--color-border-strong)] px-2 py-1 font-mono text-[11px] transition-colors hover:border-[var(--color-foreground)] hover:text-[var(--color-foreground)]"
+                    >
+                      → {mid}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -468,16 +546,31 @@ function formatShareExpiry(iso: string): string {
   }
 }
 
+/** Prefer the first recommended mission from the feedback narrative when
+ *  present, otherwise fall back to the catalog so the user can pick. */
+function nextMissionHref(report: ScoreReport): string {
+  const recs = report.feedback_narrative ?? [];
+  for (const entry of recs) {
+    const first = entry.recommended_mission_ids?.[0];
+    if (first) return `/missions/${first}`;
+  }
+  return "/missions";
+}
+
+// Match both partial-pass ("X/Y hidden tests passed") and all-pass
+// ("+12: all hidden tests pass (N/N)") signals emitted by the grader.
+const HIDDEN_TEST_SIGNAL = /hidden tests? (?:passed|pass)/i;
+
 function countHiddenTestsPassed(report: ScoreReport): number | null {
   const sig = report.dimensions?.final_correctness?.signals?.find((s) =>
-    /hidden tests? passed/i.test(s),
+    HIDDEN_TEST_SIGNAL.test(s),
   );
   const m = sig?.match(/(\d+)\s*\/\s*(\d+)/);
   return m ? Number(m[1]) : null;
 }
 function countHiddenTestsTotal(report: ScoreReport): number | null {
   const sig = report.dimensions?.final_correctness?.signals?.find((s) =>
-    /hidden tests? passed/i.test(s),
+    HIDDEN_TEST_SIGNAL.test(s),
   );
   const m = sig?.match(/(\d+)\s*\/\s*(\d+)/);
   return m ? Number(m[2]) : null;
