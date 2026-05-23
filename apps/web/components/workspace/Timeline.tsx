@@ -25,6 +25,10 @@ import { cn } from "@/lib/utils";
 interface TimelineProps {
   events: SupervisionEvent[];
   className?: string;
+  /** P0-2 — when set, the row whose id matches gets a brief pulse
+   *  highlight and the surrounding scroller scrolls to it. Wired from
+   *  ReportView (post-mortem walkthrough). */
+  pulseEventId?: number | null;
 }
 
 type Tone = "neutral" | "primary" | "success" | "warning" | "danger";
@@ -242,6 +246,37 @@ function render(event: SupervisionEvent): RenderedEvent {
         label: "Submission failed",
         detail: `${event.payload.stage}: ${event.payload.detail}`,
       };
+    case "tutorial.step_completed":
+      return {
+        icon: CheckCircle2,
+        tone: "primary",
+        label: "Tutorial step completed",
+        detail: event.payload.step_id,
+      };
+    case "tutorial.dismissed":
+      return {
+        icon: Undo2,
+        tone: "neutral",
+        label: "Tutorial step dismissed",
+        detail: event.payload.step_id,
+      };
+    case "tutorial.completed":
+      return {
+        icon: CheckCircle2,
+        tone: "success",
+        label: "Tutorial completed",
+        detail: event.payload.mission_id,
+      };
+    case "session.gave_up":
+      return {
+        icon: AlertTriangle,
+        tone: "warning",
+        label: "Session gave up",
+        detail:
+          event.payload.seconds_into_session !== undefined
+            ? `${event.payload.seconds_into_session}s into session`
+            : "Submitted via give-up affordance",
+      };
     default:
       return unreachable(event);
   }
@@ -284,7 +319,11 @@ function formatMinuteBucket(iso: string): string {
   });
 }
 
-export function Timeline({ events, className }: TimelineProps) {
+export function Timeline({
+  events,
+  className,
+  pulseEventId = null,
+}: TimelineProps) {
   if (events.length === 0) {
     return (
       <div
@@ -318,7 +357,13 @@ export function Timeline({ events, className }: TimelineProps) {
                 return (
                   <li
                     key={`${event.id}-${event.occurred_at}`}
-                    className="flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--color-muted)]"
+                    data-event-id={event.id}
+                    data-pulse={pulseEventId === event.id ? "true" : undefined}
+                    className={cn(
+                      "flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors duration-200 hover:bg-[var(--color-muted)]",
+                      pulseEventId === event.id &&
+                        "animate-[pulse_1.2s_ease-in-out_1] bg-[oklch(from_var(--color-primary)_l_c_h/0.18)] ring-2 ring-[var(--color-primary)]",
+                    )}
                   >
                     <span
                       aria-hidden

@@ -39,6 +39,12 @@
       "description": "Manifest revision. Bump on any breaking change to the manifest shape or expected behavior.",
       "minimum": 1
     },
+    "kind": {
+      "type": "string",
+      "description": "Mission kind. 'tutorial' missions short-circuit the grading runner (no Submission row, no score) and are surfaced through the catalog's 'Start here' affordance rather than the standard grid (P0-1).",
+      "enum": ["standard", "tutorial"],
+      "default": "standard"
+    },
     "title": {
       "type": "string",
       "description": "Human-readable mission title shown in the catalog and workspace.",

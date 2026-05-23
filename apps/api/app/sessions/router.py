@@ -12,12 +12,12 @@ ownership of the session row (403 when accessing another user's session).
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -152,7 +152,12 @@ async def post_session(
 ) -> SessionRead:
     request.state.user = user
     try:
-        row = await create_session(db, user_id=user.id, mission_id=body.mission_id)
+        row = await create_session(
+            db,
+            user_id=user.id,
+            mission_id=body.mission_id,
+            previous_session_id=body.previous_session_id,
+        )
     except MissionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"mission not found: {exc}") from exc
     except ActiveSessionExistsError as exc:
@@ -602,6 +607,59 @@ async def post_diff_opened(
     return Response(status_code=204)
 
 
+class TutorialStepBody(BaseModel):
+    """Body for ``POST /sessions/{id}/events/tutorial-step``.
+
+    ``action`` discriminates "I completed step X" from "I dismissed step X"
+    — both write into the supervision event log so the post-session content
+    tuning can see exactly which steps users skipped vs. completed. The
+    grader ignores tutorial events when scoring.
+    """
+
+    step_id: str = Field(min_length=1, max_length=64)
+    action: Literal["completed", "dismissed"] = "completed"
+
+
+@router.post(
+    "/{session_id}/events/tutorial-step",
+    status_code=204,
+    summary="Record a tutorial coachmark step transition (P0-1)",
+)
+async def post_tutorial_step(
+    session_id: uuid.UUID,
+    body: TutorialStepBody,
+    request: Request,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Persist a ``tutorial.step_completed`` or ``tutorial.dismissed`` event.
+
+    These events are tutorial-only — the grader ignores them (Mission 00
+    short-circuits the scoring path entirely). Persisting them via the
+    supervision-event log keeps the audit trail uniform with every other
+    user action, which is the load-bearing invariant for the post-mortem
+    replay tool.
+    """
+    request.state.user = user
+    row = await _require_owned_session(db, session_id, user)
+    _require_mutable_session(row)
+
+    event_type = (
+        "tutorial.step_completed" if body.action == "completed" else "tutorial.dismissed"
+    )
+    redis = await get_redis()
+    emitter = EventEmitter(db=db, redis_client=redis)
+    await emitter.emit(
+        session_id=session_id,
+        event_type=event_type,
+        payload={
+            "step_id": body.step_id,
+            "mission_id": row.mission_id,
+        },
+    )
+    return Response(status_code=204)
+
+
 @router.get(
     "/{session_id}/timeline",
     response_model=list[SupervisionEventRead],
@@ -649,6 +707,133 @@ async def post_submit(
     return await submit_session(db=db, session=row, request=request)
 
 
+# ---------------------------------------------------------------------------
+# P0-4 — give up & reveal
+# ---------------------------------------------------------------------------
+
+
+# Soft-block window before "Give up" is allowed. Documented in ADR 0010 and
+# user-facing copy on the GiveUpDialog. Kept in seconds so it can be overridden
+# per-mission later without changing units.
+GIVE_UP_MIN_SECONDS: int = 600  # 10 minutes
+
+
+@router.post(
+    "/{session_id}/give-up",
+    response_model=SubmissionRead,
+    summary="Forfeit the session, reveal the ideal solution, cap the score at 50",
+)
+async def post_give_up(
+    session_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> SubmissionRead:
+    """Forfeit the active session and immediately submit it for grading.
+
+    Preconditions:
+      * The caller owns the session.
+      * ``session.status == 'active'`` (a session that's already submitting
+        or graded can't be given up on — the user must wait for the
+        in-flight grade to finish, then they can retry).
+      * At least :data:`GIVE_UP_MIN_SECONDS` (10 min) have elapsed since
+        ``session.started_at`` — prevents quitting before engaging.
+
+    Side-effects (in order):
+      1. Emit ``session.gave_up`` supervision event with the
+         ``seconds_into_session`` payload (so the timeline reflects the
+         deliberate forfeit).
+      2. Stamp ``sessions.gave_up_at = now()``. The grading runner reads
+         this flag when computing the score report and applies a 50/100
+         cap with ``score_cap_reason='gave_up'``.
+      3. Call the standard submit pipeline (same path as
+         ``POST /sessions/{id}/submit``).
+
+    Errors:
+      * 409 — session is not active (already graded, abandoned, errored,
+        or mid-submit). Detail includes the current status.
+      * 425 (Too Early) — 10-min window hasn't elapsed yet. Detail
+        carries ``seconds_remaining`` so the FE can render a countdown.
+    """
+    from datetime import UTC, datetime
+
+    from app.sessions.events import EventEmitter, get_redis
+
+    request.state.user = user
+    row = await _require_owned_session(db, session_id, user)
+
+    if row.status != "active":
+        # Mirror the same 409 envelope shape the FE already knows how to
+        # render (see the ``session_not_active`` code used by the workspace
+        # mutators above).
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_not_active",
+                "message": (
+                    f"session is {row.status!s} — give-up requires an active session"
+                ),
+                "session_status": row.status,
+            },
+        )
+
+    now = datetime.now(UTC)
+    started_at = row.started_at
+    # The DB column is TIMESTAMPTZ but SQLite-backed tests sometimes return a
+    # naive datetime. Normalise to UTC-aware so the subtraction is honest.
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    seconds_elapsed = int((now - started_at).total_seconds())
+    if seconds_elapsed < GIVE_UP_MIN_SECONDS:
+        seconds_remaining = GIVE_UP_MIN_SECONDS - seconds_elapsed
+        # 425 Too Early signals "the request is valid but the server isn't
+        # ready to accept it yet" — matches the "the gate isn't open"
+        # semantics better than 400/409. The FE's GiveUpDialog narrows on
+        # the ``code`` key and renders the countdown.
+        raise HTTPException(
+            status_code=425,
+            detail={
+                "code": "give_up_not_yet_available",
+                "message": (
+                    "give-up requires at least 10 minutes in session"
+                ),
+                "seconds_remaining": seconds_remaining,
+                "seconds_required": GIVE_UP_MIN_SECONDS,
+            },
+            headers={"Retry-After": str(seconds_remaining)},
+        )
+
+    # Persist the give-up event BEFORE flipping ``gave_up_at`` so a crash
+    # between the emit and the column write doesn't leave the session
+    # capped but without an event in the timeline. The event itself is
+    # consumed by the timeline; the column is consumed by the grading
+    # runner — they're independent contracts, but ordering matters for
+    # forensics.
+    redis = await get_redis()
+    emitter = EventEmitter(db=db, redis_client=redis)
+    await emitter.emit(
+        session_id=session_id,
+        event_type="session.gave_up",
+        payload={
+            "seconds_into_session": seconds_elapsed,
+            "started_at_iso": started_at.isoformat(),
+            "gave_up_at_iso": now.isoformat(),
+        },
+    )
+
+    row.gave_up_at = now
+    await db.flush()
+    # Commit BEFORE submit_session — the submit path issues its own atomic
+    # claim UPDATE which would lose this flush if a downstream error
+    # rolled back the transaction.
+    await db.commit()
+    await db.refresh(row)
+
+    # Hand off to the standard submit pipeline. The runner reads
+    # ``session.gave_up_at`` and applies the cap inside ``_pipeline``.
+    return await submit_session(db=db, session=row, request=request)
+
+
 @router.get(
     "/{session_id}/submission",
     response_model=SubmissionRead,
@@ -662,9 +847,13 @@ async def get_submission(
     """Return the grading submission for an already-graded session.
 
     Returns 404 if the session has not been submitted yet, or 404 if the
-    session itself does not exist.
+    session itself does not exist. ``ideal_solution`` /
+    ``ideal_solution_diff`` / ``agent_patch_diff`` are injected from disk
+    when ``session.status == 'graded'`` so the FE can render the
+    post-mortem walkthrough (P0-2) without a second roundtrip to
+    ``/reports``.
     """
-    await _require_owned_session(db, session_id, user)
+    session_row = await _require_owned_session(db, session_id, user)
 
     submission = (
         await db.execute(select(Submission).where(Submission.session_id == session_id))
@@ -674,4 +863,26 @@ async def get_submission(
             status_code=404,
             detail="no submission found for this session — has it been submitted?",
         )
-    return SubmissionRead.model_validate(submission)
+    # Pull the P0-2 supplementary diffs from disk. We import inline so
+    # this module's import graph doesn't grow a hard dependency on the
+    # reports module.
+    from app.reports.router import (
+        _read_agent_patch_diff,
+        _read_ideal_solution,
+        _read_ideal_solution_diff,
+        _to_read_model,
+    )
+
+    settings = get_settings()
+    return _to_read_model(
+        submission,
+        _read_ideal_solution(settings.missions_root, session_row.mission_id),
+        session_row.status,
+        ideal_solution_diff=_read_ideal_solution_diff(
+            settings.missions_root, session_row.mission_id
+        ),
+        agent_patch_diff=_read_agent_patch_diff(
+            settings.missions_root, session_row.mission_id
+        ),
+        mission_id=session_row.mission_id,
+    )

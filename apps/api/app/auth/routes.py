@@ -19,6 +19,7 @@ import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from loguru import logger
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +29,6 @@ from app.auth.email import send_magic_link_email
 from app.auth.magic_link import consume_magic_token, create_magic_link
 from app.auth.session_cookie import issue_session_cookie, revoke_session_cookie
 from app.config import get_settings
-from loguru import logger
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserRead
@@ -209,6 +209,8 @@ def _build_me_response(user: User, request: Request) -> JSONResponse:
             "created_at": user.created_at,
             "last_login_at": user.last_login_at,
             "csrf_token": csrf_value,
+            "tutorial_completed_at": user.tutorial_completed_at,
+            "tutorial_replay_count": user.tutorial_replay_count,
         }
     )
 
@@ -249,6 +251,46 @@ async def post_csrf_refresh(
     """
     # Clear the existing cookie so _build_me_response mints a new value.
     request.cookies.pop(_CSRF_COOKIE_NAME, None)
+    return _build_me_response(user, request)
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/me/tutorial/replay  (P0-1)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/me/tutorial/replay",
+    response_model=UserRead,
+    summary="Clear tutorial completion + increment replay count (P0-1)",
+)
+async def post_tutorial_replay(
+    request: Request,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Re-arm the tutorial coachmark for the signed-in user.
+
+    Atomic: a single SQL ``UPDATE`` clears ``tutorial_completed_at`` and
+    increments ``tutorial_replay_count`` server-side. The previous
+    Python-side read-modify-write lost increments under concurrent
+    replays (two callers each read N, both wrote N+1).
+    """
+    from sqlalchemy import update as sa_update
+
+    await db.execute(
+        sa_update(User)
+        .where(User.id == user.id)
+        .values(
+            tutorial_completed_at=None,
+            tutorial_replay_count=User.tutorial_replay_count + 1,
+        )
+    )
+    await db.flush()
+    # The outer ``get_db`` dependency commits at request boundary, but
+    # the response is built BEFORE that commit — refresh the in-memory
+    # ORM instance so the caller sees the freshly-incremented counter.
+    await db.refresh(user)
     return _build_me_response(user, request)
 
 

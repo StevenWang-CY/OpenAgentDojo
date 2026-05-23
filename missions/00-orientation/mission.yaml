@@ -1,0 +1,157 @@
+id: orientation
+version: 1
+# P0-1 — tutorial missions short-circuit the grading runner. The kind
+# discriminator is the only flag that distinguishes this mission from
+# any other; everything below still parses as a real mission so the
+# coachmark overlay sees the same events / workspace surface the user
+# will hit on every subsequent mission.
+kind: tutorial
+title: "Mission 00 — Orientation"
+short_description: "Learn the dojo's workspace in eight minutes."
+difficulty: beginner
+category: tutorial
+estimated_minutes: 8
+skills_tested:
+  - workflow
+  - agent-review
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm --filter @demo/backend test:unit
+    typecheck: pnpm --filter @demo/backend typecheck
+
+brief: |
+  ## Welcome to the dojo
+
+  This is **Mission 00**. It's a guided tour of the workspace you'll be
+  using for every other mission. The agent has already taken a swing at a
+  bug; your job is to learn the workflow that catches when the agent's
+  swing missed.
+
+  ## The bug
+
+  `welcomeBanner(name)` in `backend/src/utils/welcome.ts` should return
+  `"Hello, Alice!"` but returns `"Hello, !"` — the `name` argument is
+  silently dropped on the floor.
+
+  The agent has proposed a patch. It looks plausible. Your job is to
+  read it carefully, run the tests, and decide whether to ship it.
+
+  ## What you'll learn (~8 minutes)
+
+  - **Context selection.** Tick the files the agent should look at. A
+    bad selection sends the agent down the wrong rabbit hole.
+  - **Prompting.** Write a prompt that names the bug and asks for a
+    specific deliverable (a regression test).
+  - **Agent review.** Read the agent's narration AND its diff before
+    pressing Apply. The narration is plausible; the diff is wrong.
+  - **Verification.** Run the visible tests. They'll pass under the
+    agent's wrong patch — that's the point. The hidden test catches it.
+  - **Submission.** Submit when you're ready. The report shows you
+    every dimension the grader actually measured.
+
+  Tutorials are graded by *completion*, not by score — you can submit
+  the wrong fix and still finish. The real missions are different.
+
+failure_mode:
+  id: missing_argument_concatenation
+  title: "Agent fixes the trailing punctuation but ignores the name"
+  description: |
+    The agent's patch tweaks the response string but never wires the
+    ``name`` argument back into it. The visible unit test only checks
+    the trailing ``!`` so it stays green; the hidden test catches the
+    real regression. A supervisor who reads the diff and asks "where
+    is ``name`` used?" catches this in seconds.
+  hint_after_submit_if_missed: |
+    The agent's diff added punctuation but didn't reference ``name``. A
+    correct fix interpolates the argument into the returned string.
+
+expected_files:
+  - backend/src/utils/welcome.ts
+  - backend/src/tests/unit/welcome.test.ts
+
+expected_context:
+  required:
+    - backend/src/utils/welcome.ts
+    - backend/src/tests/unit/welcome.test.ts
+  recommended:
+    - backend/src/utils/
+  discouraged:
+    - backend/src/auth/session.ts
+    - backend/src/middleware/requireAuth.ts
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 20
+    prompt_must_contain_any:
+      - fix
+      - bug
+      - greeting
+      - welcome
+      - name
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "welcomeBanner ends with the welcoming punctuation"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "welcomeBanner interpolates the name argument"
+
+# A single forbidden_changes guard so the manifest validator is happy
+# (it requires at least one validator). Tutorial missions are scored by
+# completion, not by safety, so the rule never trips in practice.
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+
+# Tutorial missions don't score. All-zero is the documented contract;
+# the manifest validator allows the all-zero fast-path when kind=tutorial.
+scoring_weights:
+  final_correctness: 0
+  verification: 0
+  agent_review: 0
+  prompt_quality: 0
+  context_selection: 0
+  safety: 0
+  diff_minimality: 0
+
+# Diff size envelope — not used for scoring (tutorials are uncored) but
+# the manifest schema requires a positive integer here.
+expected_diff_lines_p50: 3
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - name
+      - argument
+      - regression test
+    bonus_keywords: []
+    penalty_if_under_chars: 20
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: false
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: false
+  safety:
+    must_not_run_commands: []
+    must_not_introduce_deps: true
+
+# Excluded from the public catalog grid — the FE renders tutorial
+# missions through the "// start here" affordance. The manifest
+# validator enforces this invariant in code.
+published: false

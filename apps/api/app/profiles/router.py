@@ -20,13 +20,15 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.deps import get_current_user, require_auth
 from app.db.session import get_db
 from app.grading.dimensions import DIMENSION_NAMES
 from app.models.badge import Badge
@@ -36,7 +38,6 @@ from app.models.submission import Submission
 from app.models.user import User
 from app.models.user_badge import UserBadge
 from app.observability import profile_malformed_reports_total
-from app.auth.deps import get_current_user, require_auth
 from app.schemas.profile import (
     DimensionTrendPoint,
     EarnedBadgeRead,
@@ -133,52 +134,183 @@ async def _fetch_stats(
 ) -> tuple[int, int | None, dict[str, float]]:
     """Return (total_missions, best_score, radar_averages).
 
-    ``total_missions`` counts graded sessions with a non-null score.
-    ``best_score`` is ``MAX(score)`` across those; ``None`` when there are none.
-    ``radar_averages`` is the per-dimension mean of
-    ``score_report.dimensions[d].score`` across all of the user's submissions.
-    """
-    # Single aggregate query for both counts.
-    totals_stmt = select(
-        func.count(SessionRow.id),
-        func.max(SessionRow.score),
-    ).where(
-        SessionRow.user_id == user_id,
-        SessionRow.status == "graded",
-        SessionRow.score.is_not(None),
-    )
-    total_missions, best_score = (await db.execute(totals_stmt)).one()
+    P0-3 — public aggregates use **best-per-mission**, not "average across
+    every submission". The per-mission best is selected with the policy
+    documented in ADR 0009:
 
-    # Pull score_report + session_id + completed_at from each of the user's
-    # submissions — the avg has to be computed Python-side because the
-    # per-dimension shape is nested JSON ({final_correctness: {score: N,
-    # max: M, signals: []}, …}) and we want the same arithmetic on Postgres
-    # JSONB and SQLite JSON. ``session_id`` is included so the
-    # malformed-report observability path can correlate skipped reports
-    # back to a session. ``completed_at`` drives the per-dimension
-    # longitudinal sparklines (P2-2).
-    reports_stmt = (
-        select(
-            Submission.score_report,
-            Submission.session_id,
-            SessionRow.completed_at,
-        )
+      * Tier 1: best uncapped attempt (score_cap_reason IS NULL).
+      * Tier 2: best gave-up attempt — only when no uncapped attempt exists.
+
+    ``total_missions`` is the count of DISTINCT missions the user has at
+    least one graded attempt on (not the count of attempts).
+    ``best_score`` is ``MAX(per-mission-best)`` — same as before in single-
+    attempt cases, but now stable when the user replays a mission with a
+    worse score.
+    ``radar_averages`` is built from the per-mission-best submissions
+    only, so a strong real attempt isn't shadowed by the average of every
+    grind submission.
+
+    Observability: ``_aggregate_radar`` reports malformed payloads on
+    every (submission, session) tuple it sees. We pre-walk every graded
+    submission so the malformed-report counter still increments for
+    duplicates that lost the best-per-mission tiebreaker. Without this
+    extra pass, a malformed shape that only ever appears on a "loser"
+    submission would slip past the alarm.
+    """
+    bests = await _best_per_mission(db, user_id)
+    total_missions = len(bests)
+    best_score = max((b.score for b in bests if b.score is not None), default=None)
+
+    # Aggregate radar from best-per-mission only (ADR 0009 policy).
+    radar_inputs: list[tuple[Any, uuid.UUID | None]] = [
+        (b.score_report, b.session_id) for b in bests
+    ]
+    radar = _aggregate_radar(radar_inputs)
+
+    # Independent malformed-report sweep: walk EVERY graded submission so
+    # the observability counter doesn't silently lose signal when a
+    # malformed report happens to be the loser in best-per-mission
+    # tie-breaking. The radar itself is unaffected — this run is for
+    # the metric only.
+    await _observe_malformed_across_all_submissions(db, user_id, skip=bests)
+
+    return int(total_missions or 0), best_score, radar
+
+
+async def _observe_malformed_across_all_submissions(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    skip: Sequence[_BestAttempt],
+) -> None:
+    """Re-walk every non-best submission and bump the malformed counter.
+
+    The best-per-mission submissions have already been measured by the
+    primary ``_aggregate_radar`` call; we deliberately exclude them here
+    to avoid double-counting. Anything else with a malformed shape is
+    surfaced into the same Prometheus counter.
+    """
+    skip_ids = {b.session_id for b in skip}
+    stmt = (
+        select(Submission.score_report, Submission.session_id)
         .join(SessionRow, SessionRow.id == Submission.session_id)
         .where(
             SessionRow.user_id == user_id,
-            # Only graded sessions contribute to the radar — error /
-            # provisioning / abandoned stubs would otherwise drag every
-            # average toward zero.
             SessionRow.status == "graded",
         )
-        .order_by(SessionRow.completed_at.asc().nullslast())
     )
-    rows = (await db.execute(reports_stmt)).all()
-    reports: list[tuple[Any, uuid.UUID | None]] = [
-        (row.score_report, row.session_id) for row in rows
-    ]
-    radar = _aggregate_radar(reports)
-    return int(total_missions or 0), best_score, radar
+    rows = (await db.execute(stmt)).all()
+    extras: list[tuple[Any, uuid.UUID | None]] = []
+    for row in rows:
+        if row.session_id in skip_ids:
+            continue
+        extras.append((row.score_report, row.session_id))
+    if extras:
+        # ``_aggregate_radar`` returns a dict we ignore — its side effect
+        # is the per-malformed-row metric increment we care about.
+        _aggregate_radar(extras)
+
+
+@dataclass(frozen=True)
+class _BestAttempt:
+    """A single user's best graded attempt against one mission (P0-3 ADR 0009).
+
+    Frozen for hashability and to make the read-only access patterns
+    explicit. Carries everything the radar aggregator, the skills-view, and
+    the mission-detail ``your_attempts`` strip need without re-querying.
+    """
+
+    mission_id: str
+    session_id: uuid.UUID
+    submission_id: uuid.UUID
+    score: int | None
+    score_report: Any
+    completed_at: Any
+    score_cap_reason: str | None
+
+
+async def _best_per_mission(
+    db: AsyncSession, user_id: uuid.UUID
+) -> list[_BestAttempt]:
+    """For each mission, return the user's best attempt (P0-3 policy).
+
+    Selection rule (per ADR 0009):
+      1. Exclude grader-failure stubs (``score_report.is_stub == True``).
+      2. Among the remaining attempts on the same mission, prefer uncapped
+         over gave-up.
+      3. Within the preferred tier, the highest ``total_score`` wins; ties
+         break to the most recent ``completed_at``.
+
+    The selection is computed Python-side (not as a window function in
+    SQL) so the policy stays portable across the SQLite-backed tests and
+    Postgres production — and so the stub-exclusion can read the JSONB
+    flag uniformly. The N here is bounded by the user's total graded
+    attempts; even a power user with hundreds of attempts is comfortably
+    sub-millisecond.
+    """
+    stmt = (
+        select(
+            SessionRow.id.label("session_id"),
+            SessionRow.mission_id.label("mission_id"),
+            SessionRow.completed_at.label("completed_at"),
+            SessionRow.score.label("score"),
+            Submission.id.label("submission_id"),
+            Submission.score_report.label("score_report"),
+            Submission.score_cap_reason.label("score_cap_reason"),
+        )
+        .join(Submission, Submission.session_id == SessionRow.id)
+        .where(
+            SessionRow.user_id == user_id,
+            SessionRow.status == "graded",
+        )
+        .order_by(SessionRow.completed_at.desc().nullslast(), SessionRow.id.desc())
+    )
+    rows = (await db.execute(stmt)).all()
+
+    # Bucket by mission, applying tier preference + score ordering.
+    by_mission: dict[str, _BestAttempt] = {}
+    for row in rows:
+        report = row.score_report
+        if isinstance(report, dict) and report.get("is_stub"):
+            continue
+        candidate = _BestAttempt(
+            mission_id=str(row.mission_id),
+            session_id=row.session_id,
+            submission_id=row.submission_id,
+            score=row.score,
+            score_report=report,
+            completed_at=row.completed_at,
+            score_cap_reason=row.score_cap_reason,
+        )
+        current = by_mission.get(candidate.mission_id)
+        if current is None or _candidate_beats(candidate, current):
+            by_mission[candidate.mission_id] = candidate
+    return list(by_mission.values())
+
+
+def _candidate_beats(candidate: _BestAttempt, current: _BestAttempt) -> bool:
+    """Tier-aware comparison: uncapped > gave-up; higher score within tier wins."""
+    candidate_capped = candidate.score_cap_reason is not None
+    current_capped = current.score_cap_reason is not None
+    if current_capped and not candidate_capped:
+        return True  # uncapped beats capped regardless of score
+    if not current_capped and candidate_capped:
+        return False
+    # Same tier — higher score wins.
+    cand_score = candidate.score if candidate.score is not None else -1
+    curr_score = current.score if current.score is not None else -1
+    if cand_score != curr_score:
+        return cand_score > curr_score
+    # Ties (rare) — prefer the more recent attempt.
+    cand_t = candidate.completed_at
+    curr_t = current.completed_at
+    if cand_t is None and curr_t is None:
+        return False
+    if cand_t is None:
+        return False
+    if curr_t is None:
+        return True
+    return cand_t > curr_t
 
 
 async def _fetch_dimension_trends(
@@ -311,7 +443,7 @@ def _aggregate_radar(reports: Sequence[Any]) -> dict[str, float]:
     response_model=PublicProfile,
     summary="Get a user's public profile by handle",
 )
-async def get_profile(  # noqa: PLR0912 — guarded by `/me/skills` route below
+async def get_profile(
     handle: str,
     db: AsyncSession = Depends(get_db),
     viewer: User | None = Depends(get_current_user),
@@ -387,15 +519,25 @@ async def get_my_skills(
         entry["mission_ids"].append(m.id)
         entry["mission_titles"].append(m.title)
 
-    # Pull the user's graded sessions joined to mission failure_mode.
+    # P0-3 — Pull every graded attempt, then collapse to best-per-mission so
+    # "sessions_attempted" and "sessions_passed" reflect missions practised
+    # (not raw row count). A user with 3 attempts on the same mission
+    # contributes 1 to attempted, and 1 to passed iff their best uncapped
+    # attempt cleared the threshold. Failure-mode rollups sum across the
+    # best-per-mission set.
+    #
     # Excluding non-graded sessions so error / abandoned attempts don't
-    # inflate the "attempted" counter.
+    # inflate the "attempted" counter. Stubs are filtered inside
+    # ``_best_per_mission``.
     sessions_stmt = (
         select(
             Mission.failure_mode,
             Submission.score_report,
+            SessionRow.id.label("session_id"),
+            SessionRow.mission_id,
             SessionRow.score,
             SessionRow.completed_at,
+            Submission.score_cap_reason,
         )
         .join(SessionRow, SessionRow.mission_id == Mission.id)
         .join(Submission, Submission.session_id == SessionRow.id)
@@ -403,17 +545,55 @@ async def get_my_skills(
             SessionRow.user_id == user.id,
             SessionRow.status == "graded",
         )
+        .order_by(SessionRow.completed_at.desc().nullslast(), SessionRow.id.desc())
     )
     rows = (await db.execute(sessions_stmt)).all()
-    attempts: dict[str, dict[str, Any]] = {}
+
+    # Collapse rows to per-mission best, applying the same tier policy
+    # used by ``_best_per_mission`` (uncapped beats capped; within tier,
+    # higher score wins; ties → most recent). The map is per-mission, so
+    # a user with 3 attempts on mission A only contributes 1 row to the
+    # mastery rollup below.
+    best_per_mission: dict[str, dict[str, Any]] = {}
     for row in rows:
         report = row.score_report
-        # Grader-failure stubs aren't real attempts — exclude them so a
-        # transient sandbox outage doesn't make the user appear to have
-        # tried (and failed) every mission they touched.
         if isinstance(report, dict) and report.get("is_stub"):
             continue
-        fm = row.failure_mode or "unknown"
+        mid = str(row.mission_id)
+        candidate = {
+            "failure_mode": row.failure_mode,
+            "score_report": report,
+            "score": row.score,
+            "completed_at": row.completed_at,
+            "score_cap_reason": row.score_cap_reason,
+        }
+        current = best_per_mission.get(mid)
+        if current is None:
+            best_per_mission[mid] = candidate
+            continue
+        cand_capped = candidate["score_cap_reason"] is not None
+        curr_capped = current["score_cap_reason"] is not None
+        if curr_capped and not cand_capped:
+            best_per_mission[mid] = candidate
+            continue
+        if not curr_capped and cand_capped:
+            continue
+        cand_score = candidate["score"] if isinstance(candidate["score"], int) else -1
+        curr_score = current["score"] if isinstance(current["score"], int) else -1
+        if cand_score > curr_score:
+            best_per_mission[mid] = candidate
+        elif cand_score == curr_score:
+            cand_t = candidate["completed_at"]
+            curr_t = current["completed_at"]
+            if curr_t is None and cand_t is not None:
+                best_per_mission[mid] = candidate
+            elif cand_t is not None and curr_t is not None and cand_t > curr_t:
+                best_per_mission[mid] = candidate
+
+    attempts: dict[str, dict[str, Any]] = {}
+    for entry in best_per_mission.values():
+        report = entry["score_report"]
+        fm = entry["failure_mode"] or "unknown"
         slot = attempts.setdefault(
             fm,
             {
@@ -424,7 +604,7 @@ async def get_my_skills(
             },
         )
         slot["attempted"] += 1
-        score = row.score
+        score = entry["score"]
         if isinstance(score, int):
             slot["scores"].append(score)
         # "Pass" = the supervisor materially caught the agent's failure
@@ -448,7 +628,7 @@ async def get_my_skills(
             missed_failure_mode = bool(report.get("missed_failure_mode", True))
             if score_passed or not missed_failure_mode:
                 slot["passed"] += 1
-        completed_at = row.completed_at
+        completed_at = entry["completed_at"]
         if completed_at is not None:
             cur = slot["last_attempted_at"]
             if cur is None or completed_at > cur:

@@ -34,12 +34,16 @@ const KNOWN_BE_EVENT_TYPES = [
   "prompt.submitted",
   "session.abandoned",
   "session.errored",
+  "session.gave_up",
   "session.provision_failed",
   "session.started",
   "submission.failed",
   "submission.graded",
   "submission.requested",
   "test.run",
+  "tutorial.completed",
+  "tutorial.dismissed",
+  "tutorial.step_completed",
   "validator.flag",
 ] as const;
 

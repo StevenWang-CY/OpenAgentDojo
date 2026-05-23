@@ -264,6 +264,10 @@ export function getMission(id: string, signal?: AbortSignal): Promise<MissionDet
 // ── Sessions ─────────────────────────────────────────────────────────────────
 
 export function createSession(input: CreateSessionInput): Promise<Session> {
+  // ``input`` already shapes ``{mission_id, previous_session_id?}`` per the
+  // backend ``SessionCreate`` schema (regenerated into shared-types/api.gen.ts).
+  // The Retry CTA on the report page passes both fields so the new attempt
+  // links back to its predecessor (P0-3 audit trail).
   return request<Session>("/sessions", { method: "POST", body: input });
 }
 
@@ -431,6 +435,31 @@ export function submitSession(sessionId: string): Promise<Submission> {
   });
 }
 
+/**
+ * POST /api/v1/sessions/{id}/give-up — forfeit the session, reveal the ideal
+ * solution, and cap the score at 50/100 (P0-4).
+ *
+ * Behaviour:
+ *  - Emits a ``session.gave_up`` supervision event so the timeline reflects
+ *    the deliberate forfeit.
+ *  - Stamps ``sessions.gave_up_at`` and immediately hands off to the
+ *    standard submit pipeline (same path as ``submitSession``).
+ *  - Returns the resulting ``Submission`` with ``score_cap_reason="gave_up"``.
+ *
+ * Errors the caller must surface:
+ *  - ``425 Too Early`` — the 10-minute soft block hasn't elapsed yet.
+ *    ``error.body.detail.seconds_remaining`` carries the wait time so the
+ *    FE can render a countdown.
+ *  - ``409 session_not_active`` — the session isn't ``active`` (already
+ *    submitting / graded / abandoned / errored).
+ */
+export function giveUpSession(sessionId: string): Promise<Submission> {
+  return request<Submission>(
+    `/sessions/${encodeURIComponent(sessionId)}/give-up`,
+    { method: "POST" },
+  );
+}
+
 /** GET /api/v1/sessions/{id}/submission — read the graded submission. */
 export function getSubmission(
   sessionId: string,
@@ -496,4 +525,28 @@ export function shareReport(submissionId: string): Promise<ShareReportResponse> 
     `/reports/${encodeURIComponent(submissionId)}/share`,
     { method: "POST" }
   );
+}
+
+// ── P0-1 — Tutorial endpoints ───────────────────────────────────────────────
+
+/** POST /api/v1/sessions/{id}/events/tutorial-step — record a coachmark
+ *  step transition. The backend persists the event to the supervision log;
+ *  the grader ignores it (tutorial missions short-circuit scoring).
+ *  204 No Content on success. */
+export function markTutorialStep(
+  sessionId: string,
+  stepId: string,
+  action: "completed" | "dismissed" = "completed",
+): Promise<void> {
+  return request<void>(
+    `/sessions/${encodeURIComponent(sessionId)}/events/tutorial-step`,
+    { method: "POST", body: { step_id: stepId, action } },
+  );
+}
+
+/** POST /api/v1/auth/me/tutorial/replay — clear tutorial completion + bump
+ *  the replay count. Returns the refreshed User so the header dropdown and
+ *  catalog banner re-render off the latest /me. */
+export function replayTutorial(): Promise<User> {
+  return request<User>(`/auth/me/tutorial/replay`, { method: "POST" });
 }

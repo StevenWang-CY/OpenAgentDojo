@@ -51,7 +51,7 @@ class PromptJudgement(Base):
     prior_agent_response_sha: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
-        server_default="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",  # noqa: E501 — sha256("")
+        server_default="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     )
     rubric_version: Mapped[int] = mapped_column(Integer, nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)

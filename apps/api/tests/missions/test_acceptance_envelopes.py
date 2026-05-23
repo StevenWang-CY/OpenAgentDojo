@@ -65,10 +65,18 @@ def _missions_root() -> Path:
 
 
 def _collect_missions() -> list[tuple[str, Path]]:
-    """Return ``(mission_id, folder)`` for every published mission on disk."""
+    """Return ``(mission_id, folder)`` for every score-graded mission on disk.
+
+    Tutorial missions (P0-1) are graded by completion, not score, so they
+    ship no ``acceptance.yaml`` and are intentionally excluded here.
+    """
     root = _missions_root()
     loader = MissionLoader(root)
-    return [(m.manifest.id, m.folder) for m in loader.scan()]
+    return [
+        (m.manifest.id, m.folder)
+        for m in loader.scan()
+        if getattr(m.manifest, "kind", "standard") != "tutorial"
+    ]
 
 
 _MISSIONS = _collect_missions()

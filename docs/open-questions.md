@@ -29,7 +29,7 @@ Track unresolved product/engineering decisions here. Each entry has a date opene
 ## OQ-0002 — "Give up" with ideal-solution reveal
 
 - Opened: 2026-05-21
-- Status: open
+- Status: **resolved 2026-05-23** by [ADR 0010](./adr/0010-give-up-policy.md)
 - Resolve by: M7 (polish)
 
 **Question.** Should we offer a "give up" action that lets the user see the ideal solution, capped at a score of 50 for the session?
@@ -61,7 +61,7 @@ Track unresolved product/engineering decisions here. Each entry has a date opene
 ## OQ-0004 — Multi-attempt scoring
 
 - Opened: 2026-05-21
-- Status: open
+- Status: **resolved 2026-05-23** by [ADR 0009](./adr/0009-multi-attempt-policy.md)
 - Resolve by: M7
 
 **Question.** When a user replays a mission, what do we show on the public profile and in radar averages: best score, latest score, or both?
@@ -76,7 +76,16 @@ Track unresolved product/engineering decisions here. Each entry has a date opene
 
 ## Resolved
 
-(none yet — open questions land here with a link to their resolving ADR/PR)
+- **OQ-0002** ("Give up" with ideal-solution reveal) — resolved 2026-05-23
+  by [ADR 0010](./adr/0010-give-up-policy.md). Score cap 50/100, 10-min
+  soft block, no hiding from the public profile; dimension scores remain
+  honest. Skills/radar aggregation excludes gave-up attempts when any
+  uncapped attempt exists.
+- **OQ-0004** (Multi-attempt scoring) — resolved 2026-05-23 by
+  [ADR 0009](./adr/0009-multi-attempt-policy.md). Public aggregates use
+  best-per-mission (uncapped beats gave-up within tier); private mission
+  detail page surfaces count + best + latest + delta. Attempt count is
+  never public.
 
 ## References
 

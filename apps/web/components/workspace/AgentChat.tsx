@@ -207,7 +207,7 @@ function TurnView({ turn, onApplyPatch }: TurnViewProps) {
             </p>
           ) : null}
           {canApply ? (
-            <div className="mt-3">
+            <div className="mt-3" data-tutorial-anchor="apply-patch">
               <Button
                 size="sm"
                 variant="secondary"

@@ -456,3 +456,352 @@ def _format_recommendation(dim_name: str, mission_ids: list[str]) -> str:
         f"Try {joined} next — both directly exercise "
         f"{label.lower()}."
     )
+
+
+# ---------------------------------------------------------------------------
+# P0-2 — Critical-moment heuristic.
+# ---------------------------------------------------------------------------
+
+# Critical-moment kinds — narrow set; the FE renders a specific template per
+# kind so adding a new one requires a FE update too.
+CriticalMomentKind = str  # Literal["agent_responded_no_review",
+#                                    "submitted_without_verification",
+#                                    "wrong_layer_committed",
+#                                    "missed_corrective_window"]
+
+
+@dataclass(slots=True)
+class CriticalMoment:
+    """One deterministic "you went off course here" callout for the
+    post-mortem walkthrough.
+
+    Each entry pins to a specific supervision event id (so the FE can scroll
+    the timeline) and carries human-readable copy templated per ``kind``.
+    Severity is monotonic — higher means more painful in the report.
+    """
+
+    event_id: int
+    kind: str
+    explanation: str
+    what_to_do_instead: str
+    severity: int = 1
+    occurred_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "kind": self.kind,
+            "explanation": self.explanation,
+            "what_to_do_instead": self.what_to_do_instead,
+            "severity": self.severity,
+            "occurred_at": self.occurred_at,
+        }
+
+
+# Per-kind copy. Keyed by ``kind``; the FE renders ``explanation`` as the
+# headline and ``what_to_do_instead`` as the actionable follow-up.
+_CRITICAL_MOMENT_COPY: dict[str, tuple[str, str, int]] = {
+    "agent_responded_no_review": (
+        "The agent applied a patch after this response and you submitted "
+        "without opening the diff. You can't review what you didn't read.",
+        "Open the diff after every patch.applied and search for the bug's "
+        "key term before pressing Submit.",
+        4,
+    ),
+    "submitted_without_verification": (
+        "You submitted without running a single test or typecheck command. "
+        "Verification is the highest-leverage supervisor behaviour.",
+        "Run the targeted test suite (or `pnpm typecheck`) at least once "
+        "between the agent's patch and your submission.",
+        5,
+    ),
+    "wrong_layer_committed": (
+        "A forbidden-changes validator flagged the agent's patch and you "
+        "submitted it anyway without reverting the offending file.",
+        "When a validator flags a file, revert the change (the workspace "
+        "ships a revert affordance on the file tree) before pressing Submit.",
+        4,
+    ),
+    "missed_corrective_window": (
+        "You submitted within 15 seconds of the agent's last response. That "
+        "is below the time it takes to read a diff carefully.",
+        "Pause after the agent responds — read the narration AND the diff "
+        "before deciding to submit. 30 seconds is a reasonable floor.",
+        3,
+    ),
+}
+
+
+def _event_id(event: dict[str, Any]) -> int | None:
+    """Return the event's persistent id, or None if absent.
+
+    The grading runner's ``_load_events`` strips the id off (it only
+    serialises ``event_type``/``payload``/``occurred_at``), so callers
+    that want critical moments must re-pull with the id intact. We
+    fall back gracefully (the moment is suppressed) when an id is
+    missing rather than raising.
+    """
+    raw = event.get("id")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str) and raw.isdigit():
+        return int(raw)
+    return None
+
+
+def _index_of_first(events: list[dict[str, Any]], event_type: str) -> int | None:
+    for i, ev in enumerate(events):
+        if ev.get("event_type") == event_type:
+            return i
+    return None
+
+
+def _index_of_last(events: list[dict[str, Any]], event_type: str) -> int | None:
+    last: int | None = None
+    for i, ev in enumerate(events):
+        if ev.get("event_type") == event_type:
+            last = i
+    return last
+
+
+def _parse_iso(value: Any) -> Any:
+    """Best-effort ISO-8601 → datetime. Returns None on failure.
+
+    Logs at warning level when a string IS provided but doesn't parse so
+    an operator can spot malformed event timestamps that would otherwise
+    silently suppress a ``missed_corrective_window`` moment.
+    """
+    from datetime import datetime as _dt
+
+    from loguru import logger
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return _dt.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            logger.warning(
+                "[critical_moments] could not parse occurred_at {!r} — "
+                "moment derivation will skip this event",
+                value,
+            )
+            return None
+    return None
+
+
+def compute_critical_moments(  # noqa: PLR0912, PLR0915 — four heuristics are inherently branchy
+    *,
+    events: list[dict[str, Any]],
+    manifest: Any = None,
+    max_moments: int = 3,
+) -> list[CriticalMoment]:
+    """Return up to ``max_moments`` critical moments for the session.
+
+    Pure function over the event log. The four kinds the heuristic
+    detects mirror the design doc:
+
+      * ``agent_responded_no_review`` — last ``agent.responded`` whose
+        following ``patch.applied`` was never reviewed via
+        ``diff.opened`` before submission.
+      * ``submitted_without_verification`` — no test / typecheck command
+        ever ran in this session.
+      * ``wrong_layer_committed`` — a ``validator.flag`` (kind:
+        ``forbidden_changes``) fired and no ``file.reverted`` followed
+        for the same path.
+      * ``missed_corrective_window`` — ``submission.requested`` occurred
+        within 15 seconds of the most recent ``agent.responded``.
+
+    Each moment maps to an exact event id so the FE can scroll the
+    timeline. Moments are sorted by severity (desc) then by event order;
+    duplicates on the same event id are coalesced. Empty list when none
+    of the heuristics trip.
+    """
+    out: list[CriticalMoment] = []
+    if not events:
+        return out
+
+    submit_idx = _index_of_first(events, "submission.requested")
+    # If the user never submitted, every heuristic loses its anchor; the
+    # report still renders without moments.
+    events_before_submit = events if submit_idx is None else events[:submit_idx]
+
+    # ─── agent_responded_no_review ─────────────────────────────────────────
+    # Walk forward: for each agent.responded, find the *immediately
+    # following* patch.applied; if no diff.opened sits between that
+    # patch.applied and submission.requested (or end-of-events), surface
+    # the agent.responded as the moment.
+    last_responded_no_review: tuple[int, int] | None = None  # (event_index, event_id)
+    for i, ev in enumerate(events_before_submit):
+        if ev.get("event_type") != "agent.responded":
+            continue
+        patch_idx: int | None = None
+        for j in range(i + 1, len(events_before_submit)):
+            if events_before_submit[j].get("event_type") == "patch.applied":
+                patch_idx = j
+                break
+        if patch_idx is None:
+            continue
+        reviewed = False
+        for k in range(patch_idx + 1, len(events_before_submit)):
+            if events_before_submit[k].get("event_type") == "diff.opened":
+                reviewed = True
+                break
+        if reviewed:
+            continue
+        eid = _event_id(ev)
+        if eid is None:
+            continue
+        last_responded_no_review = (i, eid)
+    if last_responded_no_review is not None:
+        idx, eid = last_responded_no_review
+        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY[
+            "agent_responded_no_review"
+        ]
+        out.append(
+            CriticalMoment(
+                event_id=eid,
+                kind="agent_responded_no_review",
+                explanation=explanation,
+                what_to_do_instead=what_to_do,
+                severity=severity,
+                occurred_at=events_before_submit[idx].get("occurred_at"),
+            )
+        )
+
+    # ─── submitted_without_verification ────────────────────────────────────
+    test_categories = {"test", "typecheck"}
+    has_verification = False
+    for ev in events_before_submit:
+        if ev.get("event_type") != "command.run":
+            continue
+        payload = ev.get("payload") or {}
+        category = payload.get("category")
+        if category in test_categories:
+            has_verification = True
+            break
+    if not has_verification:
+        first_prompt_idx = _index_of_first(events_before_submit, "prompt.submitted")
+        if first_prompt_idx is not None:
+            ev = events_before_submit[first_prompt_idx]
+            eid = _event_id(ev)
+            if eid is not None:
+                explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY[
+                    "submitted_without_verification"
+                ]
+                out.append(
+                    CriticalMoment(
+                        event_id=eid,
+                        kind="submitted_without_verification",
+                        explanation=explanation,
+                        what_to_do_instead=what_to_do,
+                        severity=severity,
+                        occurred_at=ev.get("occurred_at"),
+                    )
+                )
+
+    # ─── wrong_layer_committed ─────────────────────────────────────────────
+    # A validator.flag with kind=forbidden_changes that was never followed
+    # by a file.reverted on the same path before submit. Anchor to the
+    # patch.applied that introduced the change (the validator flag itself
+    # is the report-time event; the user's decision moment was the patch).
+    flagged_path: str | None = None
+    for ev in events_before_submit:
+        if ev.get("event_type") != "validator.flag":
+            continue
+        payload = ev.get("payload") or {}
+        if payload.get("kind") != "forbidden_changes":
+            continue
+        # Look for matching file.reverted later in the stream.
+        path = payload.get("file") or payload.get("path")
+        reverted = False
+        for later in events_before_submit:
+            if later is ev:
+                continue
+            if later.get("event_type") != "file.reverted":
+                continue
+            later_path = (later.get("payload") or {}).get("path")
+            if not path or later_path == path:
+                reverted = True
+                break
+        if reverted:
+            continue
+        flagged_path = path
+        last_patch_idx = _index_of_last(events_before_submit, "patch.applied")
+        if last_patch_idx is None:
+            continue
+        anchor_ev = events_before_submit[last_patch_idx]
+        eid = _event_id(anchor_ev)
+        if eid is None:
+            continue
+        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY[
+            "wrong_layer_committed"
+        ]
+        if flagged_path:
+            explanation = (
+                f"The patch touched `{flagged_path}` which is on this mission's "
+                "forbidden-changes list, and you submitted without reverting it."
+            )
+        out.append(
+            CriticalMoment(
+                event_id=eid,
+                kind="wrong_layer_committed",
+                explanation=explanation,
+                what_to_do_instead=what_to_do,
+                severity=severity,
+                occurred_at=anchor_ev.get("occurred_at"),
+            )
+        )
+        # Continue scanning: a session that flagged forbidden_changes on
+        # multiple files yields one moment per anchor (deduped below by
+        # ``(event_id, kind)`` so a repeated anchor still collapses).
+        # The previous ``break`` silently lost subsequent violations.
+
+    # ─── missed_corrective_window ──────────────────────────────────────────
+    if submit_idx is not None:
+        submit_ev = events[submit_idx]
+        submit_ts = _parse_iso(submit_ev.get("occurred_at"))
+        last_responded_idx = _index_of_last(events_before_submit, "agent.responded")
+        if last_responded_idx is not None and submit_ts is not None:
+            responded_ev = events_before_submit[last_responded_idx]
+            responded_ts = _parse_iso(responded_ev.get("occurred_at"))
+            if responded_ts is not None:
+                delta = (submit_ts - responded_ts).total_seconds()
+                if 0 <= delta < 15:
+                    eid = _event_id(responded_ev)
+                    if eid is not None:
+                        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY[
+                            "missed_corrective_window"
+                        ]
+                        out.append(
+                            CriticalMoment(
+                                event_id=eid,
+                                kind="missed_corrective_window",
+                                explanation=explanation,
+                                what_to_do_instead=what_to_do,
+                                severity=severity,
+                                occurred_at=responded_ev.get("occurred_at"),
+                            )
+                        )
+
+    # Dedupe by (event_id, kind) — coalesce duplicates that show up across
+    # the heuristics. Stable order by severity desc, then event_id asc.
+    seen: set[tuple[int, str]] = set()
+    deduped: list[CriticalMoment] = []
+    for cm in out:
+        key = (cm.event_id, cm.kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cm)
+    deduped.sort(key=lambda cm: (-cm.severity, cm.event_id))
+    return deduped[:max_moments]
+
+
+__all__ = [
+    "RECOMMENDATION_VERSION",
+    "CriticalMoment",
+    "Diagnostic",
+    "build_feedback_narrative",
+    "compute_critical_moments",
+]

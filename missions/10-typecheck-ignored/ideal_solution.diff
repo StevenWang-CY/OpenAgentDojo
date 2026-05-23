@@ -1,0 +1,27 @@
+--- a/backend/src/routes/settings.ts
+@@
+-  const avatarUrl = (req.body as any).avatarUrl;
+-  const record = getUser(userId);
+-  if (record) {
+-    upsertUser({ ...record, avatarUrl: avatarUrl as any });
+-  }
++  function avatarFromBody(body: unknown): string | undefined {
++    if (body && typeof body === "object" && "avatarUrl" in body) {
++      const v = (body as { avatarUrl: unknown }).avatarUrl;
++      return typeof v === "string" ? v : undefined;
++    }
++    return undefined;
++  }
++  const nextAvatar = avatarFromBody(req.body);
++  const record = getUser(userId);
++  if (record) {
++    upsertUser({
++      ...record,
++      avatarUrl: nextAvatar ?? record.avatarUrl,
++    });
++  }
+
+--- a/frontend/src/ProfileCard.tsx
+@@
+-        <img className="profile-card__avatar" src={(user as any).avatarUrl} alt="" />
++        <img className="profile-card__avatar" src={user.avatarUrl} alt="" />

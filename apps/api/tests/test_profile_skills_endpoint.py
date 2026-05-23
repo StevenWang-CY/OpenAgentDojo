@@ -157,10 +157,15 @@ async def test_skills_aggregates_attempts_and_passes(db_engine) -> None:
 
     by_fm = {row.failure_mode: row for row in catalog.failure_modes}
     auth = by_fm["checks_presence_not_expiration"]
-    assert auth.sessions_attempted == 2
+    # P0-3 / ADR 0009 — the skills view dedupes by mission. Two attempts on
+    # the same auth mission collapse to 1 "mission practised" entry; the
+    # representative is the best uncapped attempt (28 hidden credit + 50
+    # other dims = 78). With a single representative the avg matches the
+    # best.
+    assert auth.sessions_attempted == 1
     assert auth.sessions_passed == 1
-    assert auth.best_score == 78  # 28 + 50
-    assert auth.avg_score == round((78 + 62) / 2, 1)
+    assert auth.best_score == 78
+    assert auth.avg_score == 78.0
     regression = by_fm["in_memory_idempotency_only"]
     assert regression.sessions_attempted == 1
     assert regression.sessions_passed == 1

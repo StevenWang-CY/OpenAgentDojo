@@ -35,18 +35,7 @@ export function Hero() {
   return (
     <section
       aria-labelledby="hero-heading"
-      className="relative isolate overflow-hidden border-b border-[var(--color-border)]"
-      style={{
-        background: `
-          radial-gradient(ellipse 60% 50% at 88% 18%,
-            oklch(86% 0.06 245 / 0.55), transparent 70%),
-          radial-gradient(ellipse 50% 40% at 8% 12%,
-            oklch(95% 0.04 65 / 0.4), transparent 70%),
-          radial-gradient(ellipse 70% 50% at 30% 95%,
-            oklch(90% 0.03 245 / 0.45), transparent 70%),
-          oklch(99% 0.003 245)
-        `,
-      }}
+      className="hero-wash relative isolate overflow-hidden border-b border-[var(--color-border)]"
     >
       <div className="mx-auto max-w-6xl px-6 pt-20 pb-14 sm:pt-24">
         <div className="grid items-center gap-8 md:min-h-[560px] md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">

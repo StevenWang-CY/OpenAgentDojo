@@ -113,6 +113,7 @@ function buildSession(): SessionDetail {
     sandbox_driver: "docker",
     current_commit: null,
     agent_turns: 0,
+  attempt_index: 1,
     score: null,
     ws_token: "ws-token",
     mission: {
@@ -126,6 +127,7 @@ function buildSession(): SessionDetail {
       failure_mode_id: "checks_presence_not_expiration",
       version: 1,
       published: true,
+  kind: "standard",
       repo_pack: "fullstack-auth-demo",
       initial_commit: "abc",
       manifest_sha256: "x",

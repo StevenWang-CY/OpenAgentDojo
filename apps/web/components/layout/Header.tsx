@@ -4,9 +4,9 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Moon, Sun, User as UserIcon } from "lucide-react";
+import { LogOut, Moon, RotateCcw, Sun, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
-import { ApiError, auth } from "@/lib/api";
+import { ApiError, auth, createSession, replayTutorial } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useTheme } from "@/stores/themeStore";
@@ -39,6 +39,46 @@ export function Header({ showCta = true }: HeaderProps) {
         return false;
       }
       return failureCount < 1;
+    },
+  });
+
+  const replayTutorialMutation = useMutation({
+    mutationFn: async () => {
+      const user = await replayTutorial();
+      const session = await createSession({ mission_id: "orientation" });
+      return { user, session };
+    },
+    onSuccess({ session }) {
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+      void queryClient.invalidateQueries({ queryKey: ["auth-me"] });
+      // The catalog grid renders off the missions list + the user query
+      // (for the "// start here" banner). Refreshing only `me` would
+      // leave a stale banner the user could click through.
+      void queryClient.invalidateQueries({ queryKey: ["missions"] });
+      router.push(`/workspace/${session.id}`);
+    },
+    onError(error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        typeof error.body?.detail === "object" &&
+        error.body.detail !== null &&
+        "active_session_id" in error.body.detail
+      ) {
+        const activeId = (
+          error.body.detail as { active_session_id?: string }
+        ).active_session_id;
+        toast.error(
+          "You already have an active session — finish it first.",
+        );
+        if (activeId) router.push(`/workspace/${activeId}`);
+        return;
+      }
+      toast.error(
+        error instanceof ApiError
+          ? error.message
+          : "Failed to start the tutorial.",
+      );
     },
   });
 
@@ -151,6 +191,20 @@ export function Header({ showCta = true }: HeaderProps) {
                     {handle}
                   </span>
                 </Link>
+              ) : null}
+              {user.tutorial_completed_at ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => replayTutorialMutation.mutate()}
+                  disabled={replayTutorialMutation.isPending}
+                  aria-label="Replay tutorial"
+                  data-testid="header-replay-tutorial"
+                  title="Replay orientation tutorial"
+                >
+                  <RotateCcw className="size-3.5" aria-hidden />
+                  Replay tutorial
+                </Button>
               ) : null}
               <Button
                 size="sm"

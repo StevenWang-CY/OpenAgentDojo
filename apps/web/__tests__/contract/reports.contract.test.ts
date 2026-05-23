@@ -79,6 +79,9 @@ const submission: Submission = {
   total_score: 78,
   created_at: "2025-05-21T11:00:00Z",
   ideal_solution: "# Reference fix\n…",
+  ideal_solution_diff: "--- a/auth.ts\n+++ b/auth.ts",
+  agent_patch_diff: "--- a/auth.ts\n+++ b/auth.ts",
+  critical_moments: [],
 };
 
 withContractServer([

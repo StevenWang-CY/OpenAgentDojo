@@ -136,6 +136,53 @@ def _read_ideal_solution(missions_root: Path, mission_id: str) -> str | None:
         return None
 
 
+def _read_ideal_solution_diff(missions_root: Path, mission_id: str) -> str | None:
+    """Return the canonical fix as a unified diff (P0-2).
+
+    Missions backfilled by ``scripts/extract_ideal_diffs.py``; the
+    validator requires it on every non-tutorial mission. Returns None
+    when the file is absent (tutorial missions) so the FE can branch on
+    that to hide the three-way diff layer.
+    """
+    folder = _find_mission_folder(missions_root, mission_id)
+    if folder is None:
+        return None
+    diff_path = folder / "ideal_solution.diff"
+    try:
+        return diff_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.warning(
+            "[reports] could not read ideal_solution.diff for {}: {}", mission_id, exc
+        )
+        return None
+
+
+def _read_agent_patch_diff(missions_root: Path, mission_id: str) -> str | None:
+    """Return the agent's original (deliberately-flawed) patch (P0-2)."""
+    folder = _find_mission_folder(missions_root, mission_id)
+    if folder is None:
+        return None
+    # Manifest declares the exact file name; we resolve via the loader so
+    # custom mission packs with non-default ``patch_file`` keys still
+    # render the three-way diff correctly.
+    try:
+        from app.missions.loader import MissionLoader
+
+        loader = MissionLoader(missions_root)
+        loaded = loader.load_manifest(folder / "mission.yaml")
+        patch_path = folder / loaded.manifest.agent.patch_file
+        return patch_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except Exception as exc:
+        logger.warning(
+            "[reports] could not read agent_patch.diff for {}: {}", mission_id, exc
+        )
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Loader: fetch (submission, session) by id
 # ---------------------------------------------------------------------------
@@ -161,12 +208,39 @@ async def _fetch_submission(
 
 
 def _to_read_model(
-    submission: Submission, ideal_solution: str | None, status: str
+    submission: Submission,
+    ideal_solution: str | None,
+    status: str,
+    *,
+    ideal_solution_diff: str | None = None,
+    agent_patch_diff: str | None = None,
+    mission_id: str | None = None,
 ) -> SubmissionRead:
+    """Materialise the wire-format SubmissionRead.
+
+    Three additional surfaces are injected at read time (none are stored
+    on the row):
+      * ``ideal_solution``       — the markdown narrative (legacy).
+      * ``ideal_solution_diff``  — the canonical fix as a unified diff (P0-2).
+      * ``agent_patch_diff``     — the agent's original patch (P0-2).
+
+    All three are gated on ``session.status == 'graded'`` so a mid-pipeline
+    crash doesn't leak the answer.
+
+    ``mission_id`` (P0-3) is sourced from the joined session row and is
+    NOT gated on the graded state — the Retry CTA needs the id even on
+    error/abandoned reports so the user can spin up a clean attempt.
+    """
     data = SubmissionRead.model_validate(submission)
-    # Only render ideal_solution when the session is graded.
-    rendered_ideal = ideal_solution if status == "graded" else None
-    return data.model_copy(update={"ideal_solution": rendered_ideal})
+    gated = status == "graded"
+    return data.model_copy(
+        update={
+            "ideal_solution": ideal_solution if gated else None,
+            "ideal_solution_diff": ideal_solution_diff if gated else None,
+            "agent_patch_diff": agent_patch_diff if gated else None,
+            "mission_id": mission_id,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +311,16 @@ async def get_report(
             raise HTTPException(status_code=403, detail="not your report")
 
     ideal = _read_ideal_solution(settings.missions_root, session.mission_id)
-    return _to_read_model(submission, ideal, session.status)
+    ideal_diff = _read_ideal_solution_diff(settings.missions_root, session.mission_id)
+    agent_diff = _read_agent_patch_diff(settings.missions_root, session.mission_id)
+    return _to_read_model(
+        submission,
+        ideal,
+        session.status,
+        ideal_solution_diff=ideal_diff,
+        agent_patch_diff=agent_diff,
+        mission_id=session.mission_id,
+    )
 
 
 @router.post(

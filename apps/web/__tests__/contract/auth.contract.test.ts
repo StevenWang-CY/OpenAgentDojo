@@ -22,6 +22,8 @@ const sampleUser: User = {
   created_at: "2025-01-01T00:00:00Z",
   last_login_at: "2025-05-20T08:00:00Z",
   csrf_token: "csrf-deadbeef",
+  tutorial_completed_at: null,
+  tutorial_replay_count: 0,
 };
 
 withContractServer([

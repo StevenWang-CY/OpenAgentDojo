@@ -70,6 +70,9 @@ function buildSubmission(partial?: Partial<Submission>): Submission {
     created_at: "2026-05-21T10:00:00Z",
     ideal_solution:
       "## Reference fix\nAdd an expiration check inside `isValid()`.",
+    ideal_solution_diff: null,
+    agent_patch_diff: null,
+    critical_moments: [],
     score_report: {
       total: 78,
       missed_failure_mode: false,

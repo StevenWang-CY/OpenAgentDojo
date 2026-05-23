@@ -81,7 +81,9 @@ async def _send_via_resend(to_email: str, magic_url: str, settings: Settings) ->
             )
             return False
     except Exception as exc:
-        logger.warning("Resend delivery failed for {}: {}", to_email, exc)
+        logger.warning(
+            "Resend delivery failed for {}: {!r}", to_email, exc
+        )
         return False
 
 

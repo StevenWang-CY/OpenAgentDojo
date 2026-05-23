@@ -77,6 +77,35 @@
   --color-danger: oklch(70% 0.21 25);
 }
 
+/* Hero ambient wash. Two gradient stacks — light vs. dark — toggled by the
+ * `.dark` class on <html>. The radial blobs are what the frosted Hero3D
+ * glass refracts; without them the scene goes dead. Dark-mode stops use
+ * blue-violet hues at low chroma so the wash reads "ambient deep night"
+ * rather than "the dark theme failed to apply". */
+.hero-wash {
+  background:
+    radial-gradient(ellipse 60% 50% at 88% 18%, oklch(86% 0.06 245 / 0.55), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 8% 12%,  oklch(95% 0.04 65  / 0.4),  transparent 70%),
+    radial-gradient(ellipse 70% 50% at 30% 95%, oklch(90% 0.03 245 / 0.45), transparent 70%),
+    oklch(99% 0.003 245);
+}
+.dark .hero-wash {
+  background:
+    radial-gradient(ellipse 60% 50% at 88% 18%, oklch(42% 0.12 265 / 0.45), transparent 70%),
+    radial-gradient(ellipse 50% 40% at 8% 12%,  oklch(38% 0.08 280 / 0.4),  transparent 70%),
+    radial-gradient(ellipse 70% 50% at 30% 95%, oklch(34% 0.06 245 / 0.5),  transparent 70%),
+    oklch(16% 0.025 252);
+}
+
+/* Hero3D scene is a stack of frosted-white glass surfaces with hand-tuned
+ * inner highlights and shadows. Rebuilding it for dark mode would be a
+ * 700-line rewrite; instead, in dark mode we drop a hue overlay and pull
+ * saturation back so the white glass reads as moonlit rather than blown
+ * out, and tone down the white-on-white inner highlights to match. */
+.dark .hero3d-scene {
+  filter: saturate(0.78) brightness(0.86) hue-rotate(8deg);
+}
+
 /* ── Base layer ─────────────────────────────────────────────────────────── */
 
 @layer base {

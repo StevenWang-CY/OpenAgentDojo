@@ -11,9 +11,9 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from fastapi import HTTPException
 
 from app.sessions.router import _require_mutable_session
-from fastapi import HTTPException
 
 
 class _FakeRow:

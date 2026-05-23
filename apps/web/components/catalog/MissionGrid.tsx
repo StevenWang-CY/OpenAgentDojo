@@ -2,11 +2,13 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { AlertCircle, Inbox } from "lucide-react";
-import { listMissions, ApiError } from "@/lib/api";
+import { ApiError, auth, listMissions } from "@/lib/api";
 import type { Mission, MissionCategory } from "@arena/shared-types";
 import { MissionCard } from "./MissionCard";
 import { CategoryChips } from "./CategoryChips";
+import { OrientationBanner } from "./OrientationBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Button } from "@/components/ui/Button";
 
@@ -14,10 +16,25 @@ const SKELETON_CATEGORY_COUNT = 5;
 const SKELETON_CARD_COUNT = 9;
 
 export function MissionGrid() {
+  const searchParams = useSearchParams();
+  const tutorialQueryFlag =
+    searchParams?.get("tutorial") === "completed";
+
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["missions"],
     queryFn: ({ signal }) => listMissions(signal),
   });
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: ({ signal }) => auth.me(signal),
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 0)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+  });
+  const user = meQuery.data ?? null;
 
   const [activeCategory, setActiveCategory] = React.useState<
     MissionCategory | "all"
@@ -25,14 +42,24 @@ export function MissionGrid() {
 
   const available = React.useMemo<MissionCategory[]>(() => {
     if (!data) return [];
-    const set = new Set<MissionCategory>(data.map((m) => m.category));
+    // P0-1 — the orientation tutorial ships under the "tutorial" category
+    // but the catalog grid never lists it (the OrientationBanner is the
+    // dedicated surface). Exclude both the standalone mission and the
+    // category chip.
+    const set = new Set<MissionCategory>(
+      data
+        .filter((m) => m.kind !== "tutorial")
+        .map((m) => m.category)
+        .filter((c) => c !== "tutorial"),
+    );
     return Array.from(set).sort();
   }, [data]);
 
   const filtered = React.useMemo<Mission[]>(() => {
     if (!data) return [];
-    if (activeCategory === "all") return data;
-    return data.filter((m) => m.category === activeCategory);
+    const standardOnly = data.filter((m) => m.kind !== "tutorial");
+    if (activeCategory === "all") return standardOnly;
+    return standardOnly.filter((m) => m.category === activeCategory);
   }, [data, activeCategory]);
 
   if (isLoading) {
@@ -100,6 +127,10 @@ export function MissionGrid() {
 
   return (
     <div>
+      <OrientationBanner
+        user={user}
+        showCompletionToast={tutorialQueryFlag}
+      />
       {available.length > 0 ? (
         <CategoryChips
           available={available}

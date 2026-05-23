@@ -16,6 +16,10 @@ class Mission(Base):
             "difficulty IN ('beginner','intermediate','advanced')",
             name="missions_difficulty_check",
         ),
+        CheckConstraint(
+            "kind IN ('standard','tutorial')",
+            name="missions_kind_check",
+        ),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -30,6 +34,12 @@ class Mission(Base):
     manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     published: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # P0-1 — ``tutorial`` short-circuits the grading runner and is excluded
+    # from public catalog listings + skill aggregates (the catalog renders
+    # tutorial missions in a dedicated "Start here" surface, not the grid).
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="standard", server_default="standard"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<Mission {self.id}>"
+        return f"<Mission {self.id} kind={self.kind}>"

@@ -1,0 +1,12 @@
+--- a/backend/src/users/serialize.ts
++++ b/backend/src/users/serialize.ts
+@@ -19,7 +19,7 @@ export function serializeUser(record: UserRecord): {
+   return {
+     id: record.id,
+     role: record.role,
+-    displayName: record.fullName.slice(0, 8),
++    displayName: record.fullName,
+     email: record.email,
+     avatarUrl: record.avatarUrl,
+   };
+ }

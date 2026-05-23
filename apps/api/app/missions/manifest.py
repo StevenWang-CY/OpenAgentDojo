@@ -21,6 +21,7 @@ from pydantic import (
 
 Difficulty = Literal["beginner", "intermediate", "advanced"]
 LanguageRuntime = Literal["node20", "python312"]
+MissionKind = Literal["standard", "tutorial"]
 
 
 class MissionConfigError(ValueError):
@@ -169,18 +170,28 @@ class ScoringWeights(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    final_correctness: int
-    verification: int
-    agent_review: int
-    prompt_quality: int
-    context_selection: int
-    safety: int
-    diff_minimality: int
+    final_correctness: int = 0
+    verification: int = 0
+    agent_review: int = 0
+    prompt_quality: int = 0
+    context_selection: int = 0
+    safety: int = 0
+    diff_minimality: int = 0
 
     @model_validator(mode="after")
     def _enforce_canonical(self) -> ScoringWeights:
+        # Tutorial missions ship with all-zero weights — the runner
+        # short-circuits before they ever run through the scorer, so the
+        # canonical-weights invariant only applies to ``kind == "standard"``.
+        # We can't see ``kind`` from here, so the post-load validator on
+        # ``MissionManifest`` enforces this branch; allow the all-zero
+        # fast-path here and reject any *non-zero non-canonical* shape so
+        # mis-edited standard missions still fail at parse time.
+        actuals = {k: getattr(self, k) for k in SCORING_WEIGHTS_CANONICAL}
+        if all(v == 0 for v in actuals.values()):
+            return self
         for k, v in SCORING_WEIGHTS_CANONICAL.items():
-            actual = getattr(self, k)
+            actual = actuals[k]
             if actual != v:
                 raise ValueError(
                     f"scoring_weights.{k} must be {v}, got {actual}"
@@ -235,6 +246,11 @@ class MissionManifest(BaseModel):
 
     id: str = Field(pattern=r"^[a-z0-9-]+$")
     version: int = 1
+    # P0-1 — ``tutorial`` short-circuits the grading runner: a tutorial
+    # mission persists no Submission row, awards no badges, and is
+    # excluded from the public catalog grid + skills aggregation. The
+    # one and only tutorial mission today is ``orientation``.
+    kind: MissionKind = "standard"
     title: str
     short_description: str = ""
     difficulty: Difficulty
@@ -261,6 +277,46 @@ class MissionManifest(BaseModel):
     # Default False so a half-written mission can't accidentally ship to the
     # public catalog. Each curated mission must opt in explicitly (P2-B2).
     published: bool = False
+
+    @model_validator(mode="after")
+    def _enforce_kind_invariants(self) -> MissionManifest:
+        """Tutorial-vs-standard mission invariants.
+
+        * Standard missions must declare canonical, non-zero scoring weights.
+          The ``ScoringWeights`` validator already allows the all-zero
+          fast-path, so we enforce the non-zero contract one level up where
+          we can read ``kind``.
+        * Tutorial missions inherit the catalog-suppression default: they are
+          never auto-listed in the public mission grid. The orientation
+          surface in the FE consumes them directly via the ``kind`` field.
+        """
+        weights = self.scoring_weights
+        weight_sum = sum(
+            getattr(weights, k) for k in (
+                "final_correctness",
+                "verification",
+                "agent_review",
+                "prompt_quality",
+                "context_selection",
+                "safety",
+                "diff_minimality",
+            )
+        )
+        if self.kind == "standard" and weight_sum == 0:
+            raise MissionConfigError(
+                f"mission '{self.id}' is kind=standard but scoring_weights are "
+                "all zero — set the canonical 30/15/15/10/10/10/10 weights "
+                "or change kind to 'tutorial'."
+            )
+        if self.kind == "tutorial" and self.published:
+            # Tutorial missions surface via the dedicated "Start here"
+            # affordance, not the catalog grid. Letting them be
+            # ``published`` would silently leak them into the public list.
+            raise MissionConfigError(
+                f"tutorial mission '{self.id}' must set published=false; "
+                "the FE renders tutorials through the orientation surface."
+            )
+        return self
 
     @field_validator("expected_files")
     @classmethod

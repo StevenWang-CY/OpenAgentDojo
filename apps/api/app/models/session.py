@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -44,6 +45,10 @@ class SessionRow(Base):
         Index("idx_sessions_user", "user_id", desc("started_at")),
         # Mirror migration 0006 — keeps alembic --autogenerate clean.
         Index("idx_sessions_last_activity", "last_activity_at"),
+        # Mirror migration 0013 — composite index supports the
+        # multi-attempt aggregations on ``(user_id, mission_id)`` (your_attempts
+        # strip on the mission detail page; best-per-mission profile dedupe).
+        Index("idx_sessions_user_mission", "user_id", "mission_id"),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -75,6 +80,30 @@ class SessionRow(Base):
     current_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     agent_turns: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # P0-3 — 1-based ordinal of this attempt against (user_id, mission_id).
+    # Set at create_session time so the multi-attempt aggregations on the
+    # mission detail page never have to re-derive it from the row order.
+    attempt_index: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=sa.text("1"),
+    )
+    # P0-3 — when set, the new session was created via the "Retry mission"
+    # CTA on the report page. Pointer back to the prior session so an
+    # operator can trace the chain of attempts. ON DELETE SET NULL so a
+    # P0-6 hard-delete of an earlier attempt gracefully breaks the link.
+    previous_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # P0-4 — when set, the user invoked the give-up affordance. The grading
+    # runner reads this flag at score-time and applies a 50/100 total cap
+    # (recorded in ``submissions.score_cap_reason``). NULL means "submitted
+    # normally"; the timestamp is the wall-clock moment the user clicked.
+    gave_up_at: Mapped[datetime | None] = nullable_ts()
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<SessionRow {self.id} mission={self.mission_id} status={self.status}>"

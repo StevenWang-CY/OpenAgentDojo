@@ -178,6 +178,39 @@ async def submit_session(
 
     runner = GradingRunner(settings)
     mission_id = str(session.mission_id)
+
+    # P0-1 — tutorial missions short-circuit the scoring pipeline. We mark
+    # the user's tutorial_completed_at, emit ``tutorial.completed``, and
+    # synthesise a SubmissionRead the FE can consume (no DB row, so we hand-
+    # build the shape with a synthetic UUID, zero scores, and empty test
+    # results).
+    if getattr(manifest, "kind", "standard") == "tutorial":
+        try:
+            await runner.complete_tutorial(db=db, session=session, manifest=manifest)
+        except Exception as exc:
+            logger.exception(
+                "[submit] tutorial completion failed for session {}", session_id
+            )
+            await _mark_session_errored(db, session, session_id)
+            raise HTTPException(
+                status_code=500,
+                detail=f"tutorial completion error: {exc}",
+            ) from exc
+        submissions_total.labels(mission_id=mission_id, outcome="tutorial").inc()
+        return SubmissionRead(
+            id=uuid.uuid4(),  # synthetic — no DB row exists for tutorials
+            session_id=session_id,
+            final_diff="",
+            total_score=0,
+            visible_test_results=[],
+            hidden_test_results=[],
+            validator_results=[],
+            score_report={"tutorial": True},
+            created_at=datetime.now(UTC),
+            ideal_solution=None,
+            mission_id=mission_id,
+        )
+
     try:
         submission, _result = await runner.run_and_persist(
             db=db,
@@ -222,7 +255,10 @@ async def submit_session(
         session_id,
         submission.total_score,
     )
-    return SubmissionRead.model_validate(submission)
+    # Inject mission_id at read-time so the FE's Retry CTA on the report page
+    # can spin up a new attempt without a second roundtrip.
+    out = SubmissionRead.model_validate(submission)
+    return out.model_copy(update={"mission_id": mission_id})
 
 
 async def _mark_session_errored(

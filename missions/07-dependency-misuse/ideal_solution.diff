@@ -1,0 +1,21 @@
+--- a/backend/app/format.py
++++ b/backend/app/format.py
+@@ -16,21 +16,9 @@
+
+ from datetime import datetime, timezone
++from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+ def format_report_ts(ts: int, tz: str) -> str:
+-    if tz not in _FIXED_OFFSETS_HOURS:
+-        raise ValueError(...)
+-    offset_hours = _FIXED_OFFSETS_HOURS[tz]
+-    dt_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
+-    dt_local = dt_utc + timedelta(hours=offset_hours)
+-    return dt_local.strftime("%Y-%m-%d %H:%M")
++    try:
++        zone = ZoneInfo(tz)
++    except ZoneInfoNotFoundError as exc:
++        raise ValueError(f"unknown timezone: {tz!r}") from exc
++    dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(zone)
++    return dt.strftime("%Y-%m-%d %H:%M")

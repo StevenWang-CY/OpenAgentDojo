@@ -1,0 +1,21 @@
+--- a/frontend/src/types/user.ts
++++ b/frontend/src/types/user.ts
+-  /** Wire field: was `fullName`, now `displayName`. */
+-  fullName: string;
++  displayName: string;
+
+--- a/frontend/src/ProfileCard.tsx
+-      <h3 className="profile-card__name">{user.fullName}</h3>
++      <h3 className="profile-card__name">{user.displayName}</h3>
+
+--- a/frontend/src/Header.tsx
+-          Signed in as <em>{user.fullName}</em>
++          Signed in as <em>{user.displayName}</em>
+
+--- a/frontend/src/Settings.tsx
+-      <h2>Settings for {user.fullName}</h2>
+-        defaultValue={user.fullName}
+-          onChange={(e) => onSave({ fullName: e.target.value })}
++      <h2>Settings for {user.displayName}</h2>
++        defaultValue={user.displayName}
++          onChange={(e) => onSave({ displayName: e.target.value })}

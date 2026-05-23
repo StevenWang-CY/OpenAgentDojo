@@ -21,6 +21,7 @@ const card: Mission = {
   failure_mode_id: "checks_presence_not_expiration",
   version: 1,
   published: true,
+  kind: "standard",
 };
 
 const detail: MissionDetail = {

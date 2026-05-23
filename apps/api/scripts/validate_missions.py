@@ -147,10 +147,19 @@ def _check_brief_leak(loaded: LoadedMission) -> list[str]:
     return leaks
 
 
-def _check_one(loaded: LoadedMission, seed_path: Path | None) -> list[str]:  # noqa: PLR0912 — §14.11 checklist is intentionally exhaustive
-    """Return a list of human-readable error strings for one mission."""
+def _check_one(loaded: LoadedMission, seed_path: Path | None) -> list[str]:  # noqa: PLR0912, PLR0915 — §14.11 checklist is intentionally exhaustive
+    """Return a list of human-readable error strings for one mission.
+
+    Tutorial missions (``kind == "tutorial"``) are graded by *completion*,
+    not by score, so the scoring-sensitive invariants (prompt-quality
+    keyword counts, catalog seed presence, ``ideal_solution.diff`` for
+    the three-way report comparison) are exempted. They must still ship
+    a valid manifest, an applies-cleanly patch, and an ``ideal_solution.md``
+    so the post-mission report has a narrative to render.
+    """
     m = loaded.manifest
     errors: list[str] = []
+    is_tutorial = getattr(m, "kind", "standard") == "tutorial"
 
     # §14.11 item 2 — agent.patch_file exists on disk and looks like a diff.
     patch_path = loaded.folder / m.agent.patch_file
@@ -181,17 +190,46 @@ def _check_one(loaded: LoadedMission, seed_path: Path | None) -> list[str]:  # n
     if not ideal.exists():
         errors.append(f"ideal_solution.md not found: {ideal}")
 
+    # P0-2 — every non-tutorial mission must also ship ``ideal_solution.diff``
+    # so the post-mortem walkthrough's three-way diff has a "what was
+    # expected" layer. Tutorial missions are exempt (the report layer is
+    # also short-circuited for them).
+    ideal_diff = loaded.folder / "ideal_solution.diff"
+    if not is_tutorial:
+        if not ideal_diff.exists():
+            errors.append(
+                f"ideal_solution.diff not found: {ideal_diff} — P0-2 requires "
+                "every non-tutorial mission to ship the canonical fix diff."
+            )
+        else:
+            diff_body = ideal_diff.read_text(encoding="utf-8", errors="replace").strip()
+            if not diff_body:
+                errors.append(f"ideal_solution.diff is empty: {ideal_diff}")
+            elif "diff --git" not in diff_body and "--- a/" not in diff_body:
+                errors.append(
+                    f"ideal_solution.diff does not look like a unified diff: {ideal_diff}"
+                )
+
     # §14.11 item 5a — expected_context.required >= 2.
     if len(m.expected_context.required) < 2:
         errors.append("expected_context.required must list >= 2 files")
 
     # §14.11 item 5b — expected_context.discouraged >= 1.
-    if len(m.expected_context.discouraged) < 1:
+    # Tutorial missions don't score context selection; we still
+    # recommend a discouraged entry for teaching purposes (Mission 00
+    # does ship one), but we soften the check to a non-error for them.
+    if not is_tutorial and len(m.expected_context.discouraged) < 1:
         errors.append("expected_context.discouraged must list >= 1 file")
 
     # §14.11 item 6 — reward_signals.prompt_quality.must_include_any >= 3.
-    if len(m.reward_signals.prompt_quality.must_include_any) < 3:
-        errors.append("reward_signals.prompt_quality.must_include_any must list >= 3 keywords")
+    # Tutorial missions don't grade prompt_quality, so the threshold is
+    # waived — but we still require at least one entry so the manifest
+    # author thinks about what a good orientation prompt looks like.
+    min_pq = 1 if is_tutorial else 3
+    if len(m.reward_signals.prompt_quality.must_include_any) < min_pq:
+        errors.append(
+            f"reward_signals.prompt_quality.must_include_any must list >= {min_pq} keywords"
+        )
 
     # §14.11 item 7 — expected_diff_lines_p50 is set and plausible.
     # The diff-minimality dimension divides the submitted diff churn by p50;
@@ -215,7 +253,9 @@ def _check_one(loaded: LoadedMission, seed_path: Path | None) -> list[str]:  # n
         )
 
     # §14.11 item 8 — mission id appears in catalog seed (best-effort).
-    if seed_path is not None and seed_path.exists():
+    # Tutorial missions are seeded by migration 0011's disk-rescan step, not
+    # by the 0003 hand-written list, so we skip this check for them.
+    if not is_tutorial and seed_path is not None and seed_path.exists():
         if not _check_seed_contains(seed_path, m.id):
             errors.append(f"mission id '{m.id}' not found in catalog seed {seed_path}")
 

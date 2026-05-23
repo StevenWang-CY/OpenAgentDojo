@@ -2,11 +2,11 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Copy, Loader2, Share2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertCircle, Copy, Flag, Loader2, RotateCcw, Share2 } from "lucide-react";
 import { toast } from "sonner";
-import { ApiError, getReport, getTimeline, shareReport } from "@/lib/api";
+import { ApiError, createSession, getReport, getTimeline, shareReport } from "@/lib/api";
 import type { ScoreReport } from "@arena/shared-types";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -15,6 +15,8 @@ import { ScoreRadar } from "@/components/report/ScoreRadar";
 import { DimensionBreakdown } from "@/components/report/DimensionBreakdown";
 import { IdealSolution } from "@/components/report/IdealSolution";
 import { TimelineReplay } from "@/components/report/TimelineReplay";
+import { PostMortemWalkthrough } from "@/components/report/PostMortemWalkthrough";
+import { DimensionEvidence } from "@/components/report/DimensionEvidence";
 
 const REQUIRED_DIMENSIONS = [
   "final_correctness",
@@ -66,6 +68,18 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
   const reportedRef = React.useRef<string | null>(null);
   const total = reportQuery.data?.total_score;
   const missed = reportQuery.data?.score_report?.missed_failure_mode;
+
+  // P0-2 — single highlight slot consumed by the timeline replay. Hoisted
+  // above the early returns so the hook order stays stable across renders.
+  const [highlightEventId, setHighlightEventId] = React.useState<number | null>(
+    null,
+  );
+  const scrollToEvent = React.useCallback((eventId: number) => {
+    // Bump to null first so consecutive clicks on the same id still
+    // re-fire the pulse.
+    setHighlightEventId(null);
+    requestAnimationFrame(() => setHighlightEventId(eventId));
+  }, []);
   // Telemetry fires exactly once per submission per mount via `reportedRef`.
   // We intentionally do NOT include `effectiveShare` in the deps array — it
   // doesn't change the identity of the report being viewed, and adding it
@@ -146,7 +160,20 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
         passed={passed}
         hiddenTestsPassed={countHiddenTestsPassed(report)}
         hiddenTestsTotal={countHiddenTestsTotal(report)}
+        scoreCapReason={submission.score_cap_reason ?? report.score_cap_reason ?? null}
+        uncappedTotal={report.uncapped_total ?? null}
       />
+
+      {/* P0-2 — post-mortem walkthrough leads the report: critical
+          moment + three-way diff. This is the training surface, not
+          the measurement readout. */}
+      <Section title="what you take away" id="walkthrough-heading">
+        <PostMortemWalkthrough
+          submission={submission}
+          events={events}
+          onScrollToEvent={scrollToEvent}
+        />
+      </Section>
 
       {report.feedback_narrative && report.feedback_narrative.length > 0 ? (
         <Section title="what to work on next" id="diagnostics-heading">
@@ -168,13 +195,21 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
 
       {report.strengths.length > 0 ? (
         <Section title="strengths">
-          <BulletList items={report.strengths} kind="ok" />
+          <DimensionEvidence
+            tone="ok"
+            entries={report.strengths}
+            onScrollToEvent={scrollToEvent}
+          />
         </Section>
       ) : null}
 
       {report.weaknesses.length > 0 ? (
         <Section title="areas to improve">
-          <BulletList items={report.weaknesses} kind="bad" />
+          <DimensionEvidence
+            tone="bad"
+            entries={report.weaknesses}
+            onScrollToEvent={scrollToEvent}
+          />
         </Section>
       ) : null}
 
@@ -195,7 +230,10 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
 
       {events.length > 0 ? (
         <Section title="supervision timeline">
-          <TimelineReplay events={events} />
+          <TimelineReplay
+            events={events}
+            highlightEventId={highlightEventId}
+          />
         </Section>
       ) : null}
 
@@ -209,11 +247,106 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
         <Button asChild variant="secondary">
           <Link href="/missions">← Back to missions</Link>
         </Button>
-        <Button asChild>
-          <Link href={nextMissionHref(report)}>Next mission →</Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* P0-3 — Retry this mission. Wires the new session back to the
+              prior one via previous_session_id so the audit trail links
+              attempts together. Falls back to a plain mission-detail link
+              if the mission id is unavailable (legacy reports). */}
+          {submission.mission_id ? (
+            <RetryMissionButton
+              missionId={submission.mission_id}
+              previousSessionId={submission.session_id}
+            />
+          ) : null}
+          <Button asChild>
+            <Link href={nextMissionHref(report)}>Next mission →</Link>
+          </Button>
+        </div>
       </footer>
     </main>
+  );
+}
+
+interface RetryMissionButtonProps {
+  missionId: string;
+  previousSessionId: string;
+}
+
+function RetryMissionButton({
+  missionId,
+  previousSessionId,
+}: RetryMissionButtonProps) {
+  const router = useRouter();
+  const mutation = useMutation({
+    mutationFn: () =>
+      createSession({
+        mission_id: missionId,
+        previous_session_id: previousSessionId,
+      }),
+    onSuccess: (session) => {
+      track("mission_retried", {
+        mission_id: missionId,
+        previous_session_id: previousSessionId,
+      });
+      // Land directly in the workspace — the shell handles the
+      // provisioning state and transitions to active on its own.
+      router.push(`/workspace/${session.id}`);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        // 409 active_session_exists — bounce to the live session so the
+        // user can finish it before retrying. Mirrors StartMissionButton.
+        if (err.status === 409) {
+          const detail = err.body?.detail;
+          if (
+            detail &&
+            typeof detail === "object" &&
+            "active_session_id" in detail
+          ) {
+            const sid = (detail as { active_session_id?: string })
+              .active_session_id;
+            if (typeof sid === "string") {
+              toast.warning(
+                "You already have an active session — finish or abandon it first.",
+                {
+                  action: {
+                    label: "Resume",
+                    onClick: () => router.push(`/workspace/${sid}`),
+                  },
+                },
+              );
+              return;
+            }
+          }
+        }
+        if (err.status === 429) {
+          const wait = err.retryAfterSeconds ?? 60;
+          toast.error(
+            `You're submitting too quickly. Try again in ${wait}s.`,
+          );
+          return;
+        }
+        toast.error(err.message || "Could not start a retry.");
+      } else {
+        toast.error("Could not start a retry.");
+      }
+    },
+  });
+
+  return (
+    <Button
+      variant="secondary"
+      onClick={() => mutation.mutate()}
+      disabled={mutation.isPending}
+      data-testid="retry-mission-button"
+    >
+      {mutation.isPending ? (
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+      ) : (
+        <RotateCcw className="size-3.5" aria-hidden />
+      )}
+      {mutation.isPending ? "Starting retry…" : "Retry this mission"}
+    </Button>
   );
 }
 
@@ -224,6 +357,8 @@ function ReportHeader({
   passed,
   hiddenTestsPassed,
   hiddenTestsTotal,
+  scoreCapReason,
+  uncappedTotal,
 }: {
   submissionId: string;
   totalScore: number;
@@ -231,6 +366,11 @@ function ReportHeader({
   passed: boolean;
   hiddenTestsPassed: number | null;
   hiddenTestsTotal: number | null;
+  /** P0-4 — when set, render the cap chip beside the pass/fail row. */
+  scoreCapReason: string | null;
+  /** P0-4 — the uncapped (honest) total. Surfaced as "would have scored
+   *  X" beside the cap chip when greater than the displayed total. */
+  uncappedTotal: number | null;
 }) {
   const [sharing, setSharing] = React.useState(false);
   const [sharedExpiresAt, setSharedExpiresAt] = React.useState<string | null>(
@@ -297,6 +437,20 @@ function ReportHeader({
         {hiddenTestsPassed != null && hiddenTestsTotal != null ? (
           <p className="mt-1.5">
             {hiddenTestsPassed} / {hiddenTestsTotal} hidden tests passing
+          </p>
+        ) : null}
+        {scoreCapReason === "gave_up" ? (
+          <p
+            className="mt-2 inline-flex items-center gap-1.5 rounded border border-[oklch(from_var(--color-warning)_l_c_h/0.45)] bg-[oklch(from_var(--color-warning)_l_c_h/0.12)] px-2 py-1 text-[11px] font-medium text-[var(--color-warning)]"
+            data-testid="gave-up-chip"
+          >
+            <Flag className="size-3" aria-hidden />
+            Gave up — score capped at 50/100
+            {uncappedTotal != null && uncappedTotal > totalScore ? (
+              <span className="ml-1 font-mono text-[10px] text-[var(--color-muted-foreground)]">
+                (uncapped {uncappedTotal})
+              </span>
+            ) : null}
           </p>
         ) : null}
       </div>
@@ -410,35 +564,6 @@ function DiagnosticList({ diagnostics }: { diagnostics: DiagnosticEntry[] }) {
         );
       })}
     </ol>
-  );
-}
-
-function BulletList({
-  items,
-  kind,
-}: {
-  items: string[];
-  kind: "ok" | "bad";
-}) {
-  const glyph = kind === "ok" ? "✓" : "✕";
-  const klass =
-    kind === "ok"
-      ? "text-[var(--color-success)]"
-      : "text-[var(--color-danger)]";
-  return (
-    <ul className="grid gap-1.5 text-sm">
-      {items.map((s, i) => (
-        <li
-          key={i}
-          className="grid grid-cols-[18px_minmax(0,1fr)] items-start gap-2"
-        >
-          <span aria-hidden className={`font-mono font-semibold ${klass}`}>
-            {glyph}
-          </span>
-          <span>{s}</span>
-        </li>
-      ))}
-    </ul>
   );
 }
 

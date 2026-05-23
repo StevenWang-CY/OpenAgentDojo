@@ -419,51 +419,70 @@ async def test_best_score_and_total_missions(client, db_engine) -> None:
                 published=True,
             )
         )
-        # Three graded sessions w/ scores; one abandoned session that MUST
-        # NOT count toward total_missions.
-        db.add_all(
-            [
+        # P0-3 / ADR 0009 — public aggregates now use best-per-mission. With
+        # three graded sessions on the SAME mission, ``total_missions`` is
+        # the count of DISTINCT missions practised (1, not 3) and ``best_score``
+        # is the best across those attempts. The radar is built off the
+        # best-per-mission submission only — so we seed Submission rows to
+        # match. The abandoned session never carries a Submission, so it
+        # is silently ignored (status filter excludes non-graded).
+        sids = [uuid.uuid4() for _ in range(3)]
+        scores = [55, 88, 70]
+        completed = [
+            datetime(2026, 3, 1, tzinfo=UTC),
+            datetime(2026, 3, 2, tzinfo=UTC),
+            datetime(2026, 3, 3, tzinfo=UTC),
+        ]
+        for sid, score, ts in zip(sids, scores, completed, strict=True):
+            db.add(
                 SessionRow(
-                    id=uuid.uuid4(),
+                    id=sid,
                     user_id=user_id,
                     mission_id="auth-cookie-expiration",
                     status="graded",
-                    score=55,
-                    completed_at=datetime(2026, 3, 1, tzinfo=UTC),
-                ),
-                SessionRow(
+                    score=score,
+                    completed_at=ts,
+                )
+            )
+            db.add(
+                Submission(
                     id=uuid.uuid4(),
-                    user_id=user_id,
-                    mission_id="auth-cookie-expiration",
-                    status="graded",
-                    score=88,
-                    completed_at=datetime(2026, 3, 2, tzinfo=UTC),
-                ),
-                SessionRow(
-                    id=uuid.uuid4(),
-                    user_id=user_id,
-                    mission_id="auth-cookie-expiration",
-                    status="graded",
-                    score=70,
-                    completed_at=datetime(2026, 3, 3, tzinfo=UTC),
-                ),
-                SessionRow(
-                    id=uuid.uuid4(),
-                    user_id=user_id,
-                    mission_id="auth-cookie-expiration",
-                    status="abandoned",
-                    score=None,
-                ),
-            ]
+                    session_id=sid,
+                    final_diff="",
+                    visible_test_results=[],
+                    hidden_test_results=[],
+                    validator_results=[],
+                    score_report={
+                        "total": score,
+                        "dimensions": {},
+                        "strengths": [],
+                        "weaknesses": [],
+                        "missed_failure_mode": False,
+                        "badges_earned": [],
+                        "effective_max": 100,
+                    },
+                    total_score=score,
+                )
+            )
+        # Abandoned session — must NOT count toward total_missions.
+        db.add(
+            SessionRow(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                mission_id="auth-cookie-expiration",
+                status="abandoned",
+                score=None,
+            )
         )
         await db.commit()
 
     resp = await client.get("/api/v1/profiles/cara")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["total_missions"] == 3
+    # ADR 0009 — total_missions = distinct missions, not raw attempt count.
+    assert body["total_missions"] == 1
     assert body["best_score"] == 88
-    # No submissions → no radar.
+    # No dimensions populated in the seed reports → empty radar.
     assert body["radar_averages"] == {}
     # No badges earned → empty list.
     assert body["badges"] == []
@@ -512,20 +531,29 @@ async def test_malformed_score_report_excluded_and_counted(client, db_engine) ->
             )
         )
         now = datetime(2026, 5, 5, tzinfo=UTC)
-        for sid in (
-            good_sess,
-            bad_sess_dims_missing,
-            bad_sess_score_not_numeric,
-            bad_sess_payload_not_dict,
-        ):
+        # P0-3 / ADR 0009 — public radar uses best-per-mission. The malformed
+        # observability sweep walks ALL graded submissions independently
+        # (so the counter still increments for non-best malformed rows),
+        # but the radar averages themselves come from the per-mission best.
+        # Seed the good submission with the highest score so it
+        # deterministically wins the dedupe — otherwise the radar might
+        # be aggregated from one of the malformed shapes (which contribute
+        # nothing) and the assertion fails non-deterministically.
+        seeds = [
+            (good_sess, 70, now + timedelta(minutes=4)),
+            (bad_sess_dims_missing, 50, now + timedelta(minutes=3)),
+            (bad_sess_score_not_numeric, 50, now + timedelta(minutes=2)),
+            (bad_sess_payload_not_dict, 50, now + timedelta(minutes=1)),
+        ]
+        for sid, score, ts in seeds:
             db.add(
                 SessionRow(
                     id=sid,
                     user_id=user_id,
                     mission_id="auth-cookie-expiration",
                     status="graded",
-                    score=70,
-                    completed_at=now,
+                    score=score,
+                    completed_at=ts,
                 )
             )
         await db.flush()

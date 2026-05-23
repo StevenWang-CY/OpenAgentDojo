@@ -174,6 +174,12 @@ def sample_mission_yaml(tmp_path: Path) -> Path:
     (folder / "agent_patch.diff").write_text("--- a/foo\n+++ b/foo\n", encoding="utf-8")
     (folder / "response.md").write_text("seed response", encoding="utf-8")
     (folder / "ideal_solution.md").write_text("ideal", encoding="utf-8")
+    # P0-2 — every non-tutorial mission must ship ideal_solution.diff so the
+    # post-mortem walkthrough can render its three-way comparison.
+    (folder / "ideal_solution.diff").write_text(
+        "--- a/foo\n+++ b/foo\n@@ -0,0 +1 @@\n+ideal\n",
+        encoding="utf-8",
+    )
     yaml = """\
 id: sample-mission
 version: 1

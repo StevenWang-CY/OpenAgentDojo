@@ -32,7 +32,6 @@ from app.grading.prompt_judge import (
 from app.grading.score import _score_prompt_quality, compute_score
 from app.grading.validators.tests_pass import TestRunResult
 
-
 # ---------------------------------------------------------------------------
 # Cache-key determinism
 # ---------------------------------------------------------------------------

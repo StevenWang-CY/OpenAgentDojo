@@ -38,6 +38,14 @@ export const SupervisionEventType = {
   SubmissionRequested: "submission.requested",
   SubmissionGraded: "submission.graded",
   SubmissionFailed: "submission.failed",
+  // P0-1 — tutorial coachmark milestones. Persisted via
+  // ``POST /sessions/{id}/events/tutorial-step``; ignored by the grader.
+  TutorialStepCompleted: "tutorial.step_completed",
+  TutorialDismissed: "tutorial.dismissed",
+  TutorialCompleted: "tutorial.completed",
+  // P0-4 — emitted by the give-up endpoint (stub plumbing landed under
+  // ``apps/api/alembic/versions/0014_give_up.py``).
+  SessionGaveUp: "session.gave_up",
 } as const;
 
 export type SupervisionEventType =
@@ -254,6 +262,29 @@ export interface SubmissionFailedPayload {
   detail: string;
 }
 
+// ── P0-1 tutorial payloads ───────────────────────────────────────────────────
+
+export interface TutorialStepCompletedPayload {
+  step_id: string;
+  mission_id: string;
+}
+
+export interface TutorialDismissedPayload {
+  step_id: string;
+  mission_id: string;
+}
+
+export interface TutorialCompletedPayload {
+  mission_id: string;
+  completed_at_iso: ISODateString;
+}
+
+// ── P0-4 give-up payload ─────────────────────────────────────────────────────
+
+export interface SessionGaveUpPayload {
+  seconds_into_session?: number;
+}
+
 // ── Discriminated union ──────────────────────────────────────────────────────
 
 export type SupervisionEvent =
@@ -276,7 +307,11 @@ export type SupervisionEvent =
   | SupervisionEventOf<"validator.flag", ValidatorFlagPayload>
   | SupervisionEventOf<"submission.requested", SubmissionRequestedPayload>
   | SupervisionEventOf<"submission.graded", SubmissionGradedPayload>
-  | SupervisionEventOf<"submission.failed", SubmissionFailedPayload>;
+  | SupervisionEventOf<"submission.failed", SubmissionFailedPayload>
+  | SupervisionEventOf<"tutorial.step_completed", TutorialStepCompletedPayload>
+  | SupervisionEventOf<"tutorial.dismissed", TutorialDismissedPayload>
+  | SupervisionEventOf<"tutorial.completed", TutorialCompletedPayload>
+  | SupervisionEventOf<"session.gave_up", SessionGaveUpPayload>;
 
 export interface SupervisionEventOf<
   T extends SupervisionEventType,

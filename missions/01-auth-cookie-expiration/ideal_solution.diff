@@ -1,0 +1,35 @@
+--- a/backend/src/middleware/requireAuth.ts
++++ b/backend/src/middleware/requireAuth.ts
+@@ -24,8 +24,15 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
+   const raw = req.cookies?.session;
+   if (!raw) {
+     return res.redirect("/login");
+   }
+-  const session = parseSessionCookie(raw);
+-  req.session = session ? new Session(session) : undefined;
++  const parsed = parseSessionCookie(raw);
++  if (!parsed) {
++    return res.redirect("/login");
++  }
++  const session = new Session(parsed);
++  if (!session.isValid(Date.now())) {
++    return res.redirect("/login");
++  }
++  req.session = session;
+   next();
+ }
+
+--- a/backend/src/routes/login.ts
++++ b/backend/src/routes/login.ts
+@@ -43,6 +43,9 @@ loginRouter.post("/login/refresh", (req, res) => {
+   const parsed = parseSessionCookie(raw);
+   if (!parsed) {
+     return res.status(401).json({ ok: false, status: "invalid" });
+   }
++  if (parsed.exp <= Date.now()) {
++    return res.status(401).json({ ok: false, status: "expired" });
++  }
+   const cookie = signSession({
+     userId: parsed.userId,
+     exp: Date.now() + SESSION_TTL_MS,
+   });

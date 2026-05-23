@@ -220,6 +220,12 @@ _FE_KNOWN_EVENT_TYPES: set[str] = {
     "submission.requested",
     "submission.graded",
     "submission.failed",
+    # P0-1 tutorial milestones.
+    "tutorial.step_completed",
+    "tutorial.dismissed",
+    "tutorial.completed",
+    # P0-4 give-up signal.
+    "session.gave_up",
 }
 
 

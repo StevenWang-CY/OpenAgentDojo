@@ -43,6 +43,7 @@ import { ScorePreview } from "./ScorePreview";
 import { WorkspaceTopBar } from "./WorkspaceTopBar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { Button } from "@/components/ui/Button";
+import { TutorialController } from "@/components/tutorial/TutorialController";
 
 interface WorkspaceShellProps {
   sessionId: string;
@@ -377,19 +378,49 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   //  a single source of truth.)
 
   // When the session flips to `graded`, look up the submission so we can
-  // redirect to /report/{submission.id}.
+  // redirect to /report/{submission.id}. Tutorial missions are an exception:
+  // they short-circuit the scoring pipeline and persist no Submission row,
+  // so we route back to the catalog instead of attempting a report fetch
+  // that would 404.
+  // ``status`` and ``missionKind`` both derive from ``sessionQuery.data``
+  // so in practice they hydrate together. The explicit ``!== undefined``
+  // guards below are defensive — if any future refactor splits the
+  // session query (e.g. polling status from a smaller endpoint), the
+  // undefined case won't accidentally trigger a 404'ing
+  // GET /sessions/{id}/submission for a tutorial.
+  const missionKind = sessionQuery.data?.mission.kind;
   const submissionQuery = useQuery({
     queryKey: ["session", sessionId, "submission"],
     queryFn: ({ signal }) => getSubmission(sessionId, signal),
-    enabled: status === "graded",
+    enabled:
+      status === "graded"
+      && missionKind !== undefined
+      && missionKind !== "tutorial",
     retry: false,
   });
 
+  // P0-1 — refresh the cached /auth/me so the catalog's "// start here"
+  // banner picks up the new ``tutorial_completed_at`` immediately, and
+  // invalidate the missions list so any catalog-derived state re-renders.
   React.useEffect(() => {
-    if (status === "graded" && submissionQuery.data) {
+    if (status === "graded" && missionKind === "tutorial") {
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+      void queryClient.invalidateQueries({ queryKey: ["auth-me"] });
+      void queryClient.invalidateQueries({ queryKey: ["missions"] });
+      router.replace("/missions?tutorial=completed");
+    }
+  }, [status, missionKind, queryClient, router]);
+
+  React.useEffect(() => {
+    if (
+      status === "graded"
+      && missionKind !== undefined
+      && missionKind !== "tutorial"
+      && submissionQuery.data
+    ) {
       router.replace(`/report/${submissionQuery.data.id}`);
     }
-  }, [status, submissionQuery.data, router]);
+  }, [status, missionKind, submissionQuery.data, router]);
 
   // ── Top-level loading / error gates ──────────────────────────────────────
 
@@ -581,6 +612,8 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
         selectedContext={selectedContext}
         expectedRequiredContext={mission.expected_context_required}
         diffChangedFiles={diff ? extractChangedFiles(diff) : []}
+        sessionStartedAt={session.started_at}
+        showGiveUp={mission.kind !== "tutorial"}
         onSubmitted={(submissionId) => router.push(`/report/${submissionId}`)}
       />
 
@@ -595,7 +628,10 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
                 Files
               </p>
             </header>
-            <div className="flex-1 min-h-0">
+            <div
+              className="flex-1 min-h-0"
+              data-tutorial-anchor="file-tree"
+            >
               <FileTree
                 nodes={tree}
                 sessionId={sessionId}
@@ -626,7 +662,9 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
             <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-2 py-1.5">
               <TabsList>
                 <TabsTrigger value="editor">Editor</TabsTrigger>
-                <TabsTrigger value="diff">Diff</TabsTrigger>
+                <TabsTrigger value="diff" data-tutorial-anchor="diff-tab">
+                  Diff
+                </TabsTrigger>
               </TabsList>
               <p className="font-mono text-[11px] text-[var(--color-muted-foreground)]">
                 {activeFile ?? "no file open"}
@@ -674,21 +712,23 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
             id: "chat",
             label: "Agent",
             content: (
-              <AgentChat
-                turns={agentTurns}
-                contextPaths={selectedContext}
-                onSubmit={(text) =>
-                  handleAgentSubmit(
-                    sessionId,
-                    selectedContext,
-                    pushAgentTurn,
-                    text
-                  )
-                }
-                onApplyPatch={(turnId) =>
-                  handleApplyPatch(queryClient, sessionId, turnId)
-                }
-              />
+              <div data-tutorial-anchor="agent-chat" className="contents">
+                <AgentChat
+                  turns={agentTurns}
+                  contextPaths={selectedContext}
+                  onSubmit={(text) =>
+                    handleAgentSubmit(
+                      sessionId,
+                      selectedContext,
+                      pushAgentTurn,
+                      text
+                    )
+                  }
+                  onApplyPatch={(turnId) =>
+                    handleApplyPatch(queryClient, sessionId, turnId)
+                  }
+                />
+              </div>
             ),
           },
         ]}
@@ -701,7 +741,11 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
           {
             id: "tests",
             label: "Tests",
-            content: <TestPanel sessionId={sessionId} />,
+            content: (
+              <div data-tutorial-anchor="test-panel" className="contents">
+                <TestPanel sessionId={sessionId} />
+              </div>
+            ),
           },
           {
             id: "timeline",
@@ -709,6 +753,11 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
             content: <Timeline events={events} />,
           },
         ]}
+      />
+      <TutorialController
+        sessionId={sessionId}
+        events={events}
+        enabled={mission.kind === "tutorial"}
       />
     </div>
   );

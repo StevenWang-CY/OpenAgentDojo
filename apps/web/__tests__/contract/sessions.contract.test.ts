@@ -43,6 +43,7 @@ const sessionRow: Session = {
   current_commit: null,
   score: null,
   agent_turns: 0,
+  attempt_index: 1,
 };
 
 const sessionDetail: SessionDetail = {
@@ -64,6 +65,7 @@ const sessionDetail: SessionDetail = {
     manifest_sha256: "f".repeat(64),
     version: 1,
     published: true,
+  kind: "standard",
     brief: "",
     language_runtime: "node20",
     visible_tests: [],

@@ -1,0 +1,49 @@
+--- a/backend/src/submissions/store.ts
++++ b/backend/src/submissions/store.ts
+@@ -19,9 +19,15 @@ const ROWS: Submission[] = [];
+ let nextId = 1;
+
++export class DuplicateFormIdError extends Error {
++  constructor(public formId: string) {
++    super(`duplicate formId: ${formId}`);
++    this.name = "DuplicateFormIdError";
++  }
++}
++
+ export function insertSubmission(formId: string, payload: Record<string, unknown>): Submission {
++  if (ROWS.some((r) => r.formId === formId)) {
++    throw new DuplicateFormIdError(formId);
++  }
+   const row: Submission = {
+     id: nextId++,
+     formId,
+     payload,
+     createdAt: Date.now(),
+   };
+   ROWS.push(row);
+   return row;
+ }
+
+--- a/backend/src/routes/submissions.ts
++++ b/backend/src/routes/submissions.ts
+@@ -1,6 +1,6 @@ import { Router } from "express";
+
+-import { insertSubmission, findByFormId } from "../submissions/store";
++import { DuplicateFormIdError, insertSubmission, findByFormId } from "../submissions/store";
+ ...
+   if (formId.length === 0) {
+     return res.status(400).json({ ok: false, error: "missing_formId" });
+   }
+
+-  const row = insertSubmission(formId, payload);
++  let row;
++  try {
++    row = insertSubmission(formId, payload);
++  } catch (err) {
++    if (err instanceof DuplicateFormIdError) {
++      const existing = findByFormId(formId)[0];
++      return res.status(200).json({ ok: true, id: existing?.id, formId, deduped: true });
++    }
++    throw err;
++  }
+   return res.status(201).json({ ok: true, id: row.id, formId: row.formId });

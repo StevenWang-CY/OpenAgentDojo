@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -23,6 +23,15 @@ class Submission(Base):
         # --autogenerate stays clean (was previously flagging these as drift).
         Index("idx_submissions_session", "session_id"),
         Index("idx_submissions_created", "created_at"),
+        # P0-3/P0-4 — mirror migration 0013's CHECK so a malformed direct
+        # SQL write can't sneak past the small enum. The only currently
+        # legal value is ``'gave_up'``; future score-cap reasons (e.g. a
+        # forfeit / disqualification) will extend this set + bump the
+        # migration in lockstep.
+        CheckConstraint(
+            "score_cap_reason IS NULL OR score_cap_reason IN ('gave_up')",
+            name="submissions_score_cap_reason_check",
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -52,4 +61,19 @@ class Submission(Base):
     # audit to detect drift between the on-disk manifest at grade time and
     # the manifest the catalog DB row currently points at.
     manifest_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # P0-2 — deterministic critical-moment list computed by
+    # ``app.grading.diagnostics.compute_critical_moments``. Persisted in its
+    # own column rather than buried in ``score_report`` so a replay can diff
+    # just the moments without re-deserialising the whole report.
+    critical_moments: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    # P0-3 / P0-4 — when set, a post-grading rule capped the total. The
+    # dimension scores themselves remain honest; only ``total_score`` and
+    # the report's ``total`` reflect the cap. Currently the only legal
+    # value is ``'gave_up'`` (capped at 50/100 by the give-up affordance).
+    # NULL means "no cap applied" — the public-profile aggregations exclude
+    # capped attempts when any non-capped attempt exists on the same
+    # mission (see ``app.profiles.router._best_per_mission``).
+    score_cap_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = created_at()

@@ -1,0 +1,10 @@
+--- a/frontend/src/Dashboard.tsx
++++ b/frontend/src/Dashboard.tsx
+@@ -43,6 +43,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
+       } catch (e) {
+         if (!cancelled) {
+           setError(e instanceof Error ? e.message : "failed");
++          setLoading(false);
+         }
+       }
+     }

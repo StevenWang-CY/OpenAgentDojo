@@ -1,0 +1,17 @@
+# Mission 00 (orientation) — forbidden-change rules.
+#
+# Tutorial missions are scored by completion, not by validator findings,
+# so this rule is here to satisfy the manifest schema's "at least one
+# validator" invariant. It blocks edits that would break the rest of the
+# repo for subsequent missions.
+
+forbidden:
+  - id: touches_auth_or_middleware
+    description: |
+      Mission 00 only exercises ``backend/src/utils/welcome.ts``. Edits
+      to the auth or middleware layers belong to later missions and
+      should not be made here.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "^\\+\\+\\+\\s+b/backend/src/(auth|middleware)/"
+      penalty: 0

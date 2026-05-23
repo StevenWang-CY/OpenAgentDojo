@@ -208,6 +208,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "checks_presence_not_expiration",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "agent-wrong-file",
@@ -221,6 +222,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "wrong_layer_fix",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "missing-regression-test",
@@ -234,6 +236,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "in_memory_idempotency",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "overfitted-test-fix",
@@ -247,6 +250,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "overfitted_visible_test",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "security-validation-removed",
@@ -260,6 +264,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "removes_authorization",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "excessive-rewrite",
@@ -273,6 +278,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "scope_creep",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "dependency-misuse",
@@ -286,6 +292,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "deprecated_dep",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "async-race-condition",
@@ -299,6 +306,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "non_atomic_check_then_set",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "api-contract-drift",
@@ -312,6 +320,7 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "partial_consumer_update",
     version: 1,
     published: true,
+    kind: "standard",
   },
   {
     id: "typecheck-ignored",
@@ -325,5 +334,6 @@ const FALLBACK_MISSIONS: Mission[] = [
     failure_mode_id: "as_any_to_silence_ts",
     version: 1,
     published: true,
+    kind: "standard",
   },
 ];

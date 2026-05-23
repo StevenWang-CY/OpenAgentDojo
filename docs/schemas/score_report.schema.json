@@ -63,13 +63,28 @@
     },
     "strengths": {
       "type": "array",
-      "description": "Short positive observations shown in the report.",
-      "items": { "type": "string" }
+      "description": "Evidence-bearing positive observations (P0-2). Legacy string form is still accepted on read; the FE union-narrows.",
+      "items": {
+        "anyOf": [
+          { "type": "string" },
+          { "$ref": "#/$defs/evidenceEntry" }
+        ]
+      }
     },
     "weaknesses": {
       "type": "array",
-      "description": "Short improvement observations shown in the report.",
-      "items": { "type": "string" }
+      "description": "Evidence-bearing improvement observations (P0-2). Legacy string form is still accepted on read; the FE union-narrows.",
+      "items": {
+        "anyOf": [
+          { "type": "string" },
+          { "$ref": "#/$defs/evidenceEntry" }
+        ]
+      }
+    },
+    "critical_moments": {
+      "type": "array",
+      "description": "Deterministic 'you went off course here' callouts (P0-2). At most 3 entries; sorted by severity desc.",
+      "items": { "$ref": "#/$defs/criticalMoment" }
     },
     "missed_failure_mode": {
       "type": "boolean",
@@ -88,6 +103,40 @@
     }
   },
   "$defs": {
+    "evidenceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message", "dimension", "evidence_event_ids"],
+      "properties": {
+        "message": { "type": "string" },
+        "dimension": { "type": "string" },
+        "evidence_event_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "criticalMoment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "kind", "explanation", "what_to_do_instead"],
+      "properties": {
+        "event_id": { "type": "integer", "minimum": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "agent_responded_no_review",
+            "submitted_without_verification",
+            "wrong_layer_committed",
+            "missed_corrective_window"
+          ]
+        },
+        "explanation": { "type": "string" },
+        "what_to_do_instead": { "type": "string" },
+        "severity": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "occurred_at": { "type": ["string", "null"] }
+      }
+    },
     "diagnostic": {
       "type": "object",
       "additionalProperties": false,
@@ -127,6 +176,11 @@
           "type": "array",
           "description": "Plain-English signals that drove the score. Surfaced in the dimension breakdown UI.",
           "items": { "type": "string" }
+        },
+        "evidence_event_ids": {
+          "type": "array",
+          "description": "Supervision-event ids whose presence drove this dimension's signals (P0-2). Surfaced as 'show me the related events' chips in the report.",
+          "items": { "type": "integer", "minimum": 1 }
         }
       }
     }

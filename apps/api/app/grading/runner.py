@@ -36,9 +36,11 @@ from app.grading.dimensions import RUBRIC_DIMENSIONS
 from app.grading.prompt_judge import (
     PromptJudge,
     PromptJudgeContext,
+)
+from app.grading.prompt_judge import (
     PromptJudgement as JudgementResult,
 )
-from app.grading.score import ScoreReport, compute_score
+from app.grading.score import GAVE_UP_SCORE_CAP, ScoreReport, apply_score_cap, compute_score
 from app.grading.validators import ValidatorResult, dispatch
 from app.grading.validators.tests_pass import TestRunResult, validate_tests_pass
 from app.models.agent_turn import AgentTurn
@@ -140,6 +142,12 @@ class GradingResult:
     submission_id: uuid.UUID | None = None
     status: str = "graded"  # "graded" | "error"
     error: str | None = None
+    # P0-4 — when set, the give-up affordance triggered the cap. Persisted to
+    # submission.score_cap_reason so the FE can render the chip on the
+    # report header and the profile aggregator can exclude this attempt
+    # from best-per-mission when an uncapped attempt exists. ``None``
+    # means no cap applied (the common path).
+    score_cap_reason: str | None = None
 
     def as_submission_data(self) -> dict[str, Any]:
         """Plain dict shape used by ``sessions.submit.submit_session``."""
@@ -151,6 +159,7 @@ class GradingResult:
             "validator_results": self.validator_results,
             "score_report": self.score_report,
             "total_score": self.total_score,
+            "score_cap_reason": self.score_cap_reason,
         }
 
 
@@ -381,6 +390,17 @@ class GradingRunner:
             completed_mission_ids=completed_mission_ids,
         )
 
+        # P0-4 — apply give-up cap AFTER compute_score so dimension scores
+        # remain honest. The cap only touches ``total`` (and records the
+        # uncapped value + reason). If the user gave up but their honest
+        # total is already <= 50, ``apply_score_cap`` records the reason
+        # without lowering the number — the chip still renders so the
+        # report stays honest about the deliberate give-up.
+        cap_reason: str | None = None
+        if session.gave_up_at is not None:
+            apply_score_cap(report, reason="gave_up", cap=GAVE_UP_SCORE_CAP)
+            cap_reason = "gave_up"
+
         # Step 5: award badges (persisted by award()).
         mission_id = getattr(manifest, "id", None) or session.mission_id
         badge_ids = await award_badges(
@@ -412,6 +432,7 @@ class GradingRunner:
             score_report=report.to_dict(),
             total_score=report.total,
             badges_earned=list(badge_ids),
+            score_cap_reason=cap_reason,
         )
 
     # ------------------------------------------------------------------
@@ -430,9 +451,32 @@ class GradingRunner:
         """Run the pipeline and persist a ``submissions`` row.
 
         Used by the submit endpoint and the ``check_missions.py`` CLI.
+        Tutorial missions short-circuit at the submit layer
+        (see :func:`app.sessions.submit.submit_session`); reaching this
+        function with ``manifest.kind == "tutorial"`` is a contract
+        violation and we surface it loudly rather than silently grading
+        the tutorial as a real attempt.
         """
+        if getattr(manifest, "kind", "standard") == "tutorial":
+            raise RuntimeError(
+                "GradingRunner.run_and_persist invoked for a tutorial "
+                "mission; use complete_tutorial() instead — tutorial "
+                "missions must not be graded through the standard pipeline."
+            )
         result = await self.run(db, session, driver, handle, manifest, manifest_folder)
         emitter = EventEmitter(db=db)
+
+        # P0-2 — compute the deterministic critical-moment list off the same
+        # event stream the score engine just consumed. Stored in its own
+        # column (migration 0012) so the FE can render the post-mortem
+        # walkthrough without re-deserialising score_report.
+        events = await _load_events(db, result.session_id)
+        from app.grading.diagnostics import compute_critical_moments
+
+        critical_moments = [
+            cm.to_dict()
+            for cm in compute_critical_moments(events=events, manifest=manifest)
+        ]
 
         submission = Submission(
             session_id=result.session_id,
@@ -446,6 +490,13 @@ class GradingRunner:
             # graded against (the column was added in migration 0008
             # specifically so replays can detect content drift).
             manifest_sha256=getattr(manifest, "manifest_sha256", None),
+            critical_moments=critical_moments,
+            # P0-4 — mirrored from the cap applied in ``_pipeline``. NULL
+            # when the user submitted normally; ``'gave_up'`` when the
+            # give-up affordance was used. The profile aggregator reads
+            # this column to dedupe by mission (best non-gave-up beats
+            # any gave-up attempt).
+            score_cap_reason=result.score_cap_reason,
         )
         db.add(submission)
         await db.flush()
@@ -479,10 +530,100 @@ class GradingRunner:
                 # render ``score / effective_max`` (e.g. 70/90 when a
                 # dimension is pending) without re-fetching the report.
                 "effective_max": int(effective_max) if isinstance(effective_max, (int, float)) else 100,
+                # P0-2 — the post-mortem walkthrough's critical-moment
+                # scrubber relies on these. Including them in the live
+                # event lets a subscriber (Timeline, future toast)
+                # surface the diagnostic without a roundtrip to
+                # ``/reports/{id}``.
+                "critical_moments": critical_moments,
             },
         )
+        # Structured log so an operator can correlate critical-moment
+        # spikes to specific missions / sessions without parsing JSONB.
+        if critical_moments:
+            logger.info(
+                "[grader] session={} critical_moments={} kinds={}",
+                result.session_id,
+                len(critical_moments),
+                [m.get("kind") for m in critical_moments],
+            )
         await db.commit()
         return submission, result
+
+    # ------------------------------------------------------------------
+    # P0-1 — tutorial completion (no scoring, no submission row)
+    # ------------------------------------------------------------------
+
+    async def complete_tutorial(
+        self,
+        db: AsyncSession,
+        session: SessionRow,
+        manifest: Any,
+    ) -> None:
+        """Mark a tutorial session as completed.
+
+        Tutorial missions don't go through the scoring pipeline:
+          * no Submission row is persisted (the FE redirects to the
+            catalog instead of /report after completion);
+          * the user's :attr:`tutorial_completed_at` timestamp is set so
+            the // start here banner stops rendering;
+          * a ``tutorial.completed`` supervision event is emitted so the
+            timeline shows the milestone.
+
+        We still set ``session.status = 'graded'`` (the closest terminal
+        state in the existing state-machine) and ``session.score = 100``
+        as a sentinel — the FE's tutorial-flow branch never reads the
+        score, but back-compat code paths that look up the session see
+        a deterministic value.
+        """
+        if getattr(manifest, "kind", "standard") != "tutorial":
+            raise RuntimeError(
+                "complete_tutorial called for non-tutorial mission; "
+                "route through run_and_persist instead."
+            )
+
+        from datetime import UTC, datetime
+
+        from sqlalchemy import update as sa_update
+
+        from app.models.user import User
+
+        emitter = EventEmitter(db=db)
+        await self._emit(
+            emitter,
+            session.id,
+            "submission.requested",
+            {"started_at_iso": _now_iso(), "tutorial": True},
+        )
+
+        now = datetime.now(UTC)
+        # Set tutorial completion on the user row. Use a bounded UPDATE so
+        # the timestamp lands even when the User instance isn't loaded into
+        # this session's identity map.
+        await db.execute(
+            sa_update(User)
+            .where(User.id == session.user_id)
+            .values(tutorial_completed_at=now)
+        )
+
+        session.status = "graded"
+        session.score = 100  # sentinel — FE redirects past the report
+        session.completed_at = now
+        await db.flush()
+
+        await self._emit(
+            emitter,
+            session.id,
+            "tutorial.completed",
+            {"mission_id": session.mission_id, "completed_at_iso": now.isoformat()},
+        )
+        # NOTE: do NOT commit here. The outer ``get_db`` dependency
+        # (apps/api/app/db/session.py) commits exactly once at request
+        # boundary; an extra commit inside this method previously made
+        # ``tutorial.step_completed`` and ``submission.requested`` visible
+        # to subscribers before the rest of the unit of work (sandbox
+        # teardown, mission stats counter, etc.) could roll back. Single-
+        # commit-per-request is the load-bearing invariant.
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -681,6 +822,11 @@ async def _load_events(db: AsyncSession, session_id: uuid.UUID) -> list[dict[str
     )
     return [
         {
+            # P0-2 — event id is required for the critical-moment + evidence
+            # heuristics; it used to be dropped here, which made the
+            # post-mortem walkthrough's "scroll to this event" affordance
+            # impossible to build deterministically.
+            "id": r.id,
             "event_type": r.event_type,
             "payload": r.payload,
             "occurred_at": r.occurred_at.isoformat() if r.occurred_at else None,

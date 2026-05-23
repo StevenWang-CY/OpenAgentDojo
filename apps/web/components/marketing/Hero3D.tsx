@@ -34,7 +34,7 @@ import * as React from "react";
  */
 export function Hero3D() {
   return (
-    <div className="scene-wrap" aria-hidden="true">
+    <div className="scene-wrap hero3d-scene" aria-hidden="true">
       <style>{SCENE_CSS}</style>
       <div className="scene-stage">
         <div className="device-contact" />

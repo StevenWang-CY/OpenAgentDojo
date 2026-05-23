@@ -24,6 +24,13 @@ class DimensionScore:
     score: int
     max_score: int
     signals: list[str] = field(default_factory=list)
+    # P0-2 — supervision event ids that contributed to this dimension's
+    # signals (e.g. the command.run ids for verification, the diff.opened
+    # ids for agent_review). Stamped after scoring by
+    # :func:`_attach_evidence`. Empty list when no events were the
+    # operative input (signal came from a validator) — the FE renders
+    # those without the "→ events #N" affordance.
+    evidence_event_ids: list[int] = field(default_factory=list)
 
     @property
     def pending(self) -> bool:
@@ -39,6 +46,44 @@ class DimensionScore:
             "score": None if self.pending else self.score,
             "max": self.max_score,
             "signals": self.signals,
+            "evidence_event_ids": list(self.evidence_event_ids),
+        }
+
+
+@dataclass
+class StrengthEntry:
+    """Evidence-bearing strength entry (P0-2).
+
+    The wire format also accepts the legacy ``str`` shape so older
+    submissions don't break on read — the FE union-narrows on type.
+    """
+
+    message: str
+    dimension: str
+    evidence_event_ids: list[int] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "message": self.message,
+            "dimension": self.dimension,
+            "evidence_event_ids": list(self.evidence_event_ids),
+        }
+
+
+@dataclass
+class WeaknessEntry:
+    """Evidence-bearing weakness entry. Identical shape to StrengthEntry —
+    we ship them as separate types so the FE can colour-code each."""
+
+    message: str
+    dimension: str
+    evidence_event_ids: list[int] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "message": self.message,
+            "dimension": self.dimension,
+            "evidence_event_ids": list(self.evidence_event_ids),
         }
 
 
@@ -46,8 +91,8 @@ class DimensionScore:
 class ScoreReport:
     total: int
     dimensions: dict[str, DimensionScore]
-    strengths: list[str]
-    weaknesses: list[str]
+    strengths: list[StrengthEntry]
+    weaknesses: list[WeaknessEntry]
     missed_failure_mode: bool
     badges_earned: list[str]
     # Per-dimension diagnostic narrative (P2-1). Each entry tells the user
@@ -59,18 +104,121 @@ class ScoreReport:
     # when prompt_quality is pending; etc. The FE should render the
     # score as ``total / effective_max`` rather than hardcoding /100.
     effective_max: int = 100
+    # P0-4 — when set, a post-grading rule capped ``total``. Currently the
+    # only legal value is ``"gave_up"`` (capped at 50/100). Mirrored to
+    # ``submissions.score_cap_reason`` by the grading runner; the FE
+    # renders a chip in the report header explaining the cap.
+    # NULL means no cap was applied — the dimension sum is the honest
+    # total. Cap is applied AFTER ``effective_max`` so the breakdown
+    # remains honest and the cap surfaces as a single, named field.
+    score_cap_reason: str | None = None
+    # P0-4 — the uncapped total, persisted so the FE can render "would
+    # have scored 82" beside the capped 50. ``None`` when no cap was
+    # applied (saving a few bytes on the common path).
+    uncapped_total: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "total": self.total,
             "dimensions": {k: v.to_dict() for k, v in self.dimensions.items()},
-            "strengths": self.strengths,
-            "weaknesses": self.weaknesses,
+            "strengths": [s.to_dict() for s in self.strengths],
+            "weaknesses": [w.to_dict() for w in self.weaknesses],
             "missed_failure_mode": self.missed_failure_mode,
             "badges_earned": self.badges_earned,
             "feedback_narrative": list(self.feedback_narrative),
             "effective_max": self.effective_max,
+            "score_cap_reason": self.score_cap_reason,
+            "uncapped_total": self.uncapped_total,
         }
+
+
+# P0-4 — score cap policy. The give-up affordance applies this cap at the
+# report-total level, leaving dimension scores untouched so the breakdown
+# remains an honest measurement of the supervisor's work. ADR 0010
+# documents the choice of 50.
+GAVE_UP_SCORE_CAP: int = 50
+
+
+def apply_score_cap(
+    report: ScoreReport,
+    *,
+    reason: str,
+    cap: int,
+) -> ScoreReport:
+    """Mutate ``report`` in-place to apply a hard cap on ``total``.
+
+    Used by the give-up flow (P0-4) — the dimension scores remain honest;
+    only ``total``, ``score_cap_reason`` and ``uncapped_total`` change.
+    The cap is only applied when ``total`` actually exceeds ``cap`` so a
+    user who gave up at minute 11 with a 38/100 attempt still sees their
+    real score (and ``score_cap_reason`` reflects the deliberate give-up
+    so the FE can render the chip honestly even when the cap was not
+    binding).
+    """
+    report.score_cap_reason = reason
+    report.uncapped_total = report.total
+    if report.total > cap:
+        report.total = cap
+    return report
+
+
+# ---------------------------------------------------------------------------
+# P0-2 — evidence-event collection per dimension.
+# ---------------------------------------------------------------------------
+
+
+# Map dimension → ordered set of event types that "evidenced" the score.
+# The collection is post-hoc (after compute_score returns each
+# DimensionScore) so the dimension scorers don't need to thread event ids
+# through every helper. The mapping favours legibility over exactness:
+# the FE renders evidence as "show me the related events", not "these are
+# the literal bytes that drove the score".
+_EVIDENCE_EVENT_TYPES: dict[str, tuple[str, ...]] = {
+    "final_correctness": ("patch.applied",),
+    "verification": ("command.run",),
+    "agent_review": ("diff.opened",),
+    "prompt_quality": ("prompt.submitted",),
+    "context_selection": ("context.selected",),
+    "safety": ("validator.flag", "command.run"),
+    "diff_minimality": ("patch.applied",),
+}
+
+# For ``verification`` we only want command.run events whose category is in
+# the verification set. Other dimensions accept every matching event.
+_VERIFICATION_COMMAND_CATEGORIES: frozenset[str] = frozenset(
+    {"test", "typecheck", "lint"}
+)
+
+
+def _attach_evidence(
+    dimensions: dict[str, DimensionScore], events: list[dict[str, Any]]
+) -> None:
+    """Stamp ``evidence_event_ids`` onto every dimension in-place.
+
+    Output is **sorted ascending and de-duplicated** so:
+      * Two grading replays of the same event stream emit byte-identical
+        ``score_report`` JSONB (load-bearing for the determinism invariant
+        documented in ADR 0006).
+      * The FE evidence-chip renderer doesn't draw the same #N twice when
+        a session happens to emit two events with the same id (which can
+        legitimately happen across distinct event types).
+    """
+    for dim_name, types in _EVIDENCE_EVENT_TYPES.items():
+        ds = dimensions.get(dim_name)
+        if ds is None:
+            continue
+        seen: set[int] = set()
+        for ev in events:
+            if ev.get("event_type") not in types:
+                continue
+            if dim_name == "verification":
+                payload = ev.get("payload") or {}
+                if payload.get("category") not in _VERIFICATION_COMMAND_CATEGORIES:
+                    continue
+            eid = ev.get("id")
+            if isinstance(eid, int):
+                seen.add(eid)
+        ds.evidence_event_ids = sorted(seen)
 
 
 # ---------------------------------------------------------------------------
@@ -673,14 +821,13 @@ def _score_agent_review(
     if meaningful_edit:
         score += 5
         signals.append("+5: meaningful file edit or revert (>=1 line changed)")
+    elif _any_event(events, "file.edited"):
+        signals.append(
+            "+0: file.edited events present but all were no-op (0 lines "
+            "changed) — not credited"
+        )
     else:
-        if _any_event(events, "file.edited"):
-            signals.append(
-                "+0: file.edited events present but all were no-op (0 lines "
-                "changed) — not credited"
-            )
-        else:
-            signals.append("+0: no file edited/reverted")
+        signals.append("+0: no file edited/reverted")
 
     # +4: any prompt.submitted event with intent=revise, narrow, or test.
     revise_intents = {"revise", "narrow", "test"}
@@ -1271,9 +1418,21 @@ def _score_diff_minimality(diff: ParsedDiff, manifest: Any) -> DimensionScore:
 # ---------------------------------------------------------------------------
 
 
-def _narrative(dimensions: dict[str, DimensionScore]) -> tuple[list[str], list[str]]:
-    strengths: list[str] = []
-    weaknesses: list[str] = []
+def _narrative(
+    dimensions: dict[str, DimensionScore],
+) -> tuple[list[StrengthEntry], list[WeaknessEntry]]:
+    """Emit evidence-bearing strength / weakness entries (P0-2).
+
+    Each entry carries:
+      * a human-readable ``message`` (the legacy ``str`` shape, preserved
+        verbatim so OG-image + sample-report rendering doesn't drift);
+      * the ``dimension`` name (so the FE can colour-code by axis);
+      * ``evidence_event_ids`` — the list of supervision events that
+        drove the dimension's score, populated by
+        :func:`_attach_evidence`.
+    """
+    strengths: list[StrengthEntry] = []
+    weaknesses: list[WeaknessEntry] = []
 
     # Strength = >= 80% of max, weakness = <= 40% of max. Computed from the
     # central ``DIMENSION_MAX`` so adjusting a dimension's weight in
@@ -1301,10 +1460,24 @@ def _narrative(dimensions: dict[str, DimensionScore]) -> tuple[list[str], list[s
             continue
         high_thresh, low_thresh = thresholds.get(dim, (ds.max_score * 0.8, ds.max_score * 0.5))
         label = labels.get(dim, dim)
+        evidence = list(ds.evidence_event_ids)
+        message = f"{label}: {ds.score}/{ds.max_score}"
         if ds.score >= high_thresh:
-            strengths.append(f"{label}: {ds.score}/{ds.max_score}")
+            strengths.append(
+                StrengthEntry(
+                    message=message,
+                    dimension=dim,
+                    evidence_event_ids=evidence,
+                )
+            )
         elif ds.score <= low_thresh:
-            weaknesses.append(f"{label}: {ds.score}/{ds.max_score}")
+            weaknesses.append(
+                WeaknessEntry(
+                    message=message,
+                    dimension=dim,
+                    evidence_event_ids=evidence,
+                )
+            )
 
     return strengths, weaknesses
 
@@ -1394,6 +1567,11 @@ def compute_score(
             completed_mission_ids=completed_mission_ids,
         )
     ]
+
+    # P0-2 — stamp evidence event ids onto each dimension BEFORE the
+    # narrative is built so strengths/weaknesses inherit the lookup
+    # without re-walking the event log.
+    _attach_evidence(dimensions, events)
 
     strengths, weaknesses = _narrative(dimensions)
     missed_failure_mode = not _hidden_tests_passed(test_results, manifest)

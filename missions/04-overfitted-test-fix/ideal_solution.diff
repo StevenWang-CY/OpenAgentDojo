@@ -1,0 +1,6 @@
+--- a/backend/app/calc.py
++++ b/backend/app/calc.py
+@@ -65,7 +65,7 @@ def calculate_price(qty: int, unit: Decimal | int | str) -> Decimal:
+-    if qty > VOLUME_DISCOUNT_MIN_QTY:
++    if qty >= VOLUME_DISCOUNT_MIN_QTY:
+         subtotal = subtotal * (Decimal("1") - VOLUME_DISCOUNT_RATE)

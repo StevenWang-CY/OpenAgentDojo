@@ -16,7 +16,6 @@ Skipped tests do not count toward the total — they assert nothing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from app.grading.diff import ParsedDiff
 from app.grading.score import _score_final_correctness, compute_score

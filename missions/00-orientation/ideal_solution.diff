@@ -1,0 +1,13 @@
+diff --git a/backend/src/utils/welcome.ts b/backend/src/utils/welcome.ts
+--- a/backend/src/utils/welcome.ts
++++ b/backend/src/utils/welcome.ts
+@@ -12,8 +12,5 @@
+  * the current implementation returns ``"Hello, !"``. The fix is one line.
+  */
+ export function welcomeBanner(name: string): string {
+-  // BUG: the name is never concatenated into the response. The visible
+-  // unit test that ships with the mission only checks the trailing "!"
+-  // marker, so this looks "kinda right" if you don't read carefully.
+-  return "Hello, !";
++  return `Hello, ${name}!`;
+ }

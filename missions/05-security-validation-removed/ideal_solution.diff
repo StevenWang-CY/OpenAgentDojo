@@ -1,0 +1,9 @@
+--- a/backend/src/middleware/assertOwnerOrAdmin.ts
++++ b/backend/src/middleware/assertOwnerOrAdmin.ts
+@@ -45,7 +45,7 @@ export function assertOwnerOrAdmin(
+   // BUG (Mission 05): the route registers `:userId` ...
+-  const targetId = req.params.id;
++  const targetId = req.params.userId;
+
+   if (me.id === targetId || me.role === "admin") {
+     next();

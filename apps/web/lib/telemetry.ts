@@ -27,7 +27,14 @@ export type TelemetryEvent =
   | "report_shared"
   | "profile_viewed"
   | "sign_in_requested"
-  | "sign_in_completed";
+  | "sign_in_completed"
+  // P0-3 — emitted by the Retry CTA on the report page. Properties:
+  // ``mission_id``, ``previous_session_id``.
+  | "mission_retried"
+  // P0-4 — emitted by the GiveUpDialog confirm action. Property:
+  // ``session_id``. Fires BEFORE the API call so the abandon signal is
+  // recorded even if the network roundtrip fails.
+  | "session_gave_up";
 
 /**
  * Canonical event names, exposed as a const enum-like object so call sites
@@ -45,6 +52,8 @@ export const TelemetryEvents = {
   profile_viewed: "profile_viewed",
   sign_in_requested: "sign_in_requested",
   sign_in_completed: "sign_in_completed",
+  mission_retried: "mission_retried",
+  session_gave_up: "session_gave_up",
 } as const satisfies Record<TelemetryEvent, TelemetryEvent>;
 
 // ── Ring buffer & internal state ────────────────────────────────────────────

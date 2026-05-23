@@ -106,6 +106,31 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/auth/me/tutorial/replay': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Clear tutorial completion + increment replay count (P0-1)
+     * @description Re-arm the tutorial coachmark for the signed-in user.
+     *
+     *     Atomic: a single SQL ``UPDATE`` clears ``tutorial_completed_at`` and
+     *     increments ``tutorial_replay_count`` server-side. The previous
+     *     Python-side read-modify-write lost increments under concurrent
+     *     replays (two callers each read N, both wrote N+1).
+     */
+    post: operations['post_tutorial_replay_api_v1_auth_me_tutorial_replay_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/missions': {
     parameters: {
       query?: never;
@@ -354,6 +379,32 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/sessions/{session_id}/events/tutorial-step': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record a tutorial coachmark step transition (P0-1)
+     * @description Persist a ``tutorial.step_completed`` or ``tutorial.dismissed`` event.
+     *
+     *     These events are tutorial-only — the grader ignores them (Mission 00
+     *     short-circuits the scoring path entirely). Persisting them via the
+     *     supervision-event log keeps the audit trail uniform with every other
+     *     user action, which is the load-bearing invariant for the post-mortem
+     *     replay tool.
+     */
+    post: operations['post_tutorial_step_api_v1_sessions__session_id__events_tutorial_step_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/sessions/{session_id}/file': {
     parameters: {
       query?: never;
@@ -399,6 +450,50 @@ export interface paths {
     put?: never;
     /** Revert a file to its initial state */
     post: operations['post_revert_api_v1_sessions__session_id__files_revert_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/give-up': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Forfeit the session, reveal the ideal solution, cap the score at 50
+     * @description Forfeit the active session and immediately submit it for grading.
+     *
+     *     Preconditions:
+     *       * The caller owns the session.
+     *       * ``session.status == 'active'`` (a session that's already submitting
+     *         or graded can't be given up on — the user must wait for the
+     *         in-flight grade to finish, then they can retry).
+     *       * At least :data:`GIVE_UP_MIN_SECONDS` (10 min) have elapsed since
+     *         ``session.started_at`` — prevents quitting before engaging.
+     *
+     *     Side-effects (in order):
+     *       1. Emit ``session.gave_up`` supervision event with the
+     *          ``seconds_into_session`` payload (so the timeline reflects the
+     *          deliberate forfeit).
+     *       2. Stamp ``sessions.gave_up_at = now()``. The grading runner reads
+     *          this flag when computing the score report and applies a 50/100
+     *          cap with ``score_cap_reason='gave_up'``.
+     *       3. Call the standard submit pipeline (same path as
+     *          ``POST /sessions/{id}/submit``).
+     *
+     *     Errors:
+     *       * 409 — session is not active (already graded, abandoned, errored,
+     *         or mid-submit). Detail includes the current status.
+     *       * 425 (Too Early) — 10-min window hasn't elapsed yet. Detail
+     *         carries ``seconds_remaining`` so the FE can render a countdown.
+     */
+    post: operations['post_give_up_api_v1_sessions__session_id__give_up_post'];
     delete?: never;
     options?: never;
     head?: never;
@@ -460,7 +555,11 @@ export interface paths {
      * @description Return the grading submission for an already-graded session.
      *
      *     Returns 404 if the session has not been submitted yet, or 404 if the
-     *     session itself does not exist.
+     *     session itself does not exist. ``ideal_solution`` /
+     *     ``ideal_solution_diff`` / ``agent_patch_diff`` are injected from disk
+     *     when ``session.status == 'graded'`` so the FE can render the
+     *     post-mortem walkthrough (P0-2) without a second roundtrip to
+     *     ``/reports``.
      */
     get: operations['get_submission_api_v1_sessions__session_id__submission_get'];
     put?: never;
@@ -923,7 +1022,8 @@ export interface components {
         | 'refactoring'
         | 'agent-safety'
         | 'review'
-        | 'debugging';
+        | 'debugging'
+        | 'tutorial';
       /**
        * Difficulty
        * @enum {string}
@@ -943,6 +1043,12 @@ export interface components {
       id: string;
       /** Initial Commit */
       initial_commit: string;
+      /**
+       * Kind
+       * @default standard
+       * @enum {string}
+       */
+      kind: 'standard' | 'tutorial';
       /** Language Runtime */
       language_runtime?: ('node20' | 'python312') | null;
       /** Manifest Sha256 */
@@ -970,6 +1076,7 @@ export interface components {
       version: number;
       /** Visible Tests */
       visible_tests?: string[];
+      your_attempts?: components['schemas']['YourAttempts'] | null;
     };
     /**
      * MissionHistoryItemRead
@@ -1014,7 +1121,8 @@ export interface components {
         | 'refactoring'
         | 'agent-safety'
         | 'review'
-        | 'debugging';
+        | 'debugging'
+        | 'tutorial';
       /**
        * Difficulty
        * @enum {string}
@@ -1026,6 +1134,12 @@ export interface components {
       failure_mode_id: string;
       /** Id */
       id: string;
+      /**
+       * Kind
+       * @default standard
+       * @enum {string}
+       */
+      kind: 'standard' | 'tutorial';
       /**
        * Published
        * @default true
@@ -1117,6 +1231,8 @@ export interface components {
     SessionCreate: {
       /** Mission Id */
       mission_id: string;
+      /** Previous Session Id */
+      previous_session_id?: string | null;
     };
     /**
      * SessionDetail
@@ -1128,10 +1244,17 @@ export interface components {
        * @default 0
        */
       agent_turns: number;
+      /**
+       * Attempt Index
+       * @default 1
+       */
+      attempt_index: number;
       /** Completed At */
       completed_at?: string | null;
       /** Current Commit */
       current_commit?: string | null;
+      /** Gave Up At */
+      gave_up_at?: string | null;
       /**
        * Id
        * Format: uuid
@@ -1140,6 +1263,8 @@ export interface components {
       mission: components['schemas']['MissionDetail'];
       /** Mission Id */
       mission_id: string;
+      /** Previous Session Id */
+      previous_session_id?: string | null;
       /**
        * Sandbox Driver
        * @default local
@@ -1178,10 +1303,17 @@ export interface components {
        * @default 0
        */
       agent_turns: number;
+      /**
+       * Attempt Index
+       * @default 1
+       */
+      attempt_index: number;
       /** Completed At */
       completed_at?: string | null;
       /** Current Commit */
       current_commit?: string | null;
+      /** Gave Up At */
+      gave_up_at?: string | null;
       /**
        * Id
        * Format: uuid
@@ -1189,6 +1321,8 @@ export interface components {
       id: string;
       /** Mission Id */
       mission_id: string;
+      /** Previous Session Id */
+      previous_session_id?: string | null;
       /**
        * Sandbox Driver
        * @default local
@@ -1250,11 +1384,17 @@ export interface components {
     };
     /** SubmissionRead */
     SubmissionRead: {
+      /** Agent Patch Diff */
+      agent_patch_diff?: string | null;
       /**
        * Created At
        * Format: date-time
        */
       created_at: string;
+      /** Critical Moments */
+      critical_moments?: {
+        [key: string]: unknown;
+      }[];
       /**
        * Final Diff
        * @default
@@ -1275,6 +1415,12 @@ export interface components {
       id: string;
       /** Ideal Solution */
       ideal_solution?: string | null;
+      /** Ideal Solution Diff */
+      ideal_solution_diff?: string | null;
+      /** Mission Id */
+      mission_id?: string | null;
+      /** Score Cap Reason */
+      score_cap_reason?: 'gave_up' | null;
       /** Score Report */
       score_report?: {
         [key: string]: unknown;
@@ -1327,6 +1473,25 @@ export interface components {
        */
       session_id: string;
     };
+    /**
+     * TutorialStepBody
+     * @description Body for ``POST /sessions/{id}/events/tutorial-step``.
+     *
+     *     ``action`` discriminates "I completed step X" from "I dismissed step X"
+     *     — both write into the supervision event log so the post-session content
+     *     tuning can see exactly which steps users skipped vs. completed. The
+     *     grader ignores tutorial events when scoring.
+     */
+    TutorialStepBody: {
+      /**
+       * Action
+       * @default completed
+       * @enum {string}
+       */
+      action: 'completed' | 'dismissed';
+      /** Step Id */
+      step_id: string;
+    };
     /** UnifiedDiff */
     UnifiedDiff: {
       /** Unified Diff */
@@ -1359,6 +1524,13 @@ export interface components {
       id: string;
       /** Last Login At */
       last_login_at?: string | null;
+      /** Tutorial Completed At */
+      tutorial_completed_at?: string | null;
+      /**
+       * Tutorial Replay Count
+       * @default 0
+       */
+      tutorial_replay_count: number;
     };
     /** ValidationError */
     ValidationError: {
@@ -1382,6 +1554,43 @@ export interface components {
       token: string;
       /** Ttl Seconds */
       ttl_seconds: number;
+    };
+    /**
+     * YourAttempts
+     * @description P0-3 — the signed-in user's attempt history against a single mission.
+     *
+     *     Surfaced inline on the mission detail page so the "// your attempts" strip
+     *     can render without a second roundtrip. ``count`` is the total graded
+     *     attempts (capped + uncapped) so the strip honours the multi-attempt
+     *     policy: ``best_score`` reflects the user's best non-gave-up attempt
+     *     (falling back to the best gave-up attempt when no uncapped attempt
+     *     exists), ``latest_score`` is the most recently graded attempt regardless
+     *     of cap, and ``delta`` is the signed difference between latest and first.
+     *
+     *     Attempt count is NEVER surfaced on the public profile — see
+     *     `docs/adr/0009-multi-attempt-policy.md`.
+     */
+    YourAttempts: {
+      /** Best Score */
+      best_score?: number | null;
+      /** Best Submission Id */
+      best_submission_id?: string | null;
+      /**
+       * Best Was Gave Up
+       * @default false
+       */
+      best_was_gave_up: boolean;
+      /**
+       * Count
+       * @default 0
+       */
+      count: number;
+      /** Delta */
+      delta?: number | null;
+      /** Latest Score */
+      latest_score?: number | null;
+      /** Latest Submission Id */
+      latest_submission_id?: string | null;
     };
   };
   responses: never;
@@ -1494,6 +1703,26 @@ export interface operations {
     };
   };
   get_me_api_v1_auth_me_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserRead'];
+        };
+      };
+    };
+  };
+  post_tutorial_replay_api_v1_auth_me_tutorial_replay_post: {
     parameters: {
       query?: never;
       header?: never;
@@ -1876,6 +2105,39 @@ export interface operations {
       };
     };
   };
+  post_tutorial_step_api_v1_sessions__session_id__events_tutorial_step_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TutorialStepBody'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
   get_file_api_v1_sessions__session_id__file_get: {
     parameters: {
       query: {
@@ -1964,6 +2226,37 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_give_up_api_v1_sessions__session_id__give_up_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SubmissionRead'];
+        };
       };
       /** @description Validation Error */
       422: {

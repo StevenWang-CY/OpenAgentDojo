@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Button } from "@/components/ui/Button";
 import { DifficultyBadge } from "./DifficultyBadge";
 import { StartMissionButton } from "./StartMissionButton";
+import { YourAttemptsStrip } from "./YourAttemptsStrip";
 
 interface MissionDetailViewProps {
   missionId: string;
@@ -120,6 +121,13 @@ export function MissionDetailView({ missionId }: MissionDetailViewProps) {
         </div>
         <StartMissionButton missionId={data.id} />
       </header>
+
+      {/* P0-3 — private "// your attempts" strip. Renders only for signed-in
+          callers (backend gates ``your_attempts`` on viewer presence) and
+          only when the user has at least one graded attempt. */}
+      {data.your_attempts ? (
+        <YourAttemptsStrip attempts={data.your_attempts} />
+      ) : null}
 
       <div className="mt-10 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_280px]">
         <section

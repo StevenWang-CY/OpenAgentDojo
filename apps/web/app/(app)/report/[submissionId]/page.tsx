@@ -51,10 +51,14 @@ export async function generateMetadata({
   }
 
   const score = submission.total_score;
-  const strengths = submission.score_report.strengths;
+  // P0-2 — strengths are either legacy string[] or EvidenceEntry[]. Coerce
+  // to strings for the summary line so the OG metadata stays stable.
+  const strengthMessages = submission.score_report.strengths.map((s) =>
+    typeof s === "string" ? s : s.message,
+  );
   const summary =
-    strengths.length > 0
-      ? strengths.slice(0, 2).join(" · ")
+    strengthMessages.length > 0
+      ? strengthMessages.slice(0, 2).join(" · ")
       : "Process-driven supervision grading across 7 rubric dimensions.";
 
   const title = `Score ${score}/100 · OpenAgentDojo`;

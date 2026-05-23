@@ -21,6 +21,11 @@ const CATEGORY_LABEL: Record<MissionCategory, string> = {
   "agent-safety": "agent-safety",
   review: "review",
   debugging: "debugging",
+  // P0-1 — `tutorial` is filtered out of the grid by MissionGrid before
+  // CategoryChips ever sees it. The label is still required by the
+  // Record<MissionCategory, …> contract so we keep a fallback name
+  // visible if a future surface decides to surface the chip.
+  tutorial: "tutorial",
 };
 
 export function CategoryChips({

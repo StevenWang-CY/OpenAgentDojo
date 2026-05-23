@@ -1,0 +1,37 @@
+# Mission 00 (orientation) — intent classifier keyword sets.
+# Mirrors the structure used by every other mission so the deterministic
+# agent intent classifier behaves identically during the tutorial.
+
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - address
+      - debug
+      - resolve
+      - the bug
+      - investigate
+      - greeting
+      - welcome
+      - name
+  ask_for_test:
+    keywords:
+      - regression test
+      - add a test
+      - write a test
+      - hidden test
+  ask_for_minimal:
+    keywords:
+      - minimal
+      - smallest
+      - one line
+  push_back:
+    keywords:
+      - that's wrong
+      - that is wrong
+      - missing
+      - what about
+      - did you
+  unknown:
+    keywords: []

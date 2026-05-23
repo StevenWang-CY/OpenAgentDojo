@@ -6,6 +6,7 @@ import { AlertTriangle, ChevronDown, ChevronLeft, Gauge } from "lucide-react";
 import type { Difficulty, SupervisionEvent } from "@arena/shared-types";
 import { Badge } from "@/components/ui/Badge";
 import { DifficultyBadge } from "@/components/catalog/DifficultyBadge";
+import { GiveUpDialog } from "./GiveUpDialog";
 import { ScorePreview } from "./ScorePreview";
 import { SubmitDialog } from "./SubmitDialog";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,14 @@ interface WorkspaceTopBarProps {
   selectedContext: string[];
   /** Optional list of changed paths in the current diff. */
   diffChangedFiles?: string[];
+  /** P0-4 — ISO timestamp of session.started_at; drives the 10-min countdown
+   *  on the GiveUpDialog so the button enables exactly when the server gate
+   *  opens. Omitted on tutorial sessions (the give-up affordance is hidden
+   *  there). */
+  sessionStartedAt?: string;
+  /** P0-4 — when true, render the give-up affordance beside Submit. Set
+   *  to false for tutorial missions (which short-circuit grading). */
+  showGiveUp?: boolean;
   onSubmitted?(submissionId: string): void;
 }
 
@@ -54,6 +63,8 @@ export function WorkspaceTopBar({
   expectedRequiredContext,
   selectedContext,
   diffChangedFiles,
+  sessionStartedAt,
+  showGiveUp = true,
   onSubmitted,
 }: WorkspaceTopBarProps) {
   const [open, setOpen] = React.useState(false);
@@ -136,14 +147,23 @@ export function WorkspaceTopBar({
               aria-hidden
             />
           </button>
-          <SubmitDialog
-            sessionId={sessionId}
-            events={events}
-            onSubmitted={onSubmitted}
-            triggerRef={submitTriggerRef}
-            showShortcutHint
-            isMac={isMac}
-          />
+          {showGiveUp && sessionStartedAt ? (
+            <GiveUpDialog
+              sessionId={sessionId}
+              sessionStartedAt={sessionStartedAt}
+              onSubmitted={onSubmitted}
+            />
+          ) : null}
+          <div data-tutorial-anchor="submit-button" className="contents">
+            <SubmitDialog
+              sessionId={sessionId}
+              events={events}
+              onSubmitted={onSubmitted}
+              triggerRef={submitTriggerRef}
+              showShortcutHint
+              isMac={isMac}
+            />
+          </div>
         </div>
       </div>
 

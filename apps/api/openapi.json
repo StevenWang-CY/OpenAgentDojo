@@ -547,7 +547,8 @@
               "refactoring",
               "agent-safety",
               "review",
-              "debugging"
+              "debugging",
+              "tutorial"
             ],
             "title": "Category",
             "type": "string"
@@ -600,6 +601,15 @@
           },
           "initial_commit": {
             "title": "Initial Commit",
+            "type": "string"
+          },
+          "kind": {
+            "default": "standard",
+            "enum": [
+              "standard",
+              "tutorial"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "language_runtime": {
@@ -657,6 +667,16 @@
             },
             "title": "Visible Tests",
             "type": "array"
+          },
+          "your_attempts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/YourAttempts"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -745,7 +765,8 @@
               "refactoring",
               "agent-safety",
               "review",
-              "debugging"
+              "debugging",
+              "tutorial"
             ],
             "title": "Category",
             "type": "string"
@@ -769,6 +790,15 @@
           },
           "id": {
             "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "standard",
+            "enum": [
+              "standard",
+              "tutorial"
+            ],
+            "title": "Kind",
             "type": "string"
           },
           "published": {
@@ -959,6 +989,18 @@
           "mission_id": {
             "title": "Mission Id",
             "type": "string"
+          },
+          "previous_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Session Id"
           }
         },
         "required": [
@@ -973,6 +1015,11 @@
           "agent_turns": {
             "default": 0,
             "title": "Agent Turns",
+            "type": "integer"
+          },
+          "attempt_index": {
+            "default": 1,
+            "title": "Attempt Index",
             "type": "integer"
           },
           "completed_at": {
@@ -998,6 +1045,18 @@
             ],
             "title": "Current Commit"
           },
+          "gave_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gave Up At"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1009,6 +1068,18 @@
           "mission_id": {
             "title": "Mission Id",
             "type": "string"
+          },
+          "previous_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Session Id"
           },
           "sandbox_driver": {
             "default": "local",
@@ -1088,6 +1159,11 @@
             "title": "Agent Turns",
             "type": "integer"
           },
+          "attempt_index": {
+            "default": 1,
+            "title": "Attempt Index",
+            "type": "integer"
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -1111,6 +1187,18 @@
             ],
             "title": "Current Commit"
           },
+          "gave_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gave Up At"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1119,6 +1207,18 @@
           "mission_id": {
             "title": "Mission Id",
             "type": "string"
+          },
+          "previous_session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Session Id"
           },
           "sandbox_driver": {
             "default": "local",
@@ -1235,10 +1335,29 @@
       },
       "SubmissionRead": {
         "properties": {
+          "agent_patch_diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Patch Diff"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "critical_moments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Critical Moments",
+            "type": "array"
           },
           "final_diff": {
             "default": "",
@@ -1276,6 +1395,40 @@
               }
             ],
             "title": "Ideal Solution"
+          },
+          "ideal_solution_diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ideal Solution Diff"
+          },
+          "mission_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mission Id"
+          },
+          "score_cap_reason": {
+            "anyOf": [
+              {
+                "const": "gave_up",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Cap Reason"
           },
           "score_report": {
             "additionalProperties": true,
@@ -1369,6 +1522,31 @@
         "title": "SupervisionEventRead",
         "type": "object"
       },
+      "TutorialStepBody": {
+        "description": "Body for ``POST /sessions/{id}/events/tutorial-step``.\n\n``action`` discriminates \"I completed step X\" from \"I dismissed step X\"\n— both write into the supervision event log so the post-session content\ntuning can see exactly which steps users skipped vs. completed. The\ngrader ignores tutorial events when scoring.",
+        "properties": {
+          "action": {
+            "default": "completed",
+            "enum": [
+              "completed",
+              "dismissed"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "step_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Step Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step_id"
+        ],
+        "title": "TutorialStepBody",
+        "type": "object"
+      },
       "UnifiedDiff": {
         "properties": {
           "unified_diff": {
@@ -1447,6 +1625,23 @@
               }
             ],
             "title": "Last Login At"
+          },
+          "tutorial_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tutorial Completed At"
+          },
+          "tutorial_replay_count": {
+            "default": 0,
+            "title": "Tutorial Replay Count",
+            "type": "integer"
           }
         },
         "required": [
@@ -1515,6 +1710,80 @@
           "ttl_seconds"
         ],
         "title": "WsTokenRead",
+        "type": "object"
+      },
+      "YourAttempts": {
+        "description": "P0-3 — the signed-in user's attempt history against a single mission.\n\nSurfaced inline on the mission detail page so the \"// your attempts\" strip\ncan render without a second roundtrip. ``count`` is the total graded\nattempts (capped + uncapped) so the strip honours the multi-attempt\npolicy: ``best_score`` reflects the user's best non-gave-up attempt\n(falling back to the best gave-up attempt when no uncapped attempt\nexists), ``latest_score`` is the most recently graded attempt regardless\nof cap, and ``delta`` is the signed difference between latest and first.\n\nAttempt count is NEVER surfaced on the public profile — see\n`docs/adr/0009-multi-attempt-policy.md`.",
+        "properties": {
+          "best_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Score"
+          },
+          "best_submission_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Submission Id"
+          },
+          "best_was_gave_up": {
+            "default": false,
+            "title": "Best Was Gave Up",
+            "type": "boolean"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta"
+          },
+          "latest_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Score"
+          },
+          "latest_submission_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Submission Id"
+          }
+        },
+        "title": "YourAttempts",
         "type": "object"
       }
     }
@@ -1653,6 +1922,28 @@
           }
         },
         "summary": "Return the authenticated user",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/me/tutorial/replay": {
+      "post": {
+        "description": "Re-arm the tutorial coachmark for the signed-in user.\n\nAtomic: a single SQL ``UPDATE`` clears ``tutorial_completed_at`` and\nincrements ``tutorial_replay_count`` server-side. The previous\nPython-side read-modify-write lost increments under concurrent\nreplays (two callers each read N, both wrote N+1).",
+        "operationId": "post_tutorial_replay_api_v1_auth_me_tutorial_replay_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clear tutorial completion + increment replay count (P0-1)",
         "tags": [
           "auth"
         ]
@@ -2176,6 +2467,53 @@
         ]
       }
     },
+    "/api/v1/sessions/{session_id}/events/tutorial-step": {
+      "post": {
+        "description": "Persist a ``tutorial.step_completed`` or ``tutorial.dismissed`` event.\n\nThese events are tutorial-only — the grader ignores them (Mission 00\nshort-circuits the scoring path entirely). Persisting them via the\nsupervision-event log keeps the audit trail uniform with every other\nuser action, which is the load-bearing invariant for the post-mortem\nreplay tool.",
+        "operationId": "post_tutorial_step_api_v1_sessions__session_id__events_tutorial_step_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TutorialStepBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Record a tutorial coachmark step transition (P0-1)",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/api/v1/sessions/{session_id}/file": {
       "get": {
         "operationId": "get_file_api_v1_sessions__session_id__file_get",
@@ -2324,6 +2662,50 @@
         ]
       }
     },
+    "/api/v1/sessions/{session_id}/give-up": {
+      "post": {
+        "description": "Forfeit the active session and immediately submit it for grading.\n\nPreconditions:\n  * The caller owns the session.\n  * ``session.status == 'active'`` (a session that's already submitting\n    or graded can't be given up on — the user must wait for the\n    in-flight grade to finish, then they can retry).\n  * At least :data:`GIVE_UP_MIN_SECONDS` (10 min) have elapsed since\n    ``session.started_at`` — prevents quitting before engaging.\n\nSide-effects (in order):\n  1. Emit ``session.gave_up`` supervision event with the\n     ``seconds_into_session`` payload (so the timeline reflects the\n     deliberate forfeit).\n  2. Stamp ``sessions.gave_up_at = now()``. The grading runner reads\n     this flag when computing the score report and applies a 50/100\n     cap with ``score_cap_reason='gave_up'``.\n  3. Call the standard submit pipeline (same path as\n     ``POST /sessions/{id}/submit``).\n\nErrors:\n  * 409 — session is not active (already graded, abandoned, errored,\n    or mid-submit). Detail includes the current status.\n  * 425 (Too Early) — 10-min window hasn't elapsed yet. Detail\n    carries ``seconds_remaining`` so the FE can render a countdown.",
+        "operationId": "post_give_up_api_v1_sessions__session_id__give_up_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forfeit the session, reveal the ideal solution, cap the score at 50",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/api/v1/sessions/{session_id}/patches/{turn_id}/apply": {
       "post": {
         "description": "Apply the agent-proposed patch for ``turn_id``.\n\nTakes no request body — the (turn_id, session_id) tuple in the URL is\nthe only input. The previous ``ApplyPatchBody`` placeholder model was\nremoved (P1-B9): nothing consumed it and publishing an empty schema as\npart of the public OpenAPI surface led FE generators to mint a useless\ntype alias.",
@@ -2433,7 +2815,7 @@
     },
     "/api/v1/sessions/{session_id}/submission": {
       "get": {
-        "description": "Return the grading submission for an already-graded session.\n\nReturns 404 if the session has not been submitted yet, or 404 if the\nsession itself does not exist.",
+        "description": "Return the grading submission for an already-graded session.\n\nReturns 404 if the session has not been submitted yet, or 404 if the\nsession itself does not exist. ``ideal_solution`` /\n``ideal_solution_diff`` / ``agent_patch_diff`` are injected from disk\nwhen ``session.status == 'graded'`` so the FE can render the\npost-mortem walkthrough (P0-2) without a second roundtrip to\n``/reports``.",
         "operationId": "get_submission_api_v1_sessions__session_id__submission_get",
         "parameters": [
           {

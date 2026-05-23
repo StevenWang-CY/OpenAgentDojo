@@ -41,6 +41,7 @@ class LoadedMission:
             "manifest_sha256": self.manifest_sha256,
             "version": m.version,
             "published": m.published,
+            "kind": m.kind,
         }
 
 
@@ -150,11 +151,11 @@ class MissionLoader:
                 INSERT INTO missions
                   (id, title, difficulty, category, repo_pack, initial_commit,
                    estimated_minutes, failure_mode, skills_tested,
-                   manifest_sha256, version, published)
+                   manifest_sha256, version, published, kind)
                 VALUES
                   (:id, :title, :difficulty, :category, :repo_pack, :initial_commit,
                    :estimated_minutes, :failure_mode, :skills_tested,
-                   :manifest_sha256, :version, :published)
+                   :manifest_sha256, :version, :published, :kind)
                 ON CONFLICT (id) DO UPDATE SET
                   title             = EXCLUDED.title,
                   difficulty        = EXCLUDED.difficulty,
@@ -166,7 +167,8 @@ class MissionLoader:
                   skills_tested     = EXCLUDED.skills_tested,
                   manifest_sha256   = EXCLUDED.manifest_sha256,
                   version           = EXCLUDED.version,
-                  published         = EXCLUDED.published
+                  published         = EXCLUDED.published,
+                  kind              = EXCLUDED.kind
                 """
             )
             for m in loaded:
@@ -179,11 +181,11 @@ class MissionLoader:
                 INSERT INTO missions
                   (id, title, difficulty, category, repo_pack, initial_commit,
                    estimated_minutes, failure_mode, skills_tested,
-                   manifest_sha256, version, published)
+                   manifest_sha256, version, published, kind)
                 VALUES
                   (:id, :title, :difficulty, :category, :repo_pack, :initial_commit,
                    :estimated_minutes, :failure_mode, :skills_tested,
-                   :manifest_sha256, :version, :published)
+                   :manifest_sha256, :version, :published, :kind)
                 """
             )
             update_sql = text(
@@ -193,7 +195,7 @@ class MissionLoader:
                   repo_pack=:repo_pack, initial_commit=:initial_commit,
                   estimated_minutes=:estimated_minutes, failure_mode=:failure_mode,
                   skills_tested=:skills_tested, manifest_sha256=:manifest_sha256,
-                  version=:version, published=:published
+                  version=:version, published=:published, kind=:kind
                 WHERE id=:id
                 """
             )

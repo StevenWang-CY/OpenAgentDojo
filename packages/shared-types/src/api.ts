@@ -64,6 +64,20 @@ export type SessionRead = components["schemas"]["SessionRead"];
 export type SessionDetailGen = components["schemas"]["SessionDetail"];
 export type CreateSessionInput = components["schemas"]["SessionCreate"];
 
+/** P0-3 — per-mission attempt summary for the signed-in caller. Sourced from
+ *  the backend ``YourAttempts`` Pydantic model. The wrapping
+ *  ``MissionDetail.your_attempts`` is null for anonymous viewers; the FE
+ *  branches on that to render the "// your attempts" strip or the standard
+ *  catalog CTA. ``count == 0`` (with a non-null wrapper) means "signed in
+ *  but never attempted" — the strip stays hidden but the FE still knows
+ *  the viewer is authenticated. */
+export type YourAttempts = components["schemas"]["YourAttempts"];
+
+/** P0-4 — score-cap reason enum. ``'gave_up'`` is the only value today;
+ *  future cap reasons (e.g. forfeit / disqualification) extend this set
+ *  along with the corresponding migration. */
+export type ScoreCapReason = "gave_up";
+
 type GenPatchResult = components["schemas"]["PatchResult"];
 export type PatchResult = Omit<GenPatchResult, "files_changed"> & {
   files_changed: string[];
@@ -111,7 +125,21 @@ export interface User {
    *  the route; the FE can rely on it being present without a defensive
    *  branch. */
   csrf_token: string;
+  /** P0-1 — when set, the user has finished Mission 00 at least once. The
+   *  catalog's "// start here" banner renders ONLY when this is null. The
+   *  "Replay tutorial" entry in the header dropdown re-clears this server-
+   *  side via POST /auth/me/tutorial/replay. */
+  tutorial_completed_at: ISODateString | null;
+  /** P0-1 — incremented every time the user re-runs the tutorial. Surfaced
+   *  so the FE can show "(replayed Nx)" beside the completion timestamp. */
+  tutorial_replay_count: number;
 }
+
+// ── Mission kind discriminator (P0-1) ──────────────────────────────────────
+
+/** `tutorial` short-circuits scoring; the FE renders these through the
+ *  orientation surface rather than the catalog grid. */
+export type MissionKind = "standard" | "tutorial";
 
 // ── Mission enrichment ──────────────────────────────────────────────────────
 // MissionDetail in the wire format includes the brief, repo info, and
@@ -153,6 +181,10 @@ export interface ScoreDimension {
   score: number | null;
   max: number;
   signals: string[];
+  /** P0-2 — supervision-event ids whose presence drove this dimension's
+   *  signals. Stamped by the grader; empty when the dimension's signals
+   *  came from a validator rather than an event stream. */
+  evidence_event_ids?: number[];
 }
 
 export type ScoreBreakdown = Record<RubricDimension, ScoreDimension>;
@@ -173,11 +205,43 @@ export interface Diagnostic {
   recommended_mission_ids: string[];
 }
 
+/** P0-2 — evidence-bearing strength / weakness entry. The legacy `string`
+ *  shape is still accepted on read so old reports keep rendering; the FE
+ *  union-narrows below to surface evidence chips only on the new shape. */
+export interface EvidenceEntry {
+  message: string;
+  dimension: RubricDimension | "unknown";
+  evidence_event_ids: number[];
+}
+
+/** Union accepted on read: legacy submissions persisted `string[]`, fresh
+ *  ones persist `EvidenceEntry[]`. */
+export type StrengthOrString = string | EvidenceEntry;
+export type WeaknessOrString = string | EvidenceEntry;
+
+/** P0-2 — deterministic "you went off course here" callout. At most three
+ *  per report; sorted by severity desc. Each entry pins to an exact
+ *  supervision-event id so the timeline can scroll to it. */
+export type CriticalMomentKind =
+  | "agent_responded_no_review"
+  | "submitted_without_verification"
+  | "wrong_layer_committed"
+  | "missed_corrective_window";
+
+export interface CriticalMoment {
+  event_id: number;
+  kind: CriticalMomentKind;
+  explanation: string;
+  what_to_do_instead: string;
+  severity?: number;
+  occurred_at?: ISODateString | null;
+}
+
 export interface ScoreReport {
   total: number;
   dimensions: ScoreBreakdown;
-  strengths: string[];
-  weaknesses: string[];
+  strengths: StrengthOrString[];
+  weaknesses: WeaknessOrString[];
   missed_failure_mode: boolean;
   badges_earned: string[];
   /** Per-dimension diagnostic + next-mission recommendations. Empty array
@@ -189,6 +253,28 @@ export interface ScoreReport {
    *  should render the score as ``total / effective_max`` rather than
    *  hardcoding /100 (see apps/api/app/grading/score.py). */
   effective_max?: number;
+  /** P0-2 — when present on a fresh submission, these are also surfaced
+   *  via Submission.critical_moments. Kept here for back-compat with old
+   *  reports that bundled them inside score_report. */
+  critical_moments?: CriticalMoment[];
+  /** P0-4 — when set, a post-grading rule capped ``total``. Currently
+   *  only ``'gave_up'`` is emitted; mirrors ``Submission.score_cap_reason``.
+   *  ``null``/absent means no cap applied. */
+  score_cap_reason?: ScoreCapReason | null;
+  /** P0-4 — the uncapped total (i.e. the honest dimension sum) when a cap
+   *  was applied. The FE renders "would have scored X" beside the capped
+   *  total so the cost of giving up is legible. Absent when no cap. */
+  uncapped_total?: number | null;
+}
+
+/** Helper: coerce either shape into a uniform `EvidenceEntry` for rendering. */
+export function asEvidenceEntry(
+  raw: StrengthOrString | WeaknessOrString,
+): EvidenceEntry {
+  if (typeof raw === "string") {
+    return { message: raw, dimension: "unknown", evidence_event_ids: [] };
+  }
+  return raw;
 }
 
 export interface ValidatorResult {
@@ -216,18 +302,25 @@ export interface TestResult {
 
 /** `GET /reports/{submission_id}` (and `GET /sessions/{id}/submission`)
  *  payload. Re-narrows the JSONB-typed fields in `SubmissionRead` against
- *  the grader's actual emit shapes (see `apps/api/app/grading/score.py`). */
+ *  the grader's actual emit shapes (see `apps/api/app/grading/score.py`).
+ *
+ *  P0-2: ``ideal_solution_diff`` / ``agent_patch_diff`` are surfaced at the
+ *  top level by the reports endpoint when the session is graded; the
+ *  post-mortem walkthrough's three-way diff consumes them directly.
+ *  ``critical_moments`` mirrors the persisted column. */
 export type Submission = Omit<
   SubmissionRead,
   | "visible_test_results"
   | "hidden_test_results"
   | "validator_results"
   | "score_report"
+  | "critical_moments"
 > & {
   visible_test_results: TestResult[];
   hidden_test_results: TestResult[];
   validator_results: ValidatorResult[];
   score_report: ScoreReport;
+  critical_moments: CriticalMoment[];
 };
 
 // ── Timeline ─────────────────────────────────────────────────────────────────
