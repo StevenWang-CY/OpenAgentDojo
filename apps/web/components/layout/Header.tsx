@@ -17,7 +17,10 @@ interface HeaderProps {
   showCta?: boolean;
 }
 
-const NAV_LINKS = [{ href: "/missions", label: "Missions" }] as const;
+const NAV_LINKS = [
+  { href: "/missions", label: "Missions" },
+  { href: "/skills", label: "Skills" },
+] as const;
 
 export function Header({ showCta = true }: HeaderProps) {
   const pathname = usePathname();
@@ -96,19 +99,6 @@ export function Header({ showCta = true }: HeaderProps) {
               </Link>
             );
           })}
-          {handle ? (
-            <Link
-              href="/skills"
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm transition-colors duration-150 ease-macos",
-                pathname?.startsWith("/skills")
-                  ? "bg-[var(--color-muted)] text-[var(--color-foreground)]"
-                  : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-muted)]"
-              )}
-            >
-              Skills
-            </Link>
-          ) : null}
           {handle ? (
             <Link
               href={`/profile/${handle}`}

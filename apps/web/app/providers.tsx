@@ -20,7 +20,12 @@ export function Providers({ children }: ProvidersProps) {
           queries: {
             staleTime: 30_000,
             gcTime: 5 * 60_000,
-            refetchOnWindowFocus: false,
+            // Refetch when the tab regains focus so the catalog / profile /
+            // skills views auto-recover after a transient API outage (e.g.
+            // backend restart, or the user fired up the API after opening
+            // the page). Worst case the user pays one extra round-trip per
+            // tab-switch — cheap compared to seeing a stale error state.
+            refetchOnWindowFocus: true,
             retry: (failureCount, error) => {
               // Don't retry on auth / 4xx — only on network blips.
               const status =
