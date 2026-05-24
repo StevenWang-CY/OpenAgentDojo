@@ -7,6 +7,13 @@ Dev fallback: when ``arena_env == "development"`` AND ``allow_dev_auth`` is
 True, missing cookies fall back to a deterministic dev user keyed by client
 IP. The fallback is OFF outside development (enforced in ``config.py``) and
 logs a loud warning every time it fires so it can't slip past code review.
+
+Per-user session invalidation (P0-6): cookies carry an ``epoch`` claim
+matching ``users.session_epoch`` at mint time. After decoding the JWT we
+load the user and call ``verify_epoch_claim`` — any cookie whose epoch is
+behind the user's current value is rejected as if it had been revoked.
+This is how "sign out everywhere", email confirm, deletion schedule and
+hard-delete invalidate every other live device without iterating JTIs.
 """
 
 from __future__ import annotations
@@ -18,7 +25,11 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.session_cookie import get_user_id_from_cookie_async
+from app.auth.session_cookie import (
+    _decode_cookie_payload,
+    _is_revoked_async,
+    verify_epoch_claim,
+)
 from app.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
@@ -87,14 +98,39 @@ async def get_current_user(
     so it cannot silently mask a production misconfiguration.
     """
     settings = get_settings()
-    user_id_str = await get_user_id_from_cookie_async(request, settings)
 
-    if user_id_str is not None:
-        try:
-            uid = uuid.UUID(user_id_str)
-        except ValueError:
-            return None
-        return (await db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
+    # Inline cookie decode so we can perform the post-DB-lookup epoch check
+    # without making a second pass through the cookie. ``get_user_id_from_
+    # cookie_async`` would otherwise hide the JTI revocation status from us.
+    payload = _decode_cookie_payload(request, settings)
+    if payload is not None:
+        jti = payload.get("jti")
+        if jti and await _is_revoked_async(jti):
+            payload = None
+
+    if payload is not None:
+        user_id_str = payload.get("sub")
+        if user_id_str:
+            try:
+                uid = uuid.UUID(user_id_str)
+            except ValueError:
+                return None
+            user = (
+                await db.execute(select(User).where(User.id == uid))
+            ).scalar_one_or_none()
+            if user is None:
+                return None
+            # P0-6 — per-user session epoch. A cookie minted before
+            # ``user.session_epoch`` was bumped is treated as revoked.
+            if not verify_epoch_claim(payload, user):
+                logger.debug(
+                    "auth: rejecting cookie for user {} (epoch {} < user {})",
+                    uid,
+                    payload.get("epoch"),
+                    user.session_epoch,
+                )
+                return None
+            return user
 
     # Dev fallback — only fire when explicitly enabled AND in development.
     if settings.arena_env == "development" and settings.allow_dev_auth:

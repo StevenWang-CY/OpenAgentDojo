@@ -94,6 +94,56 @@ export type RevertFileInput = components["schemas"]["FileRevertBody"];
 export type MagicLinkInput = components["schemas"]["MagicLinkRequest"];
 export type PromptInput = components["schemas"]["PromptBody"];
 
+// ── P0-5 — consent (account-scoped) ─────────────────────────────────────────
+//
+// Backend response shapes for ``GET /api/v1/auth/me/consent`` and
+// ``POST /api/v1/auth/me/consent``. ``ConsentState``'s optional fields are
+// re-narrowed to ``ConsentRecord | null`` so consumers don't have to branch
+// on ``undefined`` (the backend always serialises the key, with the value
+// nulled when no row exists yet).
+//
+// ``ConsentKind`` is intentionally NOT defined here — the same alias is
+// already exported from ``./events`` (where it backs the
+// ``ConsentGrantedPayload``/``ConsentRevokedPayload`` supervision events).
+// Both definitions resolve to ``"analytics" | "functional" | "marketing"``;
+// keeping a single source of truth avoids the barrel-re-export collision in
+// ``./index.ts``.
+export type ConsentRecord = components["schemas"]["ConsentRecord"];
+export type ConsentState = {
+  analytics: ConsentRecord | null;
+  functional: ConsentRecord | null;
+  marketing: ConsentRecord | null;
+};
+export type ConsentUpdate = components["schemas"]["ConsentUpdate"];
+
+// ── P0-6 — account self-service ─────────────────────────────────────────────
+//
+// Re-exports for the account-management endpoints under
+// ``/api/v1/auth/me/*``. ``DataExport`` mirrors the backend
+// ``DataExportRead`` envelope; ``DataExportStatus`` extracts the discriminator
+// union so call-sites can switch on it without indexing into the parent
+// type. The remaining aliases are 1:1 with their generated counterparts —
+// the indirection just lets ``apps/web/lib/api.ts`` import a clean,
+// hand-curated name instead of ``components['schemas']['…']``.
+export type DataExport = components["schemas"]["DataExportRead"];
+export type DataExportStatus = DataExport["status"];
+export type DisplayNameUpdate = components["schemas"]["DisplayNameUpdate"];
+export type EmailChangeRequest = components["schemas"]["EmailChangeRequest"];
+export type EmailChangeConfirm = components["schemas"]["EmailChangeConfirm"];
+export type DeleteAccountRequest =
+  components["schemas"]["DeleteAccountRequest"];
+export type DeletionScheduledRead =
+  components["schemas"]["DeletionScheduledRead"];
+
+// ── P0-6 — deletion-lock middleware envelope ────────────────────────────────
+//
+// The DeletionLockMiddleware (see ``apps/api/app/middleware/deletion_lock.py``)
+// returns this body on every mutating request from an account whose
+// ``deletion_scheduled_at`` is set — except ``POST /me/delete/cancel``. The
+// hand-curated re-export lets the FE catch handlers narrow ``ApiError.body``
+// to a typed shape instead of casting to ``unknown``.
+export type DeletionLockError = components["schemas"]["DeletionLockError"];
+
 // ── Primitives ───────────────────────────────────────────────────────────────
 
 export type ISODateString = string;
@@ -133,6 +183,18 @@ export interface User {
   /** P0-1 — incremented every time the user re-runs the tutorial. Surfaced
    *  so the FE can show "(replayed Nx)" beside the completion timestamp. */
   tutorial_replay_count: number;
+  /** P0-6 — when set, the user has requested an email change; the new
+   *  address is pending magic-link confirmation. The Profile tab renders a
+   *  "pending: …" banner in place of the change form until the link is
+   *  followed (or until a fresh ``POST /me/email/change`` overwrites the
+   *  pending value). */
+  pending_email: string | null;
+  /** P0-6 — when set, the user has scheduled their account for deletion;
+   *  the value is the timestamp at which the daily worker will hard-delete.
+   *  While set, every mutating endpoint except ``/me/delete/cancel`` returns
+   *  403 ``deletion_scheduled``; the FE renders ``DeletionLockBanner`` to
+   *  explain. */
+  deletion_scheduled_at: ISODateString | null;
 }
 
 // ── Mission kind discriminator (P0-1) ──────────────────────────────────────

@@ -51,14 +51,30 @@ _REDIS_REVOKED_TTL_S = 60.0
 _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 
 
-def issue_session_cookie(response: Response, user_id: str, settings: Settings) -> None:
-    """Sign a JWT and attach it as an HttpOnly session cookie on *response*."""
+def issue_session_cookie(
+    response: Response,
+    user_id: str,
+    settings: Settings,
+    *,
+    epoch: int = 1,
+) -> None:
+    """Sign a JWT and attach it as an HttpOnly session cookie on *response*.
+
+    The ``epoch`` parameter stamps the user's current ``session_epoch`` into
+    the cookie claim. The verifier compares ``claim.epoch`` against the
+    *current* ``users.session_epoch`` and rejects any cookie whose claim
+    is older — that is the mechanism behind "sign out everywhere", the
+    email-change session rotation, and the deletion grace lockout. Callers
+    that have a :class:`User` in hand should prefer
+    :func:`mint_session_cookie_for_user`, which pulls ``epoch`` off the row.
+    """
     now = datetime.now(UTC)
     payload = {
         "sub": user_id,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(days=30)).timestamp()),
         "jti": secrets.token_urlsafe(16),
+        "epoch": int(epoch),
     }
     token = jwt.encode(payload, settings.session_secret, algorithm=_ALGORITHM)
     response.set_cookie(
@@ -70,6 +86,51 @@ def issue_session_cookie(response: Response, user_id: str, settings: Settings) -
         max_age=_COOKIE_MAX_AGE,
         path="/",
     )
+
+
+def mint_session_cookie_for_user(response: Response, user: Any, settings: Settings) -> None:
+    """Issue a fresh cookie carrying ``user.session_epoch``.
+
+    Convenience wrapper for handlers that already hold a :class:`User` row
+    (the email-change confirm, sign-out-all, and the grace lockout
+    transition all want this). Keeps the epoch source of truth in one place.
+    """
+    epoch = int(getattr(user, "session_epoch", 1) or 1)
+    issue_session_cookie(response, str(user.id), settings, epoch=epoch)
+
+
+def rotate_user_session_epoch(user: Any) -> int:
+    """Bump ``user.session_epoch`` in-memory and return the new value.
+
+    The caller is responsible for committing the underlying session — this
+    helper does no DB I/O of its own so it composes with both async and
+    sync sessions. After commit, every cookie minted before this call will
+    fail :func:`verify_epoch_claim`.
+    """
+    current = int(getattr(user, "session_epoch", 1) or 1)
+    new_epoch = current + 1
+    user.session_epoch = new_epoch
+    return new_epoch
+
+
+def verify_epoch_claim(payload: dict[str, Any], user: Any) -> bool:
+    """Return True when ``payload.epoch`` is current for ``user``.
+
+    A missing claim is treated as epoch=0 so legacy cookies minted before
+    the column existed are accepted exactly once — the first response then
+    re-mints with the current epoch (see ``_build_me_response``). Any
+    explicit claim *below* the user's current epoch is rejected.
+    """
+    user_epoch = int(getattr(user, "session_epoch", 1) or 1)
+    claim_epoch = payload.get("epoch")
+    if claim_epoch is None:
+        # Legacy cookie minted before the epoch claim existed. Accept once;
+        # the next /me round-trip will re-mint with the current epoch.
+        return True
+    try:
+        return int(claim_epoch) >= user_epoch
+    except (TypeError, ValueError):
+        return False
 
 
 def _decode_cookie_payload(request: Request, settings: Settings) -> dict | None:

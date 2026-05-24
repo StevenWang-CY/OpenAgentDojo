@@ -229,7 +229,11 @@ async def get_session_endpoint(
     mission_dict = MissionDetail.model_validate(mission_row).model_dump()
     mission_dict.update(_load_mission_manifest_extras(row.mission_id))
     base["mission"] = MissionDetail.model_validate(mission_dict)
-    base["ws_token"] = issue_ws_token(str(row.id))
+    base["ws_token"] = issue_ws_token(
+        str(row.id),
+        user_id=str(user.id),
+        epoch=int(getattr(user, "session_epoch", 1) or 1),
+    )
     return SessionDetail.model_validate(base)
 
 
@@ -244,7 +248,14 @@ async def get_ws_token(
     db: AsyncSession = Depends(get_db),
 ) -> WsTokenRead:
     await _require_owned_session(db, session_id, user)
-    return WsTokenRead(token=issue_ws_token(str(session_id)), ttl_seconds=60)
+    return WsTokenRead(
+        token=issue_ws_token(
+            str(session_id),
+            user_id=str(user.id),
+            epoch=int(getattr(user, "session_epoch", 1) or 1),
+        ),
+        ttl_seconds=60,
+    )
 
 
 # ---------------------------------------------------------------------------

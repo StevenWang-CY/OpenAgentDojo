@@ -21,7 +21,7 @@ export function MarketingFooter() {
       <h2 id="marketing-footer-heading" className="sr-only">
         Site footer
       </h2>
-      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-[1.6fr_1fr_1fr_1fr]">
+      <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-[1.6fr_1fr_1fr_1fr_1fr]">
         <div>
           <Link
             href="/"
@@ -56,6 +56,17 @@ export function MarketingFooter() {
           <li className="text-[var(--color-muted-foreground)]">
             Replays are byte-identical
           </li>
+        </FooterColumn>
+
+        {/* P0-5 — legal column. "Data subject request" deep-links to /account
+            so signed-in users land on their Data tab. Anonymous visitors are
+            forwarded to /account which itself routes to sign-in with a return
+            URL; a marketing-style contact page is a follow-up enhancement. */}
+        <FooterColumn title="Legal">
+          <FooterLink href="/legal/terms">Terms of service</FooterLink>
+          <FooterLink href="/legal/privacy">Privacy policy</FooterLink>
+          <FooterLink href="/legal/cookies">Cookies</FooterLink>
+          <FooterLink href="/account">Data subject request</FooterLink>
         </FooterColumn>
       </div>
       <div className="border-t border-[var(--color-border)]">

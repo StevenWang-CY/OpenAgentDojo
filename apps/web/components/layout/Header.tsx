@@ -4,13 +4,14 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Moon, RotateCcw, Sun, User as UserIcon } from "lucide-react";
+import { LogOut, Moon, RotateCcw, Settings, Shield, Sun, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, auth, createSession, replayTutorial } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useTheme } from "@/stores/themeStore";
 import { cn } from "@/lib/utils";
+import { getConsent, syncLocalConsentToServer } from "@/lib/consent";
 import { BrandMark } from "./BrandMark";
 
 interface HeaderProps {
@@ -105,6 +106,42 @@ export function Header({ showCta = true }: HeaderProps) {
   const user = meQuery.data && !meQuery.isError ? meQuery.data : null;
   const handle = user?.handle ?? null;
 
+  // P0-5 — anonymous → signed-in transition. When `me` resolves to a real
+  // user for the first time in this tab, sync any localStorage consent
+  // choice up to the server so the audit trail picks up the pre-login
+  // decision.
+  //
+  // ``syncedRef`` is set AFTER the await resolves so a transient 5xx during
+  // the only login transition doesn't permanently lose the audit row — the
+  // next focus / mount re-runs the effect and tries again. The flag is
+  // re-armed on terminal failure (post-retry inside the helper) so the
+  // retry has a meaningful trigger.
+  const syncInFlightRef = React.useRef(false);
+  const syncedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!user || syncedRef.current || syncInFlightRef.current) return;
+    const local = getConsent();
+    const hasAnyLocal =
+      local.analytics !== null ||
+      local.functional !== null ||
+      local.marketing !== null;
+    if (!hasAnyLocal) return;
+
+    syncInFlightRef.current = true;
+    void (async () => {
+      try {
+        await syncLocalConsentToServer(local);
+        syncedRef.current = true;
+      } catch {
+        // helper already logged a single deduplicated [consent.sync] warn;
+        // leaving syncedRef === false lets a later focus event retry.
+        syncedRef.current = false;
+      } finally {
+        syncInFlightRef.current = false;
+      }
+    })();
+  }, [user]);
+
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--color-border)] bg-[oklch(from_var(--color-background)_l_c_h/0.85)] backdrop-blur supports-[backdrop-filter]:bg-[oklch(from_var(--color-background)_l_c_h/0.7)]">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
@@ -192,6 +229,34 @@ export function Header({ showCta = true }: HeaderProps) {
                   </span>
                 </Link>
               ) : null}
+              {/* P0-5 — direct links to account self-service and the
+                  privacy / consent tab. Plain Button rows to preserve the
+                  existing header rhythm; the dedicated dropdown primitive
+                  is intentionally not used here. */}
+              <Button
+                asChild
+                size="sm"
+                variant="ghost"
+                aria-label="Open account settings"
+                data-testid="header-account"
+              >
+                <Link href="/account">
+                  <Settings className="size-3.5" aria-hidden />
+                  Account
+                </Link>
+              </Button>
+              <Button
+                asChild
+                size="sm"
+                variant="ghost"
+                aria-label="Open privacy settings"
+                data-testid="header-privacy"
+              >
+                <Link href="/account/privacy">
+                  <Shield className="size-3.5" aria-hidden />
+                  Privacy
+                </Link>
+              </Button>
               {user.tutorial_completed_at ? (
                 <Button
                   size="sm"

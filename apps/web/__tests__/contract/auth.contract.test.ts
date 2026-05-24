@@ -24,6 +24,8 @@ const sampleUser: User = {
   csrf_token: "csrf-deadbeef",
   tutorial_completed_at: null,
   tutorial_replay_count: 0,
+  pending_email: null,
+  deletion_scheduled_at: null,
 };
 
 withContractServer([

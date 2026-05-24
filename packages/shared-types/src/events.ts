@@ -46,6 +46,13 @@ export const SupervisionEventType = {
   // P0-4 — emitted by the give-up endpoint (stub plumbing landed under
   // ``apps/api/alembic/versions/0014_give_up.py``).
   SessionGaveUp: "session.gave_up",
+  // P0-5 — consent transitions. These are *account-scoped*, not
+  // session-scoped: they persist to a dedicated ``consent_events`` table
+  // (NOT ``supervision_events``) because the parent record is the user,
+  // not a session. The FE WS timeline never receives them; they live in
+  // the enum so the cross-language event-type contract stays exhaustive.
+  ConsentGranted: "consent.granted",
+  ConsentRevoked: "consent.revoked",
 } as const;
 
 export type SupervisionEventType =
@@ -285,6 +292,24 @@ export interface SessionGaveUpPayload {
   seconds_into_session?: number;
 }
 
+// ── P0-5 consent payloads ────────────────────────────────────────────────────
+//
+// Account-scoped; not streamed over the per-session WS channel. Kept here
+// so the cross-language event-type registry stays exhaustive (see
+// ``apps/api/tests/test_event_contract.py``).
+
+export type ConsentKind = "analytics" | "functional" | "marketing";
+
+export interface ConsentGrantedPayload {
+  kind: ConsentKind;
+  version: number;
+}
+
+export interface ConsentRevokedPayload {
+  kind: ConsentKind;
+  version: number;
+}
+
 // ── Discriminated union ──────────────────────────────────────────────────────
 
 export type SupervisionEvent =
@@ -311,7 +336,9 @@ export type SupervisionEvent =
   | SupervisionEventOf<"tutorial.step_completed", TutorialStepCompletedPayload>
   | SupervisionEventOf<"tutorial.dismissed", TutorialDismissedPayload>
   | SupervisionEventOf<"tutorial.completed", TutorialCompletedPayload>
-  | SupervisionEventOf<"session.gave_up", SessionGaveUpPayload>;
+  | SupervisionEventOf<"session.gave_up", SessionGaveUpPayload>
+  | SupervisionEventOf<"consent.granted", ConsentGrantedPayload>
+  | SupervisionEventOf<"consent.revoked", ConsentRevokedPayload>;
 
 export interface SupervisionEventOf<
   T extends SupervisionEventType,

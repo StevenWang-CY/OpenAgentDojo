@@ -6,14 +6,25 @@
  *     Events still land in an in-memory ring buffer at
  *     `window.__arenaTelemetry` so dev/QA can inspect them in DevTools.
  *   - When `NEXT_PUBLIC_POSTHOG_KEY` is set (see `TelemetryProvider`), the
- *     provider lazily imports `posthog-js` and wires it in. The same
- *     `track`/`identify`/`pageView` functions then forward to PostHog.
+ *     provider lazily imports `posthog-js` and wires it in — but ONLY after
+ *     the user has explicitly granted analytics consent (P0-5). Until then,
+ *     ``__setTelemetryClient`` is never called and the in-memory ring
+ *     buffer is the only sink. The provider listens for the
+ *     ``consent-changed`` custom event so opt-ins take effect immediately.
  *   - SSR-safe: every public function short-circuits when `window` is absent.
  *
  * Payloads MUST stay small and PII-free. Specifically: never include prompt
  * text, file contents, emails, or auth tokens. The event allowlist below is
  * deliberately narrow.
+ *
+ * Consent gate
+ * ------------
+ * Every emitting function (``track``/``identify``/``pageView``) checks
+ * ``getConsent().analytics === true`` before forwarding to PostHog. The ring
+ * buffer remains populated regardless so DevTools introspection still works
+ * — it's an in-memory dev affordance, not a remote sink.
  */
+import { getConsent } from "./consent";
 
 // ── Public event vocabulary ─────────────────────────────────────────────────
 
@@ -179,7 +190,7 @@ export function track(
     buffer.events.splice(0, buffer.events.length - RING_BUFFER_SIZE);
   }
 
-  if (posthog) {
+  if (posthog && getConsent().analytics?.granted === true) {
     try {
       posthog.capture(event, props);
     } catch {
@@ -209,7 +220,7 @@ export function identify(
     buffer.events.splice(0, buffer.events.length - RING_BUFFER_SIZE);
   }
 
-  if (posthog) {
+  if (posthog && getConsent().analytics?.granted === true) {
     try {
       posthog.identify(userId, traits);
     } catch {
@@ -232,7 +243,7 @@ export function pageView(path: string): void {
     buffer.events.splice(0, buffer.events.length - RING_BUFFER_SIZE);
   }
 
-  if (posthog) {
+  if (posthog && getConsent().analytics?.granted === true) {
     try {
       posthog.capture("$pageview", { $current_url: path });
     } catch {

@@ -7,6 +7,7 @@ commands, security headers, trusted-host validation). They are wired in
 
 from app.middleware.banned_commands import BannedCommandsMiddleware
 from app.middleware.csrf import CSRFMiddleware
+from app.middleware.deletion_lock import DeletionLockMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.request_id import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -16,6 +17,7 @@ __all__ = [
     "REQUEST_ID_HEADER",
     "BannedCommandsMiddleware",
     "CSRFMiddleware",
+    "DeletionLockMiddleware",
     "RateLimitMiddleware",
     "RequestIdMiddleware",
     "SecurityHeadersMiddleware",

@@ -33,6 +33,7 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.27",
     "opentelemetry-instrumentation-fastapi>=0.48b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "aiosmtplib>=3.0",
 ]
 
 [project.optional-dependencies]

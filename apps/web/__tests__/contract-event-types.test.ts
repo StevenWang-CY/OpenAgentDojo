@@ -23,6 +23,11 @@ import { SupervisionEventType } from "@arena/shared-types";
 const KNOWN_BE_EVENT_TYPES = [
   "agent.responded",
   "command.run",
+  // P0-5 — account-scoped consent transitions. The backend emits these to
+  // its dedicated ``consent_events`` table, not the per-session supervision
+  // stream, but they share the same discriminated union on the FE.
+  "consent.granted",
+  "consent.revoked",
   "context.selected",
   "diff.hovered",
   "diff.opened",

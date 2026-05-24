@@ -89,6 +89,13 @@ export default function AuthCallbackPage() {
           return;
         }
         if (res.status === 400 || res.status === 410) {
+          // The 400 envelope is now structured
+          // (``{detail: {code: "invalid_magic_link", message: "…"}}``);
+          // the legacy bare-string shape is gone. We branch purely on the
+          // status code here because the dedicated "expired" copy below
+          // reads better than the API message, and the FE never had a
+          // ``detail.includes(...)`` check that the contract change could
+          // break — so this branch is correct against either envelope.
           setState({ kind: "expired" });
           return;
         }

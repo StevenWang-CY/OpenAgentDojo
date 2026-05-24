@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { env } from "@/lib/env";
 import { Providers } from "./providers";
+import { CookieConsentBanner } from "@/components/legal/CookieConsentBanner";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -47,7 +48,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a href="#main-content" className="skip-to-content">
           Skip to content
         </a>
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          {/* P0-5 — global cookie banner. Mounted at the root so it's
+              visible on every route (marketing, app, auth) without
+              duplicate instances. The component renders nothing once the
+              user has stored a choice. */}
+          <CookieConsentBanner />
+        </Providers>
       </body>
     </html>
   );

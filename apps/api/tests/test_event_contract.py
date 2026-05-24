@@ -226,6 +226,21 @@ _FE_KNOWN_EVENT_TYPES: set[str] = {
     "tutorial.completed",
     # P0-4 give-up signal.
     "session.gave_up",
+    # P0-5 / P0-6 consent + account transitions (account-scoped; persist to
+    # account_events, not supervision_events — see app/models/user_consent.py).
+    # The ``account.*`` literals are passed positionally to the route's
+    # _build_account_event helper rather than as ``event_type="..."``
+    # kwargs, so the grep below does NOT pick them up; we still list
+    # them here for documentation of the FE/BE wire contract.
+    "consent.granted",
+    "consent.revoked",
+    # P0-6 account self-service + terminal deletion (account-scoped).
+    "account.email_change_requested",
+    "account.email_changed",
+    "account.signed_out_all_sessions",
+    "account.deletion_scheduled",
+    "account.deletion_cancelled",
+    "account.deleted",
 }
 
 

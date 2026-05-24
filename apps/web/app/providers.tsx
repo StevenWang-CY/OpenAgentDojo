@@ -40,6 +40,23 @@ export function Providers({ children }: ProvidersProps) {
       })
   );
 
+  // FE-audit fix — every ApiError with ``status===403 && code==="deletion_scheduled"``
+  // (raised by the backend's DeletionLockMiddleware) dispatches a
+  // ``deletion-lock-detected`` window event from ``lib/api.ts``. A stale tab
+  // whose ``me.deletion_scheduled_at`` cache was cleared elsewhere would
+  // otherwise show a generic toast. Invalidate ``["me"]`` here so the
+  // ``DeletionLockBanner`` surfaces on the next render instead.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => {
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    };
+    window.addEventListener("deletion-lock-detected", handler);
+    return () => {
+      window.removeEventListener("deletion-lock-detected", handler);
+    };
+  }, [queryClient]);
+
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange={false}>
       <QueryClientProvider client={queryClient}>

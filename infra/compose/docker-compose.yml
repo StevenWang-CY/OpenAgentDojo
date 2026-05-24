@@ -204,6 +204,96 @@ services:
     # apps/api/app/workers/queue.py — coordinated by tests/test_queue_name.py.
     command: ["sh", "-c", "rq worker --url $${REDIS_URL} provision"]
 
+  stale-exports-cron:
+    # Daily sweeper for data-export rows wedged in ``running`` state past
+    # 15 minutes (P1-6). Almost always residue from a crashed/OOM-killed
+    # RQ worker — left untouched the row blocks the user from kicking off
+    # a fresh export (the "one in flight per user" guard treats it as
+    # still alive). The script flips them to ``failed`` with
+    # ``error='worker_lost'`` so the FE can render a retry CTA.
+    image: agentarena/api:dev
+    container_name: agentarena-stale-exports
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://arena:arena@postgres:5432/arena
+      SYNC_DATABASE_URL: postgresql://arena:arena@postgres:5432/arena
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      MISSIONS_ROOT: /missions
+    volumes:
+      - ../../missions:/missions:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "stale-exports-cron: scheduling daily sweep at 03:15 UTC"
+        while true; do
+          now=$$(date -u +%s)
+          # Stagger 15 minutes after deletion-grace so the two sweeps
+          # don't fight for the same DB connection at 03:00 sharp.
+          target=$$(date -u -d "tomorrow 03:15" +%s 2>/dev/null || date -u -v+1d -v3H -v15M -v0S +%s)
+          sleep_for=$$(( target - now ))
+          if [ $$sleep_for -le 0 ]; then sleep_for=60; fi
+          echo "stale-exports-cron: next run in $${sleep_for}s"
+          sleep $$sleep_for
+          echo "stale-exports-cron: starting sweep"
+          uv run python -m scripts.sweep_stale_exports || echo "stale-exports-cron: sweep raised — retrying tomorrow"
+        done
+
+  deletion-grace-cron:
+    # Daily sweeper for accounts past their 7-day deletion grace (P1-1).
+    # Uses the same image as the API so it can import ``app.workers.*``
+    # without an extra Dockerfile. The container's ENTRYPOINT runs the
+    # script every day at 03:00 UTC and re-execs itself on failure
+    # (``while true``) so a single transient DB blip doesn't disable the
+    # sweeper until the next pod restart.
+    #
+    # The script emits ``account_deletion_grace_run_total{result}`` per
+    # invocation; alerting wires off "no success tick in 36h".
+    image: agentarena/api:dev
+    container_name: agentarena-deletion-grace
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://arena:arena@postgres:5432/arena
+      SYNC_DATABASE_URL: postgresql://arena:arena@postgres:5432/arena
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_ACCESS_KEY_ID: arena-minio
+      S3_SECRET_ACCESS_KEY: arena-minio-secret
+      S3_BUCKET: arena-artifacts
+      MISSIONS_ROOT: /missions
+    volumes:
+      - ../../missions:/missions:ro
+    # Naive shell loop instead of cron — same effect with one fewer
+    # moving part. Sleeps until 03:00 UTC, runs the sweeper, repeats.
+    # Output goes to the container's stdout so docker logs / Loki pick
+    # it up alongside every other service.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "deletion-grace-cron: scheduling daily sweep at 03:00 UTC"
+        while true; do
+          now=$$(date -u +%s)
+          target=$$(date -u -d "tomorrow 03:00" +%s 2>/dev/null || date -u -v+1d -v3H -v0M -v0S +%s)
+          sleep_for=$$(( target - now ))
+          if [ $$sleep_for -le 0 ]; then sleep_for=60; fi
+          echo "deletion-grace-cron: next run in $${sleep_for}s"
+          sleep $$sleep_for
+          echo "deletion-grace-cron: starting sweep"
+          uv run python -m scripts.process_deletion_grace || echo "deletion-grace-cron: sweep raised — counter labelled failed; retrying tomorrow"
+        done
+
   web:
     build:
       context: ../..

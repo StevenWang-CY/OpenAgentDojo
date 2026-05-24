@@ -25,6 +25,7 @@ from app.healthz import router as health_router
 from app.middleware import (
     BannedCommandsMiddleware,
     CSRFMiddleware,
+    DeletionLockMiddleware,
     RateLimitMiddleware,
     RequestIdMiddleware,
     SecurityHeadersMiddleware,
@@ -57,6 +58,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Set on app.state so create_app() can be invoked multiple times in tests
     # and each instance gets its own uptime clock.
     app.state.boot_at = time.time()
+
+    # P1-5 — resolve the deletion-cancel route's effective path NOW so the
+    # middleware never has to fall back to a hard-coded literal that could
+    # drift from a router prefix change. ``url_path_for`` raises if the
+    # named route is missing, which is the loud failure mode we want at
+    # boot rather than a silent self-403 at runtime.
+    app.state.deletion_cancel_path = app.url_path_for("post_me_delete_cancel")
+
+    # P2 bundle — warn (don't refuse) when dev env has an HTTPS web_origin.
+    # Almost always a misconfigured deploy that left ARENA_ENV=development
+    # while pointing at a real domain — cookies stay non-secure, the dev
+    # IP-keyed auth fallback may be live, and the validator wouldn't fire
+    # because it only enforces in staging/production. Surface it loudly.
+    if settings.arena_env == "development" and (settings.web_origin or "").lower().startswith(
+        "https://"
+    ):
+        logger.warning(
+            "config sanity: ARENA_ENV=development but WEB_ORIGIN={!r} starts with https://. "
+            "This usually means a deploy left ARENA_ENV unset. Double-check.",
+            settings.web_origin,
+        )
 
     # Startup log — never include secrets. Provider is logged only when
     # configured so that misconfiguration is visible at boot.
@@ -143,8 +165,13 @@ def create_app() -> FastAPI:
     #   4. CORS            — preflight/Origin handling
     #   5. RateLimit       — per-route token bucket
     #   6. CSRF            — double-submit cookie check on unsafe methods
-    #   7. BannedCommands  — body inspection for /commands
+    #   7. DeletionLock    — P0-6: 403 mutating requests while account is
+    #                        scheduled for deletion (except cancel)
+    #   8. BannedCommands  — body inspection for /commands
     app.add_middleware(BannedCommandsMiddleware)
+    # DeletionLock runs INSIDE CSRF (so forged requests are dropped first
+    # and can't fingerprint deletion-scheduled accounts via the 403 body).
+    app.add_middleware(DeletionLockMiddleware)
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(

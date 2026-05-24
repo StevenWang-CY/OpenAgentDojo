@@ -22,6 +22,7 @@ OpenTelemetry:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
@@ -140,6 +141,101 @@ mission_retries_total = Counter(
     ["mission_id"],
     registry=REGISTRY,
 )
+# P0-5 — incremented by POST /me/consent for every persisted consent row.
+# Labels distinguish kind (analytics|functional|marketing) and granted
+# (true|false) so the consent funnel can be split out per-kind in dashboards
+# (e.g. "what fraction of users grant analytics on first prompt?").
+consent_recorded_total = Counter(
+    "consent_recorded_total",
+    "Consent records inserted via POST /me/consent (P0-5).",
+    ["kind", "granted"],  # granted ∈ {"true", "false"}
+    registry=REGISTRY,
+)
+# P0-6 — account self-service instrumentation. Each counter increments
+# once per terminal route transition. Operators care about the rates here
+# both as health signals (export job failures, deletion processed counts)
+# and as cohort signals (how many users exercise the right to be forgotten).
+email_change_requested_total = Counter(
+    "account_email_change_requested_total",
+    "POST /me/email/change requests that passed validation and queued a magic link.",
+    registry=REGISTRY,
+)
+email_change_confirmed_total = Counter(
+    "account_email_change_confirmed_total",
+    "POST /me/email/confirm requests that successfully landed the new email.",
+    registry=REGISTRY,
+)
+account_sign_out_all_total = Counter(
+    "account_sign_out_all_total",
+    "POST /me/sessions/sign-out-all requests that bumped the session epoch.",
+    registry=REGISTRY,
+)
+data_exports_requested_total = Counter(
+    "account_data_exports_requested_total",
+    "Data-export rows transitioning into the labelled status.",
+    # status ∈ {queued, ready, failed}. Incremented on initial enqueue
+    # (queued) and on the worker's terminal transition (ready / failed).
+    ["status"],
+    registry=REGISTRY,
+)
+account_deletions_scheduled_total = Counter(
+    "account_deletions_scheduled_total",
+    "POST /me/delete requests that armed the 7-day grace timer.",
+    registry=REGISTRY,
+)
+account_deletions_cancelled_total = Counter(
+    "account_deletions_cancelled_total",
+    "POST /me/delete/cancel requests that cleared a scheduled deletion.",
+    registry=REGISTRY,
+)
+account_deletions_processed_total = Counter(
+    "account_deletions_processed_total",
+    "Accounts hard-deleted by the scheduled grace worker.",
+    registry=REGISTRY,
+)
+# P1-1 — emits one tick per cron invocation of process_deletion_grace.py.
+# ``result`` is one of {success, partial, failed}:
+#   * ``success`` — every eligible row hard-deleted cleanly
+#   * ``partial`` — at least one row processed, at least one raised
+#   * ``failed``  — no rows processed (DB unreachable / import broke)
+# Lets ops detect a wedged sweeper even when "0 rows" is the legitimate
+# expected outcome on most days.
+account_deletion_grace_run_total = Counter(
+    "account_deletion_grace_run_total",
+    "Invocations of the account-deletion grace sweeper (P1-1).",
+    ["result"],  # result ∈ {"success", "partial", "failed"}
+    registry=REGISTRY,
+)
+# P1-5 — incremented by DeletionLockMiddleware whenever a mutating request
+# is rejected with 403 because the caller's account is mid-grace. Labelled
+# by the request path so a sudden spike on one endpoint surfaces a FE
+# regression (e.g. an /account page that retries past the lock).
+deletion_lock_blocked_total = Counter(
+    "deletion_lock_blocked_total",
+    "Mutating requests blocked by the deletion-grace lockout middleware.",
+    ["path"],
+    registry=REGISTRY,
+)
+# P1-7 — incremented by consume_email_change_token on every early-return
+# branch so ops can split benign replays (one user double-clicking the
+# email) from suspicious patterns (unknown tokens, wrong-purpose tokens).
+email_change_token_rejected_total = Counter(
+    "email_change_token_rejected_total",
+    "Email-change tokens that consume_email_change_token refused.",
+    ["reason"],  # reason ∈ {"unknown", "already_used", "wrong_purpose", "expired"}
+    registry=REGISTRY,
+)
+# P2 bundle — incremented by create_magic_link when a sign-in attempt is
+# suppressed because the requested address is currently reserved as
+# pending_email on another account (reverse-direction TOCTOU defence).
+# Distinct from email_change_token_rejected_total because this fires on
+# the request side, not on the consume side.
+magic_link_suppressed_total = Counter(
+    "magic_link_suppressed_total",
+    "Magic-link requests suppressed before any token was minted.",
+    ["reason"],  # reason ∈ {"pending_email_in_flight"} today; extensible.
+    registry=REGISTRY,
+)
 
 
 def metrics_asgi_app():
@@ -168,6 +264,34 @@ _REDACT_FIELDS = frozenset(
 
 _REDACTED = "[REDACTED]"
 
+# Regex pairs applied to the fully-rendered ``record["message"]`` string so
+# even positional-argument log calls (``logger.info("for {}", email)``)
+# don't leak PII / bearer credentials. The order matters: token redaction
+# runs first so an email-like token query value gets masked as a token, not
+# accidentally re-classified as an email.
+_TOKEN_QUERY_RE = re.compile(r"(?i)(token=)[^&\s]+")
+_EMAIL_LIKE_RE = re.compile(
+    # Tight enough to avoid catching version strings ("v1.2.3@host") while
+    # still matching every realistic RFC-5322 local-part the magic-link
+    # flow accepts (letters, digits, plus/period/hyphen/underscore).
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+)
+
+
+def _scrub_message(text: str) -> str:
+    """Strip ``?token=...`` values and email-shaped tokens from ``text``.
+
+    Applied to every log line before it leaves the process so a positional
+    interpolation of an email or a magic-link URL never lands in the log
+    aggregator verbatim. Idempotent: re-running on already-redacted text is
+    a no-op (the placeholders themselves never match the regexes).
+    """
+    if not text:
+        return text
+    text = _TOKEN_QUERY_RE.sub(r"\1[redacted]", text)
+    text = _EMAIL_LIKE_RE.sub("[redacted-email]", text)
+    return text
+
 
 def _redact(obj: Any, depth: int = 0) -> Any:
     """Walk dicts/lists/tuples, masking values for sensitive keys.
@@ -192,9 +316,19 @@ def _redact(obj: Any, depth: int = 0) -> Any:
 
 
 def _redact_filter(record: Any) -> bool:
-    """Loguru filter: redact sensitive fields out of ``record['extra']``.
+    """Loguru filter: redact sensitive fields + scrub the rendered message.
 
     Returns True so the record continues through the pipeline.
+
+    Two scrubs run here so a positional log argument can't bypass the
+    structured-field redaction:
+
+      1. ``record["extra"]`` — sensitive dict / list fields by key name.
+      2. ``record["message"]`` — regex pass over the formatted message
+         text to strip ``?token=...`` query values and email-shaped
+         tokens. This catches the common pattern ``logger.info("for {}",
+         email)`` where the email is interpolated positionally and
+         therefore never lands in ``extra``.
 
     ``record`` is loguru's ``Record`` type, which behaves like a mapping. We
     accept ``Any`` here because loguru's typed signature uses an internal
@@ -203,6 +337,9 @@ def _redact_filter(record: Any) -> bool:
     extra = record.get("extra")
     if isinstance(extra, dict) and extra:
         record["extra"] = _redact(extra)
+    message = record.get("message")
+    if isinstance(message, str) and message:
+        record["message"] = _scrub_message(message)
     return True
 
 
@@ -216,6 +353,9 @@ def _json_format(record: Any) -> str:
     extra = record.get("extra") or {}
     if extra:
         record["extra"] = _redact(extra)
+    message = record.get("message")
+    if isinstance(message, str):
+        record["message"] = _scrub_message(message)
     payload = {
         "timestamp": record["time"].isoformat(),
         "level": record["level"].name,

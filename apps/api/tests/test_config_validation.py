@@ -26,6 +26,10 @@ def _prod_env(monkeypatch, **overrides) -> None:
         # cert verification is open to passive MITM on real SMTP relays.
         "SANDBOX_DRIVER": "docker",
         "SMTP_VERIFY_CERTS": "true",
+        # P0-5 — consent records hash the remote IP with this salt; an
+        # empty or dev-prefixed value defeats the hash. 32+ chars is the
+        # validator's floor.
+        "IP_HASH_SALT": "c" * 48,
     }
     for k, v in {**base, **overrides}.items():
         monkeypatch.setenv(k, v)

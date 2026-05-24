@@ -277,6 +277,26 @@ function render(event: SupervisionEvent): RenderedEvent {
             ? `${event.payload.seconds_into_session}s into session`
             : "Submitted via give-up affordance",
       };
+    // P0-5 — consent transitions are *account-scoped*, not session-scoped.
+    // They live in their own ``consent_events`` table on the backend, so
+    // the workspace timeline should never receive one in practice. The
+    // cases are present only to keep the ``unreachable`` exhaustiveness
+    // assertion happy; in the unlikely event a row leaks through (e.g. a
+    // legacy event-merge view), we render a non-noisy entry.
+    case "consent.granted":
+      return {
+        icon: CheckCircle2,
+        tone: "neutral",
+        label: "Consent granted",
+        detail: event.payload.kind,
+      };
+    case "consent.revoked":
+      return {
+        icon: XCircle,
+        tone: "neutral",
+        label: "Consent revoked",
+        detail: event.payload.kind,
+      };
     default:
       return unreachable(event);
   }

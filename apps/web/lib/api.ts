@@ -3,8 +3,16 @@ import type {
   ApiErrorBody,
   CommandInput,
   CommandRun,
+  ConsentKind,
+  ConsentState,
   ContextSelection,
   CreateSessionInput,
+  DataExport,
+  DeleteAccountRequest,
+  DeletionScheduledRead,
+  DisplayNameUpdate,
+  EmailChangeConfirm,
+  EmailChangeRequest,
   FileContent,
   FileTreeNode,
   MagicLinkInput,
@@ -201,6 +209,28 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       body && typeof body.detail === "string"
         ? body.detail
         : `HTTP ${response.status}`;
+    // FE-audit fix — when the backend's DeletionLockMiddleware blocks a
+    // mutating request because ``deletion_scheduled_at`` is set on the
+    // caller, it returns 403 with ``{code: "deletion_scheduled",
+    // scheduled_for}``. A stale tab that doesn't know about the lock would
+    // otherwise show a generic "couldn't update" toast. Fire a window-level
+    // event so the QueryClient host can invalidate ``["me"]`` once and
+    // surface the lock banner; we still throw the ApiError so callers can
+    // branch on it locally (e.g. close a dialog optimistically).
+    if (
+      response.status === 403 &&
+      body?.code === "deletion_scheduled" &&
+      typeof window !== "undefined"
+    ) {
+      try {
+        window.dispatchEvent(
+          new CustomEvent("deletion-lock-detected", { detail: body }),
+        );
+      } catch {
+        // Defensive: older browsers / jsdom builds without CustomEvent
+        // shouldn't break the API path.
+      }
+    }
     // Capture Retry-After on 429 so the rate-limit toast can render an
     // accurate "try again in Ns" hint instead of a generic 429.
     let retryAfterSeconds: number | null = null;
@@ -248,6 +278,155 @@ export const auth = {
    */
   me(signal?: AbortSignal): Promise<User> {
     return request<User>("/auth/me", { signal });
+  },
+  /**
+   * GET /api/v1/auth/me/consent — the caller's latest decision per kind.
+   *
+   * Returns the structural ``ConsentState`` shape: each of
+   * ``analytics``/``functional``/``marketing`` is either a ``ConsentRecord``
+   * or ``null`` (no row recorded yet). Requires authentication; anonymous
+   * callers should not hit this — the cookie banner is the local-only
+   * source of truth for unsigned-in users.
+   */
+  getConsent(signal?: AbortSignal): Promise<ConsentState> {
+    return request<ConsentState>("/auth/me/consent", { signal });
+  },
+  /**
+   * POST /api/v1/auth/me/consent — append a new consent row. The backend
+   * stamps the server-side ``consent_policy_version`` itself; ``input`` is
+   * just ``{kind, granted}``. 204 No Content on success.
+   *
+   * CSRF-required (handled transparently by the ``request`` wrapper). On
+   * 401 the caller should silently no-op — the localStorage write is the
+   * authoritative anonymous-path record.
+   */
+  setConsentRecord(
+    input: { kind: ConsentKind; granted: boolean },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return request<void>("/auth/me/consent", {
+      method: "POST",
+      body: input,
+      signal,
+    });
+  },
+};
+
+// ── Account self-service (P0-6) ─────────────────────────────────────────────
+//
+// Every endpoint below sits under ``/api/v1/auth/me/*`` and requires the
+// caller to be authenticated. The mutating endpoints are also guarded by the
+// "deletion-scheduled lockout" middleware on the backend: while the caller's
+// ``deletion_scheduled_at`` is set, every POST/PATCH/PUT/DELETE except
+// ``/me/delete/cancel`` returns 403 ``{code: "deletion_scheduled",
+// scheduled_for}``. The FE surfaces that state via ``DeletionLockBanner`` so
+// the user understands why other actions are 403-ing.
+
+export const account = {
+  /**
+   * PATCH /api/v1/auth/me — partial profile update.
+   *
+   * Only ``display_name`` is mutable; the backend rejects ``handle`` changes
+   * at the schema layer (``extra="forbid"``) so attempting to send one yields
+   * a typed 422, not a silent no-op. On success the response is the fresh
+   * ``UserRead``; the caller should invalidate ``["me"]`` so the header and
+   * any other surfaces re-render off the new value.
+   */
+  updateProfile(input: DisplayNameUpdate): Promise<User> {
+    return request<User>("/auth/me", { method: "PATCH", body: input });
+  },
+  /**
+   * POST /api/v1/auth/me/email/change — step 1 of the two-step email-change
+   * flow. Sets ``users.pending_email`` to the requested address and emails a
+   * magic-link with ``kind=email_change`` to the NEW address. 409 if the
+   * target email is already in another account's ``email`` or
+   * ``pending_email``. 204 on success — the FE renders the pending banner
+   * from the next ``/me`` payload (which now carries ``pending_email``).
+   */
+  requestEmailChange(input: EmailChangeRequest): Promise<void> {
+    return request<void>("/auth/me/email/change", {
+      method: "POST",
+      body: input,
+    });
+  },
+  /**
+   * POST /api/v1/auth/me/email/confirm — step 2 of the email-change flow.
+   * The magic-link landing page (``/auth/email-confirm``) POSTs the token
+   * here on mount. On success the backend atomically swaps ``email`` ⇄
+   * ``pending_email``, rotates ``session_epoch`` (signing out every other
+   * device), and mints a fresh session cookie for the caller. Returns the
+   * refreshed ``UserRead``.
+   *
+   * Accepts an ``AbortSignal`` so the email-confirm page can cancel the
+   * in-flight POST on unmount — otherwise navigating away mid-flight leaks
+   * the request and the cookie-swap can race the new page's auth state.
+   */
+  confirmEmailChange(
+    input: EmailChangeConfirm,
+    signal?: AbortSignal,
+  ): Promise<User> {
+    return request<User>("/auth/me/email/confirm", {
+      method: "POST",
+      body: input,
+      signal,
+    });
+  },
+  /**
+   * POST /api/v1/auth/me/sessions/sign-out-all — invalidate every existing
+   * session by rotating ``session_epoch`` and re-mint a fresh cookie for the
+   * caller. The caller stays signed-in on the current device. 204.
+   */
+  signOutAll(): Promise<void> {
+    return request<void>("/auth/me/sessions/sign-out-all", { method: "POST" });
+  },
+  /**
+   * POST /api/v1/auth/me/data-export — kick an async export job. 202 with the
+   * ``DataExportRead`` envelope (``status: 'queued'``). 409 ``one-in-flight``
+   * if a queued/running export already exists — the FE shows the existing
+   * export instead of allowing a duplicate.
+   */
+  requestExport(): Promise<DataExport> {
+    return request<DataExport>("/auth/me/data-export", { method: "POST" });
+  },
+  /**
+   * GET /api/v1/auth/me/data-export/{id} — poll a specific export's status.
+   * The ``DataExportPanel`` polls this every 2s with a 60-poll ceiling
+   * (2 minutes — long enough for typical bundles, short enough that a stuck
+   * worker doesn't burn battery forever). ``download_url`` is populated only
+   * when ``status='ready'`` and the export hasn't expired.
+   */
+  getExport(id: string, signal?: AbortSignal): Promise<DataExport> {
+    return request<DataExport>(
+      `/auth/me/data-export/${encodeURIComponent(id)}`,
+      { signal },
+    );
+  },
+  /**
+   * POST /api/v1/auth/me/delete — schedule account deletion on a 7-day grace
+   * timer. Body re-types the user's email to confirm intent (GitHub-style
+   * friction). On success the backend stamps
+   * ``users.deletion_scheduled_at = now() + 7 days``, sends a confirmation
+   * email with a cancel link, and returns ``{scheduled_for}``. Subsequent
+   * POSTs (except ``/me/delete/cancel``) start returning 403 with
+   * ``code: "deletion_scheduled"`` until the user cancels or the grace
+   * elapses.
+   */
+  scheduleDeletion(
+    input: DeleteAccountRequest,
+  ): Promise<DeletionScheduledRead> {
+    return request<DeletionScheduledRead>("/auth/me/delete", {
+      method: "POST",
+      body: input,
+    });
+  },
+  /**
+   * POST /api/v1/auth/me/delete/cancel — cancel a pending deletion during
+   * the 7-day grace. 204 on success. 410 if the grace has already elapsed
+   * (the daily worker has hard-deleted the account); the caller cannot
+   * recover and the FE should sign them out.
+   */
+  cancelDeletion(): Promise<void> {
+    return request<void>("/auth/me/delete/cancel", { method: "POST" });
   },
 };
 

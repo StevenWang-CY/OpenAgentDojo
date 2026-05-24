@@ -103,6 +103,220 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
+    /**
+     * Update the caller's profile (P0-6 — display_name only)
+     * @description Update the caller's mutable profile fields.
+     *
+     *     Currently the only mutable field is ``display_name`` (handle changes
+     *     are not supported in MVP per P0_DESIGN §P0-6 "Open decisions").
+     *     The schema's ``extra='forbid'`` makes a client that POSTs ``handle``
+     *     fail at validation with a 422 + a typed FE error.
+     */
+    patch: operations['patch_me_api_v1_auth_me_patch'];
+    trace?: never;
+  };
+  '/api/v1/auth/me/consent': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Return the caller's most-recent consent decision per kind (P0-5)
+     * @description Return the latest ``UserConsent`` per kind for the authenticated user.
+     *
+     *     Each of the three kinds (``analytics``, ``functional``, ``marketing``)
+     *     surfaces either the most-recent decision (by ``granted_at``) or
+     *     ``None`` when no row exists. The endpoint is read-only and side-effect
+     *     free; the FE polls it on app boot to decide whether the cookie banner
+     *     needs to render.
+     */
+    get: operations['get_me_consent_api_v1_auth_me_consent_get'];
+    put?: never;
+    /**
+     * Record a consent decision (append-only audit trail) (P0-5)
+     * @description Insert a new ``UserConsent`` row + emit a ``consent.*`` event.
+     *
+     *     Append-only by design: replaying a POST writes a new row rather than
+     *     mutating an existing one, so the FULL consent history is recoverable
+     *     for a regulator. The server stamps ``version`` from
+     *     ``settings.consent_policy_version`` — the client cannot influence the
+     *     recorded policy version.
+     *
+     *     The supervision-style event lands on the dedicated ``account_events``
+     *     table (the platform's main ``supervision_events`` table requires a
+     *     NOT NULL session FK, and consent is account-scoped, not session-scoped).
+     *     The same table now also carries the P0-6 ``account.*`` events — see
+     *     :class:`AccountEvent` for the full event-type allow-list.
+     */
+    post: operations['post_me_consent_api_v1_auth_me_consent_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/data-export': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Kick off an asynchronous account data-export job (P0-6)
+     * @description Insert a ``queued`` row and enqueue the export worker.
+     *
+     *     Returns 409 if there is already a ``queued`` or ``running`` export for
+     *     this user — the partial unique index enforces this at the DB layer on
+     *     Postgres, but we also check at the application layer for SQLite (which
+     *     ignores ``WHERE`` on unique indexes) AND as defence-in-depth.
+     *
+     *     If the RQ queue is unreachable we fall back to running the worker
+     *     inline in the request loop — same pattern as ``provision_in_process``.
+     */
+    post: operations['post_me_data_export_api_v1_auth_me_data_export_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/data-export/{export_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Poll a data-export job and (if ready) get a signed download URL (P0-6) */
+    get: operations['get_me_data_export_api_v1_auth_me_data_export__export_id__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/delete': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Schedule the caller's account for hard deletion in 7 days (P0-6) */
+    post: operations['post_me_delete_api_v1_auth_me_delete_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/delete/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Cancel a pending account deletion during the grace window (P0-6) */
+    post: operations['post_me_delete_cancel_api_v1_auth_me_delete_cancel_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/email/change': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Start the two-step email-change flow (P0-6)
+     * @description Set ``users.pending_email`` and email a magic link to the NEW address.
+     *
+     *     Validation:
+     *
+     *     * New email must be syntactically valid (Pydantic ``EmailStr``).
+     *     * New email must not equal an existing ``users.email`` or
+     *       ``users.pending_email`` of any account (409 on collision).
+     *     * The caller's account must not be scheduled for deletion (the
+     *       :class:`DeletionLockMiddleware` enforces this — by the time this
+     *       handler runs, ``user.deletion_scheduled_at`` is guaranteed NULL).
+     */
+    post: operations['post_me_email_change_api_v1_auth_me_email_change_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/email/confirm': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Confirm an in-flight email change (P0-6)
+     * @description Consume the email-change token and land the new email atomically.
+     *
+     *     Server-side checks:
+     *
+     *     * Token must be valid + unused + not expired (consume_email_change_token
+     *       handles all three).
+     *     * Token's ``user_id`` must equal the calling user's id.
+     *     * ``user.pending_email`` must still be set (cleared by another path
+     *       would mean the user already confirmed via a different device).
+     *
+     *     After the email lands we rotate the session epoch — every cookie minted
+     *     before this moment is now invalid except the one we mint right here.
+     */
+    post: operations['post_me_email_confirm_api_v1_auth_me_email_confirm_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/sessions/sign-out-all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Invalidate every other live session for the caller (P0-6)
+     * @description Bump the user's session_epoch and mint a fresh cookie for the caller.
+     *
+     *     Other devices' cookies will fail verification on their next request.
+     *     The current caller keeps their session via the fresh cookie attached
+     *     to the response.
+     */
+    post: operations['post_me_sign_out_all_api_v1_auth_me_sessions_sign_out_all_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
     patch?: never;
     trace?: never;
   };
@@ -824,6 +1038,50 @@ export interface components {
       stdout: string;
     };
     /**
+     * ConsentRecord
+     * @description Latest persisted consent decision for a single kind.
+     */
+    ConsentRecord: {
+      /**
+       * At
+       * Format: date-time
+       */
+      at: string;
+      /** Granted */
+      granted: boolean;
+      /** Version */
+      version: number;
+    };
+    /**
+     * ConsentState
+     * @description Per-kind snapshot of the user's most recent decision (or None).
+     *
+     *     A field is ``None`` when no row exists yet for that kind. Once the
+     *     user posts at least one decision (granted or revoked), the field
+     *     surfaces the most recent record.
+     */
+    ConsentState: {
+      analytics?: components['schemas']['ConsentRecord'] | null;
+      functional?: components['schemas']['ConsentRecord'] | null;
+      marketing?: components['schemas']['ConsentRecord'] | null;
+    };
+    /**
+     * ConsentUpdate
+     * @description POST body — kind to record and whether the user granted or revoked.
+     *
+     *     The server stamps ``version`` from settings (the current policy
+     *     version) and never trusts a client-supplied version field.
+     */
+    ConsentUpdate: {
+      /** Granted */
+      granted: boolean;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: 'analytics' | 'functional' | 'marketing';
+    };
+    /**
      * ContextSelection
      * @description The set of artifacts the user has selected as relevant for the turn.
      */
@@ -836,6 +1094,92 @@ export interface components {
       logs?: string[];
       /** Tests */
       tests?: string[];
+    };
+    /**
+     * DataExportRead
+     * @description Serialised :class:`app.models.data_export.DataExport`.
+     *
+     *     ``download_url`` is populated by the route only when the export is in
+     *     ``ready`` state AND has not yet expired — a presigned URL signed in
+     *     real time so the URL's lifetime cannot outlive the export's lifetime.
+     */
+    DataExportRead: {
+      /** Bytes Total */
+      bytes_total?: number | null;
+      /** Download Url */
+      download_url?: string | null;
+      /** Error */
+      error?: string | null;
+      /** Expires At */
+      expires_at?: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Ready At */
+      ready_at?: string | null;
+      /**
+       * Requested At
+       * Format: date-time
+       */
+      requested_at: string;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: 'queued' | 'running' | 'ready' | 'failed' | 'expired';
+    };
+    /**
+     * DeleteAccountRequest
+     * @description Body for ``POST /me/delete`` — re-type the email to confirm intent.
+     */
+    DeleteAccountRequest: {
+      /**
+       * Confirm Email
+       * Format: email
+       */
+      confirm_email: string;
+    };
+    /**
+     * DeletionLockError
+     * @description 403 envelope returned by :class:`DeletionLockMiddleware`.
+     *
+     *     Pydantic model so the OpenAPI surface declares the exact shape every
+     *     mutating P0-6 endpoint may return while the account is mid-grace. The
+     *     FE keys off ``code == 'deletion_scheduled'`` to render the "your
+     *     account is scheduled for deletion" banner instead of a generic 403.
+     *
+     *     ``scheduled_for`` is included so the FE can render the same countdown
+     *     used on the ``/account`` page without re-fetching ``/auth/me``.
+     */
+    DeletionLockError: {
+      /**
+       * Code
+       * @constant
+       */
+      code: 'deletion_scheduled';
+      /**
+       * Detail
+       * @description Human-readable detail string. The FE keys off ``code`` for routing decisions; ``detail`` is only surfaced to support.
+       */
+      detail: string;
+      /**
+       * Scheduled For
+       * Format: date-time
+       */
+      scheduled_for: string;
+    };
+    /**
+     * DeletionScheduledRead
+     * @description Response body for ``POST /me/delete``.
+     */
+    DeletionScheduledRead: {
+      /**
+       * Scheduled For
+       * Format: date-time
+       */
+      scheduled_for: string;
     };
     /**
      * DiffOpenedBody
@@ -862,6 +1206,22 @@ export interface components {
       score: number;
     };
     /**
+     * DisplayNameUpdate
+     * @description Body for ``PATCH /me``.
+     *
+     *     ``handle`` is intentionally absent: per P0_DESIGN §P0-6 ("Open
+     *     decisions" → "Handle changes"), the public profile URL is stable, so
+     *     we reject handle changes at the schema layer rather than rejecting at
+     *     the route layer (which gives the FE a typed error instead of a 422).
+     */
+    DisplayNameUpdate: {
+      /**
+       * Display Name
+       * @description New display name (≤120 chars, no leading/trailing whitespace).
+       */
+      display_name?: string | null;
+    };
+    /**
      * EarnedBadgeRead
      * @description Badge plus when/where it was earned (from ``user_badges``).
      */
@@ -881,6 +1241,25 @@ export interface components {
       session_id?: string | null;
       /** Title */
       title: string;
+    };
+    /**
+     * EmailChangeConfirm
+     * @description Body for ``POST /me/email/confirm`` — the raw magic-link token.
+     */
+    EmailChangeConfirm: {
+      /** Token */
+      token: string;
+    };
+    /**
+     * EmailChangeRequest
+     * @description Body for ``POST /me/email/change``.
+     */
+    EmailChangeRequest: {
+      /**
+       * New Email
+       * Format: email
+       */
+      new_email: string;
     };
     /**
      * FailureModeMastery
@@ -1506,6 +1885,8 @@ export interface components {
       created_at: string;
       /** Csrf Token */
       csrf_token: string;
+      /** Deletion Scheduled At */
+      deletion_scheduled_at?: string | null;
       /** Display Name */
       display_name?: string | null;
       /**
@@ -1524,6 +1905,8 @@ export interface components {
       id: string;
       /** Last Login At */
       last_login_at?: string | null;
+      /** Pending Email */
+      pending_email?: string | null;
       /** Tutorial Completed At */
       tutorial_completed_at?: string | null;
       /**
@@ -1720,6 +2103,335 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['UserRead'];
+        };
+      };
+    };
+  };
+  patch_me_api_v1_auth_me_patch: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DisplayNameUpdate'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserRead'];
+        };
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_me_consent_api_v1_auth_me_consent_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ConsentState'];
+        };
+      };
+    };
+  };
+  post_me_consent_api_v1_auth_me_consent_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ConsentUpdate'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_me_data_export_api_v1_auth_me_data_export_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DataExportRead'];
+        };
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
+        };
+      };
+    };
+  };
+  get_me_data_export_api_v1_auth_me_data_export__export_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        export_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DataExportRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_me_delete_api_v1_auth_me_delete_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DeleteAccountRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionScheduledRead'];
+        };
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_me_delete_cancel_api_v1_auth_me_delete_cancel_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  post_me_email_change_api_v1_auth_me_email_change_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['EmailChangeRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_me_email_confirm_api_v1_auth_me_email_confirm_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['EmailChangeConfirm'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserRead'];
+        };
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
+        };
+      };
+      /** @description The email change can't be confirmed — either there is no pending change (``no_pending_email``) or the address was claimed by another account before confirm (``email_taken_in_flight``). */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_me_sign_out_all_api_v1_auth_me_sessions_sign_out_all_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
         };
       };
     };

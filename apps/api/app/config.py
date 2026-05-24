@@ -72,6 +72,22 @@ class Settings(BaseSettings):
     sandbox_max_concurrent: int = 10
     sandbox_timeout_seconds: int = 1800
 
+    # --- P0-5 cookie / privacy consent (legal pages) ---
+    # Bump CONSENT_POLICY_VERSION any time the cookie/privacy policy text
+    # changes. Stored copies below this number are treated as stale and the
+    # FE banner re-prompts the user to re-confirm. The server stamps every
+    # new POST /me/consent row with this value so the audit trail records
+    # exactly which policy revision the user agreed to.
+    consent_policy_version: int = Field(default=1, ge=1)
+    # Salt mixed into the SHA-256 over the remote address before persisting
+    # to ``user_consents.ip_address_hash``. Hashing the IP keeps the column
+    # useful for "same source as last decision?" abuse detection without
+    # storing raw PII; salting prevents a database leak from being trivially
+    # reversed via a precomputed table. Required in staging/production
+    # (enforced by ``_validate_for_environment``); dev defaults to a fixed
+    # value so local runs are deterministic.
+    ip_hash_salt: str | None = Field(default="dev-ip-hash-salt-change-me")
+
     # --- P0-4 give-up affordance ---
     # Soft-block window before the give-up affordance is available. ADR 0010
     # locks the default at 600 seconds (10 minutes); ops can override via the
@@ -79,6 +95,28 @@ class Settings(BaseSettings):
     # override (``mission.give_up_after_seconds`` in mission.yaml) would
     # read this as the global fallback.
     give_up_min_seconds: int = Field(default=600, ge=0)
+
+    # --- P0-6 account self-service ---
+    # Number of days a generated data export remains downloadable before
+    # the signed URL expires and the row flips to ``expired``. Capped at 30
+    # so signed URLs don't outlive a user's "I changed my mind" window —
+    # short TTLs are safer.
+    data_export_ttl_days: int = Field(default=7, ge=1, le=30)
+    # Number of days between ``POST /me/delete`` and the worker's hard-
+    # delete pass. The user can cancel at any point during the window via
+    # ``POST /me/delete/cancel``. Long enough to forgive accidental clicks,
+    # short enough to honour "right to be forgotten" promptly.
+    account_deletion_grace_days: int = Field(default=7, ge=1, le=30)
+    # Email domain stamped onto tombstone rows when the deletion worker
+    # hard-deletes an account. MUST be a domain you control + intentionally
+    # cannot receive mail (so the tombstone email cannot collide with a
+    # real sign-up). The historical default matches the production
+    # placeholder; staging / dev can override to keep environments from
+    # ever sharing a tombstone identity.
+    deleted_tombstone_domain: str = Field(
+        default="deleted.openagentdojo.app",
+        min_length=4,
+    )
     # When True, the local driver runs ``setup_commands`` (e.g. ``pnpm install``)
     # at provision time. Default False because repo packs are pre-installed
     # (see plan §9.4); flip to True for any pack that ships *without* a
@@ -296,6 +334,22 @@ class Settings(BaseSettings):
             raise ValueError(
                 "SANDBOX_DRIVER must be 'docker' in staging/production "
                 "(the 'local' driver has no isolation)"
+            )
+
+        # ---- IP_HASH_SALT must be set + non-dev in staging/production ----
+        # The consent-record path SHA-256s ``salt + remote_addr`` before
+        # persisting; an empty or dev-prefixed salt would let an attacker
+        # who lifts the DB precompute a rainbow table over the IPv4 space.
+        salt = (self.ip_hash_salt or "").strip()
+        if not salt or salt.startswith("dev-"):
+            raise ValueError(
+                "IP_HASH_SALT must be set to a non-dev value in staging/production "
+                "(consent records hash the remote address with this salt; an empty "
+                "or dev-prefixed value defeats the hash)"
+            )
+        if len(salt) < 32:
+            raise ValueError(
+                "IP_HASH_SALT must be >=32 chars in staging/production"
             )
 
         # ---- SMTP TLS verification must be on ----
