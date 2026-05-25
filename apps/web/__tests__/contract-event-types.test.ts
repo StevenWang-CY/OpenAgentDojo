@@ -41,6 +41,8 @@ const KNOWN_BE_EVENT_TYPES = [
   "session.errored",
   "session.gave_up",
   "session.provision_failed",
+  // P0-12 — workspace reset to mission initial commit.
+  "session.reset",
   "session.started",
   "submission.failed",
   "submission.graded",

@@ -35,7 +35,13 @@ from app.models.user import User
 from app.observability import give_up_blocked_total, give_ups_total, mission_retries_total
 from app.schemas.auth import WsTokenRead
 from app.schemas.mission import MissionDetail
-from app.schemas.session import ContextSelection, SessionCreate, SessionDetail, SessionRead
+from app.schemas.session import (
+    ContextSelection,
+    SessionCreate,
+    SessionDetail,
+    SessionRead,
+    SessionResetResponse,
+)
 from app.schemas.submission import SubmissionRead
 from app.schemas.workspace import (
     MAX_FILE_PATH,
@@ -476,6 +482,247 @@ async def post_revert(
         payload={"path": body.path},
     )
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# P0-12: Reset-to-initial / clean session restart
+# ---------------------------------------------------------------------------
+
+
+def _count_porcelain_lines(porcelain: str) -> int:
+    """Count modified + untracked files from ``git status --porcelain`` output."""
+    return sum(1 for line in porcelain.splitlines() if line.strip())
+
+
+async def _had_agent_patch_for_session(
+    db: AsyncSession, session_id: uuid.UUID
+) -> bool:
+    """True when at least one ``patch.applied`` event exists for this session.
+
+    The reset payload uses this to populate ``had_agent_patch`` — a useful
+    signal for the post-mortem narrative (a reset without ever applying
+    a patch is a different "got lost" pattern than one after a misfire).
+    """
+    row = (
+        await db.execute(
+            select(SupervisionEvent.id)
+            .where(
+                SupervisionEvent.session_id == session_id,
+                SupervisionEvent.event_type == "patch.applied",
+            )
+            .limit(1)
+        )
+    ).first()
+    return row is not None
+
+
+async def _count_session_resets(
+    db: AsyncSession, session_id: uuid.UUID
+) -> int:
+    """Count ``session.reset`` events on the session (post-emit total)."""
+    rows = (
+        await db.execute(
+            select(SupervisionEvent.id).where(
+                SupervisionEvent.session_id == session_id,
+                SupervisionEvent.event_type == "session.reset",
+            )
+        )
+    ).all()
+    return len(rows)
+
+
+@router.post(
+    "/{session_id}/reset",
+    response_model=SessionResetResponse,
+    summary="Reset the workspace to the mission's initial commit (P0-12)",
+)
+async def post_reset(
+    session_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> SessionResetResponse:
+    """Roll the sandbox back to ``mission.initial_commit``.
+
+    Preconditions:
+      * the caller owns the session,
+      * ``session.status == 'active'`` (the mutability gate),
+      * the sandbox handle is alive (the existing 503 path).
+
+    Side effects (in order):
+      1. ``git status --porcelain`` → count discarded files (telemetry).
+      2. ``git reset --hard <initial_commit>``.
+      3. ``git clean -fd`` — drops untracked files + directories.
+      4. Emit ``session.reset`` with
+         ``{files_discarded, had_agent_patch, seconds_into_session}``.
+      5. Insert a ``FileChange(source='revert', path='*')`` so the file-
+         change audit trail records the wipe.
+
+    Concurrency note: the existing apply-patch path holds no per-handle
+    lock today (see ``app/sandbox/pool.py``). A reset issued while a
+    patch is mid-apply may race; the workspace store is single-tab so
+    the FE side rarely produces this. A future hardening pass should
+    add a per-handle ``asyncio.Lock`` and wrap both apply-patch and
+    reset in it.
+    """
+    from datetime import UTC, datetime
+
+    request.state.user = user
+    row = await _require_owned_session(db, session_id, user)
+    _require_mutable_session(row)
+
+    handle = _get_sandbox_handle(request, session_id)
+    pool = request.app.state.sandbox_pool
+
+    # Resolve the mission's initial commit. Prefer the catalog row (one
+    # source of truth seeded by the loader); fall back to the manifest
+    # cache for any path that loaded the mission inline.
+    mission_row = await get_mission_row(db, row.mission_id)
+    initial_commit = (
+        getattr(mission_row, "initial_commit", None)
+        if mission_row is not None
+        else None
+    )
+    if not initial_commit:
+        loaded = cached_manifests().get(row.mission_id)
+        if loaded is not None:
+            initial_commit = getattr(loaded.manifest.repo, "initial_commit", None)
+    if not initial_commit:
+        # SEV2 — the mission row should always carry an initial_commit
+        # (the loader's UPSERT is keyed by mission_id). Refuse to reset
+        # to an unknown ref rather than silently shell out to HEAD.
+        logger.error(
+            "[reset] mission {} has no initial_commit; refusing to reset",
+            row.mission_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "mission_initial_commit_missing",
+                "message": "mission base commit not resolvable",
+            },
+        )
+
+    # 1) count files about to be discarded — telemetry only, never fatal.
+    files_discarded = 0
+    try:
+        status_result = await pool.driver.run(
+            handle,
+            cmd=["git", "status", "--porcelain"],
+            timeout_s=10,
+            cwd="/workspace",
+        )
+        if status_result.exit_code == 0:
+            files_discarded = _count_porcelain_lines(status_result.stdout or "")
+    except Exception as exc:  # pragma: no cover — telemetry only
+        logger.debug("[reset] git status failed (continuing): {}", exc)
+
+    # 2) hard reset to the pinned commit.
+    reset_result = await pool.driver.run(
+        handle,
+        cmd=["git", "reset", "--hard", initial_commit],
+        timeout_s=30,
+        cwd="/workspace",
+    )
+    if reset_result.exit_code != 0:
+        logger.error(
+            "[reset] git reset --hard {} failed (exit={}): stderr={!r}",
+            initial_commit,
+            reset_result.exit_code,
+            (reset_result.stderr or "")[:300],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "git_reset_failed",
+                "message": "git reset failed; the mission base commit may be unreachable",
+            },
+        )
+
+    # 3) drop untracked files + directories. The driver returns a RunResult
+    # rather than raising on non-zero, so a permission-denied (e.g. a
+    # write-protected node_modules tree) would otherwise silently leave
+    # orphan untracked files behind while the endpoint reports success.
+    # Mirror the ``git reset --hard`` failure handling above.
+    try:
+        clean_result = await pool.driver.run(
+            handle,
+            cmd=["git", "clean", "-fd"],
+            timeout_s=15,
+            cwd="/workspace",
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error("[reset] git clean -fd raised: {}", exc)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "git_clean_failed",
+                "message": "git clean failed; untracked files may remain in the workspace",
+            },
+        ) from exc
+    if clean_result.exit_code != 0:
+        logger.error(
+            "[reset] git clean -fd failed (exit={}): stderr={!r}",
+            clean_result.exit_code,
+            (clean_result.stderr or "")[:300],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "git_clean_failed",
+                "message": (clean_result.stderr or "git clean failed").strip()[:300],
+            },
+        )
+
+    # 4) emit the typed event.
+    now = datetime.now(UTC)
+    started_at = row.started_at
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    seconds_into_session = int((now - started_at).total_seconds())
+    had_agent_patch = await _had_agent_patch_for_session(db, session_id)
+
+    redis = await get_redis()
+    emitter = EventEmitter(db=db, redis_client=redis)
+    await emitter.emit(
+        session_id=session_id,
+        event_type="session.reset",
+        payload={
+            "files_discarded": files_discarded,
+            "had_agent_patch": had_agent_patch,
+            "seconds_into_session": seconds_into_session,
+        },
+    )
+
+    # 5) record the wipe in the file_changes audit trail. A single row
+    # with path='*' is the deliberate convention for "reset event" so a
+    # downstream reader can collapse the run without per-file noise.
+    db.add(
+        FileChange(
+            session_id=session_id,
+            path="*",
+            source="revert",
+            hunk_count=files_discarded,
+            added_lines=0,
+            removed_lines=0,
+        )
+    )
+    await db.flush()
+
+    reset_count = await _count_session_resets(db, session_id)
+
+    logger.info(
+        "[reset] session={} files_discarded={} reset_count={}",
+        session_id,
+        files_discarded,
+        reset_count,
+    )
+
+    return SessionResetResponse(
+        files_reset=files_discarded,
+        new_head_commit=initial_commit,
+        reset_count=reset_count,
+    )
 
 
 # ---------------------------------------------------------------------------

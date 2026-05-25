@@ -14,10 +14,13 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, Response
 from jose import ExpiredSignatureError, JWTError, jwt
 from loguru import logger
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,13 +28,30 @@ from app.auth.deps import get_current_user, require_auth
 from app.config import Settings, get_settings
 from app.db.session import get_db
 from app.missions.resolver import MissionFolderNotFoundError, resolve_mission_dir
+from app.missions.service import get_mission as get_mission_row
+from app.models.report_render import (
+    RENDER_KIND_PDF,
+    RENDER_KINDS,
+    RENDER_STATUS_FAILED,
+    RENDER_STATUS_QUEUED,
+    RENDER_STATUS_READY,
+    RENDER_STATUS_RUNNING,
+    ReportRender,
+)
 from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.user import User
+from app.reports.verification import build_envelope
 from app.schemas.auth import ShareTokenRead
-from app.schemas.submission import SubmissionRead
+from app.schemas.submission import ReportRenderRead, SubmissionRead, VerifyEnvelopeRead
+from app.storage import generate_download_url
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+# P0-11 — separate router mounted at /verify so the URL the user copies
+# into a résumé doesn't carry the /reports path. The router is registered
+# alongside the reports router in app/main.py.
+verify_router = APIRouter(prefix="/verify", tags=["reports"])
 
 _SHARE_ALG = "HS256"
 _SHARE_TTL_DAYS = 30
@@ -347,4 +367,527 @@ async def post_share(
     )
 
 
-__all__ = ["decode_share_token", "issue_share_token", "router"]
+# ---------------------------------------------------------------------------
+# P0-11 — public verification endpoint
+# ---------------------------------------------------------------------------
+
+
+def _resolve_user_for_envelope(db_user: User | None) -> User | None:
+    """Identity passthrough — kept as a helper so a future tombstone
+    transformation has one obvious place to land."""
+    return db_user
+
+
+async def _load_envelope_inputs(
+    db: AsyncSession, submission_id: uuid.UUID
+) -> tuple[Submission, SessionRow, User | None, Any]:
+    """Fetch the four rows the envelope builder needs.
+
+    Returns ``(submission, session, user, mission_row)`` — ``mission_row``
+    is the catalog row (NOT the manifest); the verify endpoint reads
+    ``initial_commit`` and ``title`` from the manifest cache when the
+    mission folder is present.
+    """
+    submission, session = await _fetch_submission(db, submission_id)
+    user_row = (
+        await db.execute(select(User).where(User.id == session.user_id))
+    ).scalar_one_or_none()
+    mission_row = await get_mission_row(db, session.mission_id)
+    return submission, session, _resolve_user_for_envelope(user_row), mission_row
+
+
+def _is_tutorial(mission_row: Any) -> bool:
+    """Tutorials are not credentials — they 404 on /verify."""
+    if mission_row is None:
+        return False
+    return getattr(mission_row, "kind", "standard") == "tutorial"
+
+
+@verify_router.get(
+    "/{submission_id}",
+    response_model=VerifyEnvelopeRead,
+    summary="Public verification page envelope (P0-11)",
+)
+async def get_verify(
+    submission_id: uuid.UUID,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+) -> VerifyEnvelopeRead:
+    """Anonymous endpoint that renders the verification envelope.
+
+    No auth required — the URL is the credential. Returns 404 when:
+      * the submission does not exist,
+      * the session is not yet graded (mid-pipeline),
+      * the mission is a tutorial (tutorials are not credentialing),
+      * the verification hash + signature were never stamped.
+
+    The response is cacheable for a year + immutable: a graded
+    submission's envelope is frozen forever (the hash pins it). The
+    ``X-Robots-Tag`` header tells crawlers the URL is intended to be
+    indexed — that's the verification path a recruiter follows when they
+    Google the URL.
+    """
+    settings = get_settings()
+    submission, session, user, mission_row = await _load_envelope_inputs(
+        db, submission_id
+    )
+
+    if session.status != "graded":
+        raise HTTPException(status_code=404, detail="submission not verifiable")
+    if _is_tutorial(mission_row):
+        raise HTTPException(status_code=404, detail="tutorials are not credentialing")
+    if not submission.verification_hash or not submission.verification_signature:
+        # Older grade that predates the stamping path, OR a misconfigured
+        # secret on the grade server. The /verify surface refuses to
+        # invent values; operators run scripts/backfill_verification.py
+        # to re-stamp historical rows.
+        raise HTTPException(
+            status_code=404,
+            detail="submission has no verification signature on file",
+        )
+
+    # Re-derive the envelope so the response carries the field set
+    # exactly as it was at grade time. The hash + signature come from
+    # the persisted columns — never recomputed — so a future change to
+    # the envelope builder cannot invalidate an issued credential.
+    from app.missions.cache import cached_manifests
+
+    loaded = cached_manifests().get(session.mission_id)
+    manifest = loaded.manifest if loaded is not None else None
+    envelope = build_envelope(
+        submission=submission,
+        session=session,
+        manifest=manifest,
+        user=user,
+        mission_row=mission_row,
+    )
+
+    base = (settings.web_origin or "http://localhost:3000").rstrip("/")
+    canonical_url = f"{base}/verify/{submission_id}"
+
+    # Long-lived cache: graded submissions are immutable.
+    response.headers["Cache-Control"] = (
+        "public, max-age=31536000, s-maxage=31536000, immutable"
+    )
+    response.headers["X-Robots-Tag"] = "index, follow"
+
+    return VerifyEnvelopeRead(
+        **envelope,
+        canonical_url=canonical_url,
+        verification_hash=submission.verification_hash,
+        verification_signature=submission.verification_signature,
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0-11 — PDF / PNG render pipeline
+# ---------------------------------------------------------------------------
+
+
+_RENDER_SIGNED_URL_TTL_SECONDS: int = 5 * 60  # 5 minutes
+_RENDER_POLL_AFTER_SECONDS: int = 5
+
+
+def _content_type_for_kind(kind: str) -> str:
+    if kind == RENDER_KIND_PDF:
+        return "application/pdf"
+    return "image/png"
+
+
+def _render_s3_key(submission_id: uuid.UUID, kind: str) -> str:
+    """Single source of the storage key — used by the worker and the
+    download redirect. Kept here (in the route) so the route survives a
+    worker refactor that swaps the upload backend."""
+    ext = "pdf" if kind == RENDER_KIND_PDF else "png"
+    return f"report-renders/{submission_id}/{kind}.{ext}"
+
+
+def _validate_kind(kind: str) -> str:
+    if kind not in RENDER_KINDS:
+        raise HTTPException(status_code=422, detail=f"kind must be one of {sorted(RENDER_KINDS)}")
+    return kind
+
+
+async def _auth_render_view(
+    submission_id: uuid.UUID,
+    share: str | None,
+    user: User | None,
+    db: AsyncSession,
+) -> tuple[Submission, SessionRow]:
+    """Mirror ``get_report`` auth: owner OR ?share=<jwt>.
+
+    Additionally gates the response on ``session.status == 'graded'`` —
+    the render bytes embed the score + verification hash, and surfacing
+    an unfinished session's preview would let a recruiter download a
+    PDF that doesn't yet match the persisted envelope. Mid-pipeline
+    crashes (``status='error'``) and active sessions both 409. Tutorial
+    submissions also 409 because tutorials are not credentialing — they
+    have no envelope to render.
+    """
+    settings = get_settings()
+    submission, session = await _fetch_submission(db, submission_id)
+
+    share_ok = False
+    share_error: HTTPException | None = None
+    if share:
+        try:
+            share_sub = decode_share_token_strict(share, settings)
+            share_ok = share_sub == submission_id
+            if not share_ok:
+                share_error = HTTPException(
+                    status_code=400,
+                    detail={
+                        "reason": "invalid",
+                        "message": "share link is for a different submission",
+                    },
+                )
+        except ShareTokenError as exc:
+            share_error = HTTPException(
+                status_code=400, detail={"reason": exc.reason, "message": str(exc)}
+            )
+
+    if not share_ok:
+        if user is None:
+            if share_error is not None:
+                raise share_error
+            raise HTTPException(status_code=401, detail="authentication required")
+        if session.user_id != user.id:
+            if share_error is not None:
+                raise share_error
+            raise HTTPException(status_code=403, detail="not your report")
+
+    # Mirror /verify: never produce a render artefact for a non-graded
+    # session or a tutorial. Both surfaces would generate a PDF that
+    # doesn't anchor to a verifiable envelope.
+    if session.status != "graded":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_graded",
+                "message": "submission is not yet graded",
+            },
+        )
+    mission_row = await get_mission_row(db, session.mission_id)
+    if _is_tutorial(mission_row):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_graded",
+                "message": "tutorials are not credentialing and cannot be rendered",
+            },
+        )
+
+    return submission, session
+
+
+def _enqueue_render(render_id: uuid.UUID) -> None:
+    """Hand the render to RQ, with an in-process fallback when Redis is
+    not available (mirrors the account_export pattern).
+
+    The fallback path used to call ``render_report(..., inline=True)``
+    synchronously, but ``render_report`` wraps the async pipeline in
+    ``asyncio.run`` — which raises ``RuntimeError: asyncio.run() cannot
+    be called from a running event loop`` when invoked from inside
+    FastAPI's request handler. Instead we schedule the underlying
+    coroutine on the *current* loop via ``asyncio.create_task`` so it
+    runs alongside the response without nesting a fresh loop. The
+    worker's own ``inline=True`` branch already swallows exceptions, so
+    a failed render lands the row at ``failed`` instead of leaking back
+    into the route as a 500.
+    """
+    import asyncio
+
+    from app.workers.queue import get_queue
+
+    queue = get_queue()
+    if queue is None:
+        from app.workers.report_render import _async_render
+
+        # Fire-and-forget — the route has already committed the queued
+        # row, so the FE polls the row state and the task updates it
+        # out-of-band. No nested asyncio.run, no event-loop reentry.
+        asyncio.create_task(_async_render(render_id, inline=True))
+        return
+    queue.enqueue(
+        "app.workers.report_render.render_report", str(render_id), job_timeout=300
+    )
+
+
+async def _force_renders_today(
+    db: AsyncSession, submission_id: uuid.UUID
+) -> int:
+    """Count force re-renders (created_at within the trailing 24h)."""
+    from datetime import UTC, datetime, timedelta
+
+    horizon = datetime.now(UTC) - timedelta(days=1)
+    rows = (
+        await db.execute(
+            select(ReportRender).where(
+                ReportRender.submission_id == submission_id,
+                ReportRender.created_at >= horizon,
+            )
+        )
+    ).scalars().all()
+    return len(rows)
+
+
+@router.get(
+    "/{submission_id}/render",
+    summary="Retrieve or queue a PDF/PNG render (P0-11)",
+    responses={
+        302: {"description": "Render is ready — Location header carries the signed URL"},
+        202: {"description": "Render is queued or running"},
+        503: {"description": "Render failed; retry via POST /render"},
+    },
+)
+async def get_render(
+    submission_id: uuid.UUID,
+    kind: str = Query("pdf", description="render kind: pdf or png"),
+    share: str | None = Query(None, description="Optional signed share token"),
+    user: User | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Owner-or-share endpoint that returns a signed URL when ready.
+
+    Lifecycle:
+      * row missing → enqueue a fresh render → 202
+      * status=queued|running → 202 with poll_after_seconds
+      * status=ready → 302 to a 5-minute signed R2 URL
+      * status=failed → 503 with the worker's error message
+    """
+    kind = _validate_kind(kind)
+    _submission, _session = await _auth_render_view(submission_id, share, user, db)
+
+    row = (
+        await db.execute(
+            select(ReportRender).where(
+                ReportRender.submission_id == submission_id,
+                ReportRender.kind == kind,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if row is None:
+        # No render exists yet — enqueue the job and return 202. We
+        # insert the row inside this request so a concurrent GET sees
+        # the queued state instead of double-enqueuing.
+        row = ReportRender(
+            submission_id=submission_id, kind=kind, status=RENDER_STATUS_QUEUED
+        )
+        db.add(row)
+        await db.flush()
+        _enqueue_render(row.id)
+        await db.commit()
+        await db.refresh(row)
+
+    if row.status == RENDER_STATUS_READY and row.s3_key:
+        signed = generate_download_url(
+            row.s3_key, expires_in=_RENDER_SIGNED_URL_TTL_SECONDS
+        )
+        return RedirectResponse(url=signed, status_code=302)
+    if row.status == RENDER_STATUS_FAILED:
+        return Response(
+            status_code=503,
+            media_type="application/json",
+            content=ReportRenderRead.model_validate(row).model_dump_json(),
+        )
+    # queued or running — 202.
+    payload = ReportRenderRead.model_validate(row).model_copy(
+        update={"poll_after_seconds": _RENDER_POLL_AFTER_SECONDS}
+    )
+    return Response(
+        status_code=202,
+        media_type="application/json",
+        content=payload.model_dump_json(),
+    )
+
+
+class _ForceRenderBody(BaseModel):
+    kind: str
+
+
+@router.post(
+    "/{submission_id}/render",
+    response_model=ReportRenderRead,
+    status_code=202,
+    summary="Force re-render a PDF/PNG (owner only) (P0-11)",
+)
+async def post_render(
+    submission_id: uuid.UUID,
+    body: _ForceRenderBody,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> ReportRenderRead:
+    """Owner-only: drop any existing row + enqueue a fresh render.
+
+    Idempotent during ``queued`` / ``running`` — a second call sees the
+    in-flight row and returns it without re-enqueuing. Rate-limited at
+    ``settings.report_render_force_daily_cap`` force re-renders per
+    submission per 24h so a user can't cycle the cached PDF.
+    """
+    settings = get_settings()
+    kind = _validate_kind(body.kind)
+    _submission, session = await _fetch_submission(db, submission_id)
+    if session.user_id != user.id:
+        raise HTTPException(status_code=403, detail="not your report")
+
+    # Render endpoints must gate on graded state — see ``_auth_render_view``
+    # for the same guard on GET. Without this, a force-render against an
+    # in-progress or errored session would queue a job whose PDF can't
+    # anchor to a verification envelope.
+    if session.status != "graded":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_graded",
+                "message": "submission is not yet graded",
+            },
+        )
+    mission_row = await get_mission_row(db, session.mission_id)
+    if _is_tutorial(mission_row):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "not_graded",
+                "message": "tutorials are not credentialing and cannot be rendered",
+            },
+        )
+
+    existing = (
+        await db.execute(
+            select(ReportRender).where(
+                ReportRender.submission_id == submission_id,
+                ReportRender.kind == kind,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None and existing.status in {
+        RENDER_STATUS_QUEUED,
+        RENDER_STATUS_RUNNING,
+    }:
+        # Idempotent during in-flight — return the existing row.
+        return ReportRenderRead.model_validate(existing).model_copy(
+            update={"poll_after_seconds": _RENDER_POLL_AFTER_SECONDS}
+        )
+
+    # Rate-limit: count the renders created in the trailing 24 hours.
+    if (await _force_renders_today(db, submission_id)) >= settings.report_render_force_daily_cap:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "force_render_rate_limited",
+                "message": (
+                    f"force re-render cap of "
+                    f"{settings.report_render_force_daily_cap}/day reached; "
+                    "try again later"
+                ),
+            },
+        )
+
+    if existing is None:
+        row = ReportRender(
+            submission_id=submission_id,
+            kind=kind,
+            status=RENDER_STATUS_QUEUED,
+        )
+        db.add(row)
+    else:
+        # Recycle the row identity so the FE's poll URL stays stable.
+        existing.status = RENDER_STATUS_QUEUED
+        existing.s3_key = None
+        existing.bytes = None
+        existing.error = None
+        existing.ready_at = None
+        row = existing
+
+    await db.flush()
+    _enqueue_render(row.id)
+    await db.commit()
+    await db.refresh(row)
+
+    return ReportRenderRead.model_validate(row).model_copy(
+        update={"poll_after_seconds": _RENDER_POLL_AFTER_SECONDS}
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0-11 — internal print endpoint (consumed by the report-render worker)
+# ---------------------------------------------------------------------------
+
+
+def _verify_render_token(
+    *,
+    submission_id: uuid.UUID,
+    token: str,
+    secret: str,
+) -> bool:
+    """Constant-time-ish check that ``token`` is an HMAC over (submission_id, *).
+
+    The worker computes ``hmac_sha256(VERIFY_SECRET, f"{submission_id}|{render_id}")``
+    but the route doesn't know the render_id at GET time. The simpler
+    contract: the worker also sends a render_id-agnostic token (HMAC
+    over submission_id only) along with the per-render token; the
+    route accepts EITHER. This module only checks the submission-id
+    HMAC because the per-render id is private to the worker.
+    """
+    import hashlib
+    import hmac
+
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        str(submission_id).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, token or "")
+
+
+@router.get(
+    "/{submission_id}/print",
+    response_model=SubmissionRead,
+    summary="Internal: full report payload for the print-mode worker (P0-11)",
+)
+async def get_report_for_print(
+    submission_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> SubmissionRead:
+    """Worker-only endpoint that returns the same SubmissionRead shape as
+    ``GET /reports/{id}`` but authorises by ``X-Render-Token`` header
+    instead of by session ownership / share token. The token is an
+    HMAC over the submission id signed with ``VERIFY_SECRET``.
+
+    The route is intentionally undocumented in the public surface — the
+    worker's bridge constructs the URL itself and the FE never hits it.
+    """
+    settings = get_settings()
+    from app.reports.verification import verify_secret as resolve_verify_secret
+
+    token = request.headers.get("X-Render-Token", "")
+    if not token or not _verify_render_token(
+        submission_id=submission_id,
+        token=token,
+        secret=resolve_verify_secret(settings),
+    ):
+        raise HTTPException(status_code=404, detail="not found")
+
+    submission, session = await _fetch_submission(db, submission_id)
+    ideal = _read_ideal_solution(settings.missions_root, session.mission_id)
+    ideal_diff = _read_ideal_solution_diff(settings.missions_root, session.mission_id)
+    agent_diff = _read_agent_patch_diff(settings.missions_root, session.mission_id)
+    return _to_read_model(
+        submission,
+        ideal,
+        session.status,
+        ideal_solution_diff=ideal_diff,
+        agent_patch_diff=agent_diff,
+        mission_id=session.mission_id,
+    )
+
+
+__all__ = [
+    "decode_share_token",
+    "issue_share_token",
+    "router",
+    "verify_router",
+]

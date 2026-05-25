@@ -18,6 +18,7 @@ import { IdealSolution } from "@/components/report/IdealSolution";
 import { TimelineReplay } from "@/components/report/TimelineReplay";
 import { PostMortemWalkthrough } from "@/components/report/PostMortemWalkthrough";
 import { DimensionEvidence } from "@/components/report/DimensionEvidence";
+import { ShareDropdown } from "@/components/report/ShareDropdown";
 
 const REQUIRED_DIMENSIONS = [
   "final_correctness",
@@ -512,21 +513,11 @@ function ReportHeader({
       </div>
 
       <div className="flex flex-col items-end gap-1.5">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => void handleShare()}
-          disabled={sharing}
-        >
-          {sharing ? (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          ) : (
-            <Share2 className="size-3.5" aria-hidden />
-          )}
-          {sharing ? "Generating link…" : "Share report"}
-          {!sharing ? <Copy className="size-3 opacity-60" aria-hidden /> : null}
-        </Button>
+        <ShareDropdown
+          submissionId={submissionId}
+          onCopyLink={() => void handleShare()}
+          sharing={sharing}
+        />
         <p className="font-mono text-[10.5px] text-[var(--color-muted-foreground)]">
           {sharedExpiresAt
             ? `link expires ${formatShareExpiry(sharedExpiresAt)}`

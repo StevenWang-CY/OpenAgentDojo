@@ -7,8 +7,11 @@ renames a field surfaces immediately.
 
 from __future__ import annotations
 
+import json
+import pathlib
 import uuid
 
+import jsonschema
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -88,6 +91,65 @@ async def test_session_errored_payload_shape(db_engine) -> None:
             "stage": "sandbox",
             "detail": "docker daemon unreachable",
         }
+
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+_EVENT_SCHEMA = json.loads(
+    (_REPO_ROOT / "docs" / "schemas" / "event.schema.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.asyncio
+async def test_session_reset_payload_shape(db_engine) -> None:
+    """``session.reset`` carries ``{files_discarded, had_agent_patch, seconds_into_session}``.
+
+    P0-12 — the FE timeline tile + the grading diagnostics reader both
+    key off these exact field names. A rename or a typo here would
+    silently degrade the post-mortem walkthrough, so we pin both the
+    persisted row shape AND the JSON-schema acceptance.
+    """
+    sid = await _setup(db_engine)
+    factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+    payload = {
+        "files_discarded": 3,
+        "had_agent_patch": True,
+        "seconds_into_session": 42,
+    }
+    async with factory() as db:
+        emitter = EventEmitter(db=db, redis_client=None)
+        await emitter.emit(
+            session_id=sid,
+            event_type="session.reset",
+            payload=payload,
+            publish_after_commit=False,
+        )
+        await db.commit()
+
+    async with factory() as db:
+        row = (
+            await db.execute(
+                select(SupervisionEvent).where(SupervisionEvent.event_type == "session.reset")
+            )
+        ).scalar_one()
+        assert set(row.payload.keys()) == {
+            "files_discarded",
+            "had_agent_patch",
+            "seconds_into_session",
+        }
+        assert row.payload == payload
+
+    # JSON-schema acceptance — guard against a drift between
+    # ``docs/schemas/event.schema.json`` and the wire shape above.
+    jsonschema.validate(
+        instance={
+            "session_id": str(sid),
+            "event_type": "session.reset",
+            "payload": payload,
+            "occurred_at": "2026-05-25T00:00:00Z",
+        },
+        schema=_EVENT_SCHEMA,
+    )
 
 
 @pytest.mark.asyncio
@@ -226,6 +288,8 @@ _FE_KNOWN_EVENT_TYPES: set[str] = {
     "tutorial.completed",
     # P0-4 give-up signal.
     "session.gave_up",
+    # P0-12 — workspace reset to mission initial commit.
+    "session.reset",
     # P0-5 / P0-6 consent + account transitions (account-scoped; persist to
     # account_events, not supervision_events — see app/models/user_consent.py).
     # The ``account.*`` literals are passed positionally to the route's

@@ -13,12 +13,12 @@ Track unresolved product/engineering decisions here. Each entry has a date opene
 ## OQ-0001 — Live partial credit during the mission
 
 - Opened: 2026-05-21
-- Status: open
-- Resolve by: M5 (Submission + Grading engine)
+- Status: open (M5 shipped with the current "process-signals-only" policy in place — keeping the OQ open for the user-research re-evaluation)
+- Resolve by: public beta (post-launch user research)
 
 **Question.** Should partial credit be revealed during the mission (live `ScorePreview`) or hidden entirely until submit?
 
-**Current best answer.** Reveal *process* signals only. The `ScorePreview` panel shows "Context: 2/2 required selected", "Verification: tests not yet run", "Diff: 0 unrelated files changed" — never hidden-test outcomes, failure-mode hints, or a predicted total. See [IMPLEMENTATION_PLAN.md §13.5](../IMPLEMENTATION_PLAN.md).
+**Current best answer.** Reveal *process* signals only. The `ScorePreview` panel shows "Context: 2/2 required selected", "Verification: tests not yet run", "Diff: 0 unrelated files changed" — never hidden-test outcomes, failure-mode hints, or a predicted total. See [IMPLEMENTATION_PLAN.md §13.5](../IMPLEMENTATION_PLAN.md). This is the shipped behaviour; the question stays open because we want to revisit it once we have real session telemetry from the beta.
 
 **Why it matters.** Too much info turns the mission into a video game with a visible health bar. Too little leaves the user guessing whether their habits are landing. Process-only-signals is a defensible middle.
 
@@ -30,7 +30,7 @@ Track unresolved product/engineering decisions here. Each entry has a date opene
 
 - Opened: 2026-05-21
 - Status: **resolved 2026-05-23** by [ADR 0010](./adr/0010-give-up-policy.md)
-- Resolve by: M7 (polish)
+- Resolved at: P0-4 implementation (commit `7aac383`)
 
 **Question.** Should we offer a "give up" action that lets the user see the ideal solution, capped at a score of 50 for the session?
 
@@ -62,7 +62,7 @@ Track unresolved product/engineering decisions here. Each entry has a date opene
 
 - Opened: 2026-05-21
 - Status: **resolved 2026-05-23** by [ADR 0009](./adr/0009-multi-attempt-policy.md)
-- Resolve by: M7
+- Resolved at: P0-3 implementation (commit `7aac383`)
 
 **Question.** When a user replays a mission, what do we show on the public profile and in radar averages: best score, latest score, or both?
 

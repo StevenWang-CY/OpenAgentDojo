@@ -149,6 +149,20 @@ _RULES: tuple[_Rule, ...] = (
         limit=3,
         key_by="user",
     ),
+    # ``POST /sessions/{id}/reset`` (P0-12). The endpoint shells out to
+    # ``git reset --hard`` + ``git clean -fd`` inside the sandbox on every
+    # call — without a cap a single authenticated client could pin a
+    # worker by spamming resets. 10/min/user is well above the most
+    # frantic real-user pattern (~1-2 resets per minute on the worst
+    # missions) and matches the order-of-magnitude of the other
+    # workspace-mutating rules above.
+    _Rule(
+        name="reset",
+        method="POST",
+        pattern=re.compile(r"^/api/v1/sessions/[^/]+/reset/?$"),
+        limit=10,
+        key_by="user",
+    ),
     # Profile endpoints perform JSON aggregation + history joins on every
     # request with no caching. A scraper hitting /profiles/{handle} in a
     # loop would amplify trivially. Public endpoint → IP key; authed

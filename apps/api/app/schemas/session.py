@@ -70,3 +70,18 @@ class SessionDetail(SessionRead):
 
     mission: MissionDetail
     ws_token: str
+
+
+class SessionResetResponse(BaseModel):
+    """`POST /sessions/{id}/reset` response (P0-12).
+
+    Carries the commit HEAD now points to (== mission's initial_commit,
+    since the workspace is now byte-identical to provision-time), the
+    count of files the reset discarded (telemetry — read by the FE store
+    to size the toast), and the running count of reset events on this
+    session.
+    """
+
+    files_reset: int = Field(ge=0)
+    new_head_commit: str
+    reset_count: int = Field(ge=1)

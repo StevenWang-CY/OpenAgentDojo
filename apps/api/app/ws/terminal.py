@@ -211,7 +211,7 @@ async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> Non
         for task in pending:
             try:
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except (asyncio.CancelledError, Exception):
                 pass
     finally:
         closed.set()
@@ -283,7 +283,7 @@ async def _bridge_docker_socket(websocket: WebSocket, attach) -> None:
         for task in pending:
             try:
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except (asyncio.CancelledError, Exception):
                 pass
     finally:
         closed.set()

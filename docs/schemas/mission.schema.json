@@ -343,7 +343,7 @@
     },
     "scoring_weights": {
       "type": "object",
-      "description": "Rubric weights. Constants per ADR 0006; missions MUST NOT override.",
+      "description": "Rubric weights. Constants per ADR 0006 + ADR 0011 (rebalance verification 20→15, diff_minimality 5→10). Runtime truth lives in apps/api/app/grading/dimensions.py; missions MUST NOT override.",
       "additionalProperties": false,
       "required": [
         "final_correctness",
@@ -356,12 +356,12 @@
       ],
       "properties": {
         "final_correctness": { "const": 30 },
-        "verification": { "const": 20 },
+        "verification": { "const": 15 },
         "agent_review": { "const": 15 },
         "prompt_quality": { "const": 10 },
         "context_selection": { "const": 10 },
         "safety": { "const": 10 },
-        "diff_minimality": { "const": 5 }
+        "diff_minimality": { "const": 10 }
       }
     },
     "reward_signals": {

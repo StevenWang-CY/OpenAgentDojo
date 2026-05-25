@@ -76,4 +76,12 @@ class Submission(Base):
     # capped attempts when any non-capped attempt exists on the same
     # mission (see ``app.profiles.router._best_per_mission``).
     score_cap_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P0-11 — verification envelope hash + HMAC signature.
+    # The runner stamps these at grade time from the canonical envelope in
+    # ``app.reports.verification.build_envelope``. NULL only when grading
+    # ran before P0-11 landed AND the backfill hasn't been re-run; the
+    # public ``/verify/{id}`` endpoint 404s in that case to keep the
+    # credentialing surface honest.
+    verification_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verification_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = created_at()

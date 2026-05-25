@@ -459,6 +459,67 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/reports/{submission_id}/print': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Internal: full report payload for the print-mode worker (P0-11)
+     * @description Worker-only endpoint that returns the same SubmissionRead shape as
+     *     ``GET /reports/{id}`` but authorises by ``X-Render-Token`` header
+     *     instead of by session ownership / share token. The token is an
+     *     HMAC over the submission id signed with ``VERIFY_SECRET``.
+     *
+     *     The route is intentionally undocumented in the public surface — the
+     *     worker's bridge constructs the URL itself and the FE never hits it.
+     */
+    get: operations['get_report_for_print_api_v1_reports__submission_id__print_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/reports/{submission_id}/render': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Retrieve or queue a PDF/PNG render (P0-11)
+     * @description Owner-or-share endpoint that returns a signed URL when ready.
+     *
+     *     Lifecycle:
+     *       * row missing → enqueue a fresh render → 202
+     *       * status=queued|running → 202 with poll_after_seconds
+     *       * status=ready → 302 to a 5-minute signed R2 URL
+     *       * status=failed → 503 with the worker's error message
+     */
+    get: operations['get_render_api_v1_reports__submission_id__render_get'];
+    put?: never;
+    /**
+     * Force re-render a PDF/PNG (owner only) (P0-11)
+     * @description Owner-only: drop any existing row + enqueue a fresh render.
+     *
+     *     Idempotent during ``queued`` / ``running`` — a second call sees the
+     *     in-flight row and returns it without re-enqueuing. Rate-limited at
+     *     ``settings.report_render_force_daily_cap`` force re-renders per
+     *     submission per 24h so a user can't cycle the cached PDF.
+     */
+    post: operations['post_render_api_v1_reports__submission_id__render_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/reports/{submission_id}/share': {
     parameters: {
       query?: never;
@@ -757,6 +818,47 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/sessions/{session_id}/reset': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reset the workspace to the mission's initial commit (P0-12)
+     * @description Roll the sandbox back to ``mission.initial_commit``.
+     *
+     *     Preconditions:
+     *       * the caller owns the session,
+     *       * ``session.status == 'active'`` (the mutability gate),
+     *       * the sandbox handle is alive (the existing 503 path).
+     *
+     *     Side effects (in order):
+     *       1. ``git status --porcelain`` → count discarded files (telemetry).
+     *       2. ``git reset --hard <initial_commit>``.
+     *       3. ``git clean -fd`` — drops untracked files + directories.
+     *       4. Emit ``session.reset`` with
+     *          ``{files_discarded, had_agent_patch, seconds_into_session}``.
+     *       5. Insert a ``FileChange(source='revert', path='*')`` so the file-
+     *          change audit trail records the wipe.
+     *
+     *     Concurrency note: the existing apply-patch path holds no per-handle
+     *     lock today (see ``app/sandbox/pool.py``). A reset issued while a
+     *     patch is mid-apply may race; the workspace store is single-tab so
+     *     the FE side rarely produces this. A future hardening pass should
+     *     add a per-handle ``asyncio.Lock`` and wrap both apply-patch and
+     *     reset in it.
+     */
+    post: operations['post_reset_api_v1_sessions__session_id__reset_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/sessions/{session_id}/submission': {
     parameters: {
       query?: never;
@@ -867,6 +969,38 @@ export interface paths {
     };
     /** API status (v1 alias for public /status) */
     get: operations['status_v1_api_v1_status_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/verify/{submission_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Public verification page envelope (P0-11)
+     * @description Anonymous endpoint that renders the verification envelope.
+     *
+     *     No auth required — the URL is the credential. Returns 404 when:
+     *       * the submission does not exist,
+     *       * the session is not yet graded (mid-pipeline),
+     *       * the mission is a tutorial (tutorials are not credentialing),
+     *       * the verification hash + signature were never stamped.
+     *
+     *     The response is cacheable for a year + immutable: a graded
+     *     submission's envelope is frozen forever (the hash pins it). The
+     *     ``X-Robots-Tag`` header tells crawlers the URL is intended to be
+     *     indexed — that's the verification path a recruiter follows when they
+     *     Google the URL.
+     */
+    get: operations['get_verify_api_v1_verify__submission_id__get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1606,6 +1740,51 @@ export interface components {
        */
       total_missions: number;
     };
+    /**
+     * ReportRenderRead
+     * @description Lifecycle row for the PDF / PNG render pipeline (P0-11).
+     *
+     *     Returned by ``GET /api/v1/reports/{id}/render?kind=…`` when the
+     *     render is still in flight, and by ``POST /api/v1/reports/{id}/render``
+     *     when a force-render is enqueued. When ``status == 'ready'`` the
+     *     route 302s to a signed URL instead of returning this body — the FE
+     *     only sees this shape during the queued / running / failed lifecycle.
+     */
+    ReportRenderRead: {
+      /** Bytes */
+      bytes?: number | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Error */
+      error?: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: 'pdf' | 'png';
+      /** Poll After Seconds */
+      poll_after_seconds?: number | null;
+      /** Ready At */
+      ready_at?: string | null;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: 'queued' | 'running' | 'ready' | 'failed';
+      /**
+       * Submission Id
+       * Format: uuid
+       */
+      submission_id: string;
+    };
     /** SessionCreate */
     SessionCreate: {
       /** Mission Id */
@@ -1729,6 +1908,24 @@ export interface components {
       user_id: string;
     };
     /**
+     * SessionResetResponse
+     * @description `POST /sessions/{id}/reset` response (P0-12).
+     *
+     *     Carries the commit HEAD now points to (== mission's initial_commit,
+     *     since the workspace is now byte-identical to provision-time), the
+     *     count of files the reset discarded (telemetry — read by the FE store
+     *     to size the toast), and the running count of reset events on this
+     *     session.
+     */
+    SessionResetResponse: {
+      /** Files Reset */
+      files_reset: number;
+      /** New Head Commit */
+      new_head_commit: string;
+      /** Reset Count */
+      reset_count: number;
+    };
+    /**
      * ShareTokenRead
      * @description Response payload for ``POST /reports/{id}/share``.
      */
@@ -1819,6 +2016,10 @@ export interface components {
         | {
             [key: string]: unknown;
           };
+      /** Verification Hash */
+      verification_hash?: string | null;
+      /** Verification Signature */
+      verification_signature?: string | null;
       /** Visible Test Results */
       visible_test_results?:
         | {
@@ -1929,6 +2130,60 @@ export interface components {
       type: string;
     };
     /**
+     * VerifyEnvelopeRead
+     * @description Public response for ``GET /api/v1/verify/{submission_id}`` (P0-11).
+     *
+     *     The shape mirrors the canonical envelope verbatim plus three
+     *     surface-only fields the FE needs but that are NOT part of the hash:
+     *     ``canonical_url`` (so the verify page knows its own URL),
+     *     ``verification_hash`` (already computed at grade time), and
+     *     ``verification_signature`` (HMAC of the hash). All three are
+     *     persisted columns on ``submissions``; the page never re-derives them
+     *     server-side because the hash MUST be a function of the row's
+     *     grade-time state, never the current state of the joined rows.
+     */
+    VerifyEnvelopeRead: {
+      /** Attempt Index */
+      attempt_index: number;
+      /** Canonical Url */
+      canonical_url: string;
+      /** Display Name */
+      display_name?: string | null;
+      /** Effective Max */
+      effective_max: number;
+      /** Graded At */
+      graded_at: string;
+      /** Handle */
+      handle: string;
+      /** Missed Failure Mode */
+      missed_failure_mode: boolean;
+      /** Mission Id */
+      mission_id: string;
+      /** Mission Title */
+      mission_title: string;
+      /** Mission Version */
+      mission_version: number;
+      /** Proctored */
+      proctored: boolean;
+      /** Rubric Version */
+      rubric_version: string;
+      /** Schema Version */
+      schema_version: number;
+      /** Score Cap Reason */
+      score_cap_reason?: 'gave_up' | null;
+      /**
+       * Submission Id
+       * Format: uuid
+       */
+      submission_id: string;
+      /** Total Score */
+      total_score: number;
+      /** Verification Hash */
+      verification_hash: string;
+      /** Verification Signature */
+      verification_signature: string;
+    };
+    /**
      * WsTokenRead
      * @description Response payload for ``GET /sessions/{id}/ws-token``.
      */
@@ -1976,6 +2231,11 @@ export interface components {
       latest_submission_id?: string | null;
       /** Score History */
       score_history?: number[];
+    };
+    /** _ForceRenderBody */
+    _ForceRenderBody: {
+      /** Kind */
+      kind: string;
     };
   };
   responses: never;
@@ -2592,6 +2852,129 @@ export interface operations {
       };
     };
   };
+  get_report_for_print_api_v1_reports__submission_id__print_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        submission_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SubmissionRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_render_api_v1_reports__submission_id__render_get: {
+    parameters: {
+      query?: {
+        /** @description render kind: pdf or png */
+        kind?: string;
+        /** @description Optional signed share token */
+        share?: string | null;
+      };
+      header?: never;
+      path: {
+        submission_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
+        };
+      };
+      /** @description Render is queued or running */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Render is ready — Location header carries the signed URL */
+      302: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+      /** @description Render failed; retry via POST /render */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  post_render_api_v1_reports__submission_id__render_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        submission_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['_ForceRenderBody'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ReportRenderRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
   post_share_api_v1_reports__submission_id__share_post: {
     parameters: {
       query?: never;
@@ -3050,6 +3433,37 @@ export interface operations {
       };
     };
   };
+  post_reset_api_v1_sessions__session_id__reset_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SessionResetResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
   get_submission_api_v1_sessions__session_id__submission_get: {
     parameters: {
       query?: never;
@@ -3223,6 +3637,37 @@ export interface operations {
           'application/json': {
             [key: string]: unknown;
           };
+        };
+      };
+    };
+  };
+  get_verify_api_v1_verify__submission_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        submission_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VerifyEnvelopeRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
         };
       };
     };

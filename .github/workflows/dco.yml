@@ -1,0 +1,49 @@
+name: DCO
+
+# Enforce that every commit in a PR carries a Signed-off-by: trailer.
+# Apache 2.0 + DCO is documented in CONTRIBUTING.md §8. CI surfaces the
+# requirement so unsigned commits fail the PR fast instead of being
+# caught at review time.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify Signed-off-by on every PR commit
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          echo "Checking commits in $base..$head"
+
+          missing=0
+          while IFS= read -r sha; do
+            if [ -z "$sha" ]; then continue; fi
+            author_email="$(git show -s --format=%ae "$sha")"
+            author_name="$(git show -s --format=%an "$sha")"
+            expected="Signed-off-by: ${author_name} <${author_email}>"
+            body="$(git show -s --format=%B "$sha")"
+            if ! grep -F -q "$expected" <<<"$body"; then
+              echo "::error::Commit $sha is missing the DCO sign-off."
+              echo "  expected trailer: $expected"
+              echo "  Re-author with: git commit --amend -s --no-edit"
+              missing=$((missing + 1))
+            fi
+          done < <(git rev-list "$base..$head")
+
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::$missing commit(s) missing Signed-off-by."
+            echo "See CONTRIBUTING.md §8 for the DCO sign-off rules."
+            exit 1
+          fi
+          echo "All commits carry a valid Signed-off-by trailer."

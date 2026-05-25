@@ -114,7 +114,14 @@ cd apps/api && uv run pytest
 
 ## Project status
 
-MVP complete — milestones M0–M8 (bootstrap, data layer, sandbox, workspace UI, agent service, grading engine, mission content, public profile/landing, hardening) have all shipped. The platform provisions sandboxes, runs the deterministic agent, grades the 100-point supervision rubric, and renders public profiles. See [IMPLEMENTATION_PLAN.md §17](IMPLEMENTATION_PLAN.md) for the milestone breakdown.
+**MVP complete + P0 hardening in flight.** Milestones M0–M8 (bootstrap, data layer, sandbox, workspace UI, agent service, grading engine, mission content, public profile/landing, hardening) have all shipped. The platform provisions sandboxes, runs the deterministic agent, grades the 100-point supervision rubric, and renders public profiles.
+
+The post-MVP P0 batch ([FEATURE_GAPS.md](FEATURE_GAPS.md), [P0_DESIGN.md](P0_DESIGN.md), [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md)) is mostly landed:
+
+- ✅ Shipped: P0-1 onboarding (Mission 00), P0-2 post-mortem walkthrough, P0-3 multi-attempt scoring, P0-4 give-up affordance, P0-5 legal pages + cookie consent, P0-6 account self-service, P0-11 verifiable report artifact (verify page + PDF/PNG dropdown + worker), P0-12 reset-to-initial workspace, P0-13 LICENSE + CONTRIBUTING + rubric reconciliation.
+- ⏳ Pending: P0-7 GitHub OAuth, P0-8 proctored mode, P0-9 find-in-files, P0-10 email-deliverability fallback.
+
+See [IMPLEMENTATION_PLAN.md §17](IMPLEMENTATION_PLAN.md) for the full breakdown.
 
 ## Security
 
@@ -123,9 +130,13 @@ MVP complete — milestones M0–M8 (bootstrap, data layer, sandbox, workspace U
 - All grading paths are deterministic — the LLM is never invoked on hot paths.
 - See [docs/runbooks/rotate-secrets.md](docs/runbooks/rotate-secrets.md) for credential rotation.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The highest-leverage contribution is a new mission — every other code path is in service of the missions. New contributors should sign their commits with `git commit -s` to certify the DCO.
+
 ## License
 
-Internal MVP — not for redistribution.
+Released under the [Apache License 2.0](LICENSE). Security disclosures: see [SECURITY.md](SECURITY.md). Conduct: see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 <br>
 

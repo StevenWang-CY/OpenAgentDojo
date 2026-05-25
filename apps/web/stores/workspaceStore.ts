@@ -40,6 +40,16 @@ export interface WorkspaceState {
   pushEvent(event: SupervisionEvent): void;
   setSandboxDriver(driver: "docker" | "local" | "unknown"): void;
   reset(): void;
+  /**
+   * P0-12 — surgical clear used by the "Reset workspace" dialog. Drops
+   * fileBuffers + closes open tabs (the post-reset tree no longer
+   * matches the cached buffers), but PRESERVES selectedContext (the
+   * user's intent persists across resets) and events / agentTurns (the
+   * supervision timeline must survive the backtrack — that's the whole
+   * point of P0-12). Distinct from ``reset()`` which wipes everything
+   * for a fresh session.
+   */
+  resetForWorkspaceReset(): void;
 }
 
 type StoreFactory = ReturnType<typeof makeWorkspaceStore>;
@@ -145,6 +155,19 @@ function makeWorkspaceStore(sessionId: string) {
             agentTurns: [],
             events: [],
             lastEventId: 0,
+          });
+        },
+        resetForWorkspaceReset() {
+          // P0-12 — surgical clear: drop file buffers + open tabs (they
+          // reference paths that may no longer exist post-reset) and the
+          // active file selection. PRESERVE selectedContext, events,
+          // agentTurns, lastEventId. The store keeps reading new
+          // events (including the just-emitted ``session.reset``) via
+          // the WS stream.
+          set({
+            openTabs: [],
+            activeFile: null,
+            fileBuffers: {},
           });
         },
       }),

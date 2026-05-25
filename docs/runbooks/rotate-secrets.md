@@ -1,11 +1,16 @@
 # Runbook: Rotate Secrets
 
-This runbook covers rotating the two secrets the platform depends on:
+This runbook covers rotating the secrets the platform depends on. Each one rotates on a different cadence and has a different blast radius:
 
-- `AWS_BEARER_TOKEN_BEDROCK` — the Anthropic-on-Bedrock bearer token. Used by the optional LLM-narration path (see [ADR 0007](../adr/0007-bedrock-llm-provider.md)).
-- `SESSION_SECRET` — the symmetric secret used to sign session cookies and the short-lived WebSocket auth tokens.
+| Secret | Used for | Rotation cost | Cadence |
+|---|---|---|---|
+| `AWS_BEARER_TOKEN_BEDROCK` | Anthropic-on-Bedrock LLM narration ([ADR 0007](../adr/0007-bedrock-llm-provider.md)) — agent prose only; never on the grading path | None visible (LLM narration silently falls back to the seed template) | Quarterly, or immediately on suspected leak |
+| `SESSION_SECRET` | Session cookie HMAC + short-lived WebSocket auth tokens | Every active session is signed out | Quarterly, low-traffic window |
+| `SHARE_TOKEN_SECRET` | 30-day report share JWTs (`/reports/{id}/share`) | Every outstanding share URL invalidates | Annually; rotation IS the revocation knob |
+| `VERIFY_SECRET` | HMAC over the verification envelope hash that backs `/verify/{submission_id}` (P0-11) | None — a one-shot rotation script re-signs the persisted envelope hash; the hash itself never changes, so PDFs in the wild keep verifying | Rotate only on suspected leak; **never** opportunistically |
+| `IP_HASH_SALT` | SHA-256 prefix mixed into the IP recorded on consent rows (P0-5) | Existing consent records' IP hash becomes unattributable; no user-visible churn | Rotate only on suspected leak |
 
-Rotate these on a **quarterly** schedule, and immediately if either may have leaked. **Never** paste a bearer token into chat, screenshots, terminal recordings, logs, commit messages, or this file.
+**Never** paste a secret into chat, screenshots, terminal recordings, logs, commit messages, or this file.
 
 ## Rotating `AWS_BEARER_TOKEN_BEDROCK`
 
@@ -55,7 +60,7 @@ Rotate these on a **quarterly** schedule, and immediately if either may have lea
 
 ## Rotating `SESSION_SECRET`
 
-This invalidates every active session — users will be signed out. Schedule for a low-traffic window.
+This invalidates every active session — users will be signed out. Schedule for a low-traffic window. **Do not** rotate this and `SHARE_TOKEN_SECRET` / `VERIFY_SECRET` in the same change window — the config validator refuses to boot if any two of them collide.
 
 ### Steps
 
@@ -63,13 +68,52 @@ This invalidates every active session — users will be signed out. Schedule for
    ```bash
    python3 -c "import secrets; print(secrets.token_urlsafe(64))"
    ```
-2. Update Fly secret:
+2. Confirm the new value differs from both `SHARE_TOKEN_SECRET` and `VERIFY_SECRET` (the validator in [`apps/api/app/config.py`](../../apps/api/app/config.py) refuses overlap).
+3. Update Fly secret:
    ```bash
    fly secrets set SESSION_SECRET="<value>" --app arena-api
    ```
-3. Wait for the rolling deploy to complete.
-4. Manually sign out (cookies issued under the old secret are rejected).
-5. Update `keys.md` locally if you keep a dev copy.
+4. Wait for the rolling deploy to complete.
+5. Manually sign out (cookies issued under the old secret are rejected).
+6. Update `keys.md` locally if you keep a dev copy.
+
+## Rotating `SHARE_TOKEN_SECRET`
+
+The dedicated secret behind report-share JWTs ([`apps/api/app/reports/router.py`](../../apps/api/app/reports/router.py)`._share_secret`). Rotating it invalidates every outstanding `/reports/{id}?share=…` URL — which is precisely the revocation behaviour. Existing share recipients see a 400 with `reason: "invalid"` and need a freshly-minted token from the report owner.
+
+### Steps
+
+1. Generate a 64-byte random value (same `secrets.token_urlsafe(64)` recipe). Must differ from `SESSION_SECRET` and `VERIFY_SECRET` — the config validator rejects overlap.
+2. Update Fly secret:
+   ```bash
+   fly secrets set SHARE_TOKEN_SECRET="<value>" --app arena-api
+   ```
+3. Wait for the rolling deploy. No backfill: outstanding tokens are abandoned by design.
+4. If a user reports a broken share link post-rotation, re-issue from `POST /api/v1/reports/{id}/share`.
+
+## Rotating `VERIFY_SECRET` (P0-11)
+
+This is the HMAC secret behind the credentialing artifact. The hash stored on `submissions.verification_hash` is **stable** across rotation; only `submissions.verification_signature` needs re-signing. PDFs already in the wild keep verifying once the re-signing script runs.
+
+### Steps
+
+1. Generate a 64-byte random value. Must differ from `SESSION_SECRET` and `SHARE_TOKEN_SECRET`.
+2. Update Fly secret:
+   ```bash
+   fly secrets set VERIFY_SECRET="<value>" --app arena-api
+   fly secrets set VERIFY_SECRET="<value>" --app arena-workers
+   ```
+3. Run the one-shot re-signing script over every graded submission:
+   ```bash
+   uv --project apps/api run python scripts/backfill_verification.py \
+       --rotate-signature
+   ```
+   The script re-computes `verification_signature = HMAC(verification_hash, new_secret)` and writes it back; it does **not** touch `verification_hash`. Replays remain deterministic.
+4. Validate by hitting a known `/api/v1/verify/{submission_id}` and asserting the signature changed from a pre-rotation snapshot.
+
+### Emergency: VERIFY_SECRET has leaked
+
+A leaked verify secret means anyone can forge a signature over an arbitrary envelope. Treat as SEV1: rotate immediately, run the re-signing script, and crawl `report_verified` telemetry for off-platform referers in the leak window — any verify-page hit from a host we don't know is a candidate forgery.
 
 ## Emergency: token has leaked
 
@@ -96,6 +140,7 @@ The CI pipeline scans diffs for the `ABSK` prefix that Bedrock bearer tokens use
 - Redis password (Upstash dashboard).
 - R2 access keys (Cloudflare dashboard).
 - GitHub OAuth client secret (post-MVP).
+- `IP_HASH_SALT` — rotate by setting a new value in Fly secrets; no re-signing needed, but the existing consent rows' IP-hash column becomes opaque (which is the point).
 
 Each gets its own runbook when it ships.
 

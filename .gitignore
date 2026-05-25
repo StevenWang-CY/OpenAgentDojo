@@ -3,6 +3,7 @@ keys.md
 .env
 .env.*
 !.env.example
+!infra/compose/.env.compose.example
 *.pem
 *.key
 

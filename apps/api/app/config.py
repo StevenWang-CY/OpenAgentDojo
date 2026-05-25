@@ -147,6 +147,17 @@ class Settings(BaseSettings):
     # so an existing .env keeps working; staging/production should set their
     # own dedicated value.
     share_token_secret: str | None = None
+    # P0-11 — verification envelope HMAC secret. Falls back to
+    # ``share_token_secret`` then ``session_secret`` for dev so an existing
+    # .env keeps working; staging/production MUST set this to a dedicated
+    # value (validator below). The dedicated secret survives a session-
+    # secret rotation so verification signatures on PDFs already in the
+    # wild keep verifying for a year.
+    verify_secret: str | None = None
+    # P0-11 — soft cap on force re-renders per submission per day. The
+    # default keeps a user from cycling the cached PDF; tune via env if
+    # power users hit the limit legitimately.
+    report_render_force_daily_cap: int = Field(default=5, ge=1, le=100)
 
     # --- features ---
     feature_llm_narration: bool = False
@@ -297,6 +308,11 @@ class Settings(BaseSettings):
         # ---- share_token_secret: explicit + distinct from session_secret ----
         _validate_share_token_secret(self.share_token_secret, secret)
 
+        # ---- verify_secret: explicit + distinct from session + share ----
+        _validate_verify_secret(
+            self.verify_secret, secret, self.share_token_secret or ""
+        )
+
         # ---- required externals ----
         missing: list[str] = []
         if not self.resend_api_key:
@@ -360,6 +376,42 @@ class Settings(BaseSettings):
             )
 
         return self
+
+
+def _validate_verify_secret(
+    raw: str | None, session_secret: str, share_secret: str
+) -> None:
+    """Enforce the staging/production verify-secret invariants (P0-11).
+
+    Apart from the usual length / dev-prefix bounds, the verify secret
+    must differ from both the session and share-token secrets — the
+    whole point of a separate secret is that a session-secret rotation
+    (which can happen on operational events) does NOT invalidate every
+    issued verification signature, which would silently break PDFs
+    already attached to résumés. Sharing the share-token secret has the
+    same problem in reverse: rotating share tokens shouldn't ripple
+    into the credentialing surface.
+    """
+    raw_secret = (raw or "").strip()
+    if not raw_secret:
+        raise ValueError(
+            "VERIFY_SECRET must be set in staging/production "
+            "(falling back to SESSION_SECRET / SHARE_TOKEN_SECRET would mean "
+            "rotating either one silently invalidates every verification "
+            "signature on PDFs already in the wild)"
+        )
+    if raw_secret.startswith("dev-"):
+        raise ValueError("VERIFY_SECRET must not start with 'dev-' in staging/production")
+    if len(raw_secret) < 32:
+        raise ValueError("VERIFY_SECRET must be >=32 chars in staging/production")
+    if raw_secret == session_secret:
+        raise ValueError(
+            "VERIFY_SECRET must differ from SESSION_SECRET in staging/production"
+        )
+    if share_secret and raw_secret == share_secret:
+        raise ValueError(
+            "VERIFY_SECRET must differ from SHARE_TOKEN_SECRET in staging/production"
+        )
 
 
 def _validate_share_token_secret(raw: str | None, session_secret: str) -> None:

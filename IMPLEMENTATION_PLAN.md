@@ -346,27 +346,61 @@ CREATE TABLE supervision_events (
 CREATE INDEX idx_events_session_time ON supervision_events(session_id, occurred_at);
 ```
 
+### 6.1.A Tables added after the original DDL
+
+Migrations 0004–0019 layer additional tables/columns on top of the initial schema. The summary below is a doc surface — the migrations under [`apps/api/alembic/versions/`](apps/api/alembic/versions/) and the per-batch designs in [P0_DESIGN.md](P0_DESIGN.md) / [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md) are the runtime truth.
+
+| Migration | Adds | Why |
+|---|---|---|
+| 0004 | submission indexes | hot-path read perf |
+| 0005 | `users.handle` (unique) | public profile URLs |
+| 0006 | `sessions.last_activity_at` | idle-session reaper |
+| 0007 | rename `dimensions[].max` → `dimensions[].max_score` in `score_report` | radar schema rename |
+| 0008 | `submissions.manifest_sha256` | freeze the manifest hash at grade time |
+| 0009 | `prompt_judgements` table | cached LLM judge for prompt-quality dimension |
+| 0010 | `prompt_judgements` audit columns | rubric-version + model + tokens |
+| 0011 | `missions.kind`, `users.tutorial_completed_at`, `users.tutorial_replay_count` | P0-1 (orientation) |
+| 0012 | `submissions.critical_moments` (JSONB), evidence-bearing strengths/weaknesses | P0-2 (post-mortem walkthrough) |
+| 0013 | `sessions.attempt_index`, `submissions.score_cap_reason` | P0-3 (multi-attempt) / ADR 0009 |
+| 0014 | `sessions.gave_up_at` | P0-4 (give-up affordance) / ADR 0010 |
+| 0015 | `user_consents` table, `users.pending_consent_version` | P0-5 (legal pages / cookie consent) |
+| 0016 | `users.pending_email`, `users.deletion_scheduled_at`, `data_exports` table | P0-6 (account self-service) |
+| 0017 | `account_events` table | P0-6 audit log |
+| 0018 | `account.deleted` event type allowed in 0017's check | tombstoning |
+| 0019 | `submissions.verification_hash`, `submissions.verification_signature`, `report_renders` table | P0-11 (credentialing artifact) |
+
 ### 6.2 Supervision event types (enum)
 
 ```
 session.started
-context.selected            { files:[], logs:[], tests:[] }
-prompt.submitted            { turn_index, text, char_count, keyword_hits }
-agent.responded             { turn_index, response_summary }
-patch.applied               { turn_index, files_changed, added, removed }
-diff.opened                 { path }
-diff.hovered                { path, line }            // optional micro-event
-file.edited                 { path, added, removed }
-file.reverted               { path }
-command.run                 { command, category, exit_code, duration_ms }
-test.run                    { suite, passed, failed }
-validator.flag              { kind, message }         // emitted by grading dry-runs (post-submit)
-submission.requested
-submission.graded           { score, breakdown }
+session.errored
 session.abandoned
+session.gave_up                 { seconds_into_session }                      // ADR 0010 / P0-4
+session.provision_failed        { reason }                                    // emitted by the provisioning worker
+context.selected                { files:[], logs:[], tests:[] }
+prompt.submitted                { turn_index, text, char_count, keyword_hits }
+agent.responded                 { turn_index, response_summary }
+patch.proposed                  { turn_index, intent }
+patch.applied                   { turn_index, files_changed, added, removed }
+patch.failed                    { turn_index, detail }
+diff.opened                     { path }
+diff.hovered                    { path, line }                                // optional micro-event
+file.edited                     { path, added, removed, source }
+file.reverted                   { path }
+command.run                     { command, category, exit_code, duration_ms }
+test.run                        { suite, passed, failed }
+validator.flag                  { kind, message }                             // emitted by grading dry-runs (post-submit)
+submission.requested
+submission.graded               { score, breakdown, missed_failure_mode }
+submission.failed               { stage, detail }
+tutorial.step_completed         { step_id, mission_id: "orientation" }        // P0-1
+tutorial.dismissed              { step_id }                                   // P0-1
+tutorial.completed              { mission_id }                                // P0-1
+consent.granted                 { kind: "analytics" | "functional", version } // P0-5
+consent.revoked                 { kind }                                      // P0-5
 ```
 
-Events drive both the live timeline UI and the post-hoc grader.
+Events drive both the live timeline UI and the post-hoc grader. The canonical TS union lives in `packages/shared-types/src/events.ts`; the JSON Schema mirror is at [`docs/schemas/event.schema.json`](docs/schemas/event.schema.json). `account.*` events (P0-6) live on a sibling `account_events` table — they are NOT supervision events.
 
 ---
 
@@ -759,15 +793,23 @@ Floor when hidden tests fail: cap at 18 even if everything else is green.
 #### 11.2.2 Verification Discipline (15)
 
 ```
-+ 6 if any test command ran against a relevant suite (matches mission.reward_signals.verification.require_targeted_test)
++ 6 if a targeted test command ran and either (a) passed, or (b) failed
+     but the supervisor followed up with file.edited / file.reverted /
+     prompt.submitted before submit (engagement-after-failure split)
++ 3 if a targeted test ran and failed with no follow-up edit or prompt
 + 3 if typecheck ran
 + 2 if lint ran
-+ 4 if a NEW regression test exists in the final diff (validator: regression_test_required passes)
++ 4 if a NEW regression test exists in the final diff
+     (validator: regression_test_required passes)
 - 6 if submitted with zero verification commands
 ```
 
-Cap at 15. Sub-bonuses sum to 15 by design so a fully diligent run can
-reach the ceiling without the regression-test bonus carrying it over.
+Cap at 15. The engagement-after-failure split (+6 vs +3) is implemented
+in `_score_verification` in
+[`apps/api/app/grading/score.py`](apps/api/app/grading/score.py) — the
+scorer is the single source of truth; this section is the prose
+mirror. See [ADR 0011](docs/adr/0011-rubric-rebalance.md) for the
+historical rebalance from `20` to `15`.
 
 #### 11.2.3 Agent Output Review (15)
 
@@ -815,10 +857,12 @@ clamp(0, 10)
 
 #### 11.2.7 Diff Minimality (10)
 
-Linear scale on lines added relative to mission's `expected_diff_lines_p50`:
+Symmetric churn measure against the mission's `expected_diff_lines_p50`:
 
 ```
-ratio = added_lines / expected_p50
+churn = max(added_lines, removed_lines)   # both directions count
+score = 0  if churn == 0                  # empty submission earns no credit
+ratio = churn / expected_p50
 score = 10 if ratio <= 1.0
       =  8 if 1.0 < ratio <= 1.5
       =  6 if 1.5 < ratio <= 2.0
@@ -826,10 +870,15 @@ score = 10 if ratio <= 1.0
       =  0 otherwise
 ```
 
-`expected_diff_lines_p50` lives in each `mission.yaml`. The doubled max
-(was 5 in the original draft) brings minimality into parity with the
-other process-discipline dimensions, since a surgical diff is one of
-the cleanest signals that the supervisor reasoned about the change.
+`expected_diff_lines_p50` lives in each `mission.yaml` and is clamped
+to `[3, 200]` at scoring time (a typoed manifest can't silently shift
+the whole mission's band). Using `max(added, removed)` instead of just
+`added` prevents destructive minimisation — wiping out 200 lines while
+adding 5 — from being rewarded as "minimal." The doubled max (was 5 in
+the original draft) brings minimality into parity with the other
+process-discipline dimensions; see
+[ADR 0011](docs/adr/0011-rubric-rebalance.md) for the rebalance from
+`5` to `10`.
 
 ### 11.3 Score report shape (persisted JSONB)
 
@@ -1273,6 +1322,28 @@ Eight milestones. Each ends with a demoable artifact and a CI gate.
 
 Total budget: ~26–42 dev-days. Sequence assumes single-track agent; multiple workers can parallelize M3/M4 and M5 partially.
 
+### Post-MVP — P0 batch (post-launch hardening)
+
+Milestones M0–M8 land the MVP product. The follow-up work is tracked in [FEATURE_GAPS.md](FEATURE_GAPS.md) and broken into batches under [P0_DESIGN.md](P0_DESIGN.md) (items 1–6) and [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md) (items 11–13). Shipped status as of 2026-05-25:
+
+| Item | Title | Status |
+|---|---|---|
+| P0-1 | In-product onboarding (Mission 00) | ✅ shipped (commit `916d660`) |
+| P0-2 | Mission post-mortem walkthrough | ✅ shipped (commit `916d660`) |
+| P0-3 | Replay/retry mechanic + multi-attempt policy | ✅ shipped (commit `7aac383`, [ADR 0009](docs/adr/0009-multi-attempt-policy.md)) |
+| P0-4 | Give-up affordance with capped reveal | ✅ shipped (commit `7aac383`, [ADR 0010](docs/adr/0010-give-up-policy.md)) |
+| P0-5 | Legal pages + cookie consent | ✅ shipped (commit `ff161e2`) |
+| P0-6 | Account self-service (change email, export, delete) | ✅ shipped (commit `ff161e2`) |
+| P0-7 | Identity verification via GitHub OAuth | ⏳ pending |
+| P0-8 | Anti-cheating posture (proctored mode) | ⏳ pending |
+| P0-9 | Find-in-files / repo-wide search | ⏳ pending |
+| P0-10 | Email deliverability fallback | ⏳ pending |
+| P0-11 | Verifiable report artifact (PDF + signed permalink) | 🚧 backend landed (`apps/api/app/reports/verification.py`, `/verify/{id}`, migration 0019); FE verify page + dropdown PR still open |
+| P0-12 | Reset-to-initial workspace | ⏳ pending |
+| P0-13 | LICENSE + CONTRIBUTING + rubric reconciliation | ✅ shipped (this batch — LICENSE Apache 2.0, CONTRIBUTING/SECURITY/CODE_OF_CONDUCT, [ADR 0011](docs/adr/0011-rubric-rebalance.md), invariant test) |
+
+P1 / P2 work is tracked in the same docs but not milestoned here.
+
 ---
 
 ## 18. Concrete File-by-File Build Order Inside Each Milestone
@@ -1413,14 +1484,19 @@ CI deploys on merge to `main` after green pipeline + manual approval gate for `p
 
 ## 23. ADRs (Architecture Decision Records)
 
-Create the following in `docs/adr/` during M0 (1-page each):
+`docs/adr/` is the canonical index ([docs/adr/README.md](docs/adr/README.md)). The shipped list:
 
-1. `0001-tech-stack.md` — why Next.js + FastAPI + Docker.
-2. `0002-deterministic-agent.md` — why hybrid simulation over pure LLM.
-3. `0003-event-sourced-supervision.md` — why a single event log drives grading + UI.
-4. `0004-mission-manifest-vs-code.md` — content as YAML for editability.
-5. `0005-sandbox-isolation.md` — Docker rootless + no-network default.
-6. `0006-scoring-rubric.md` — weighted-30 over flat-15.
+1. [`0001-tech-stack.md`](docs/adr/0001-tech-stack.md) — why Next.js + FastAPI + Docker.
+2. [`0002-deterministic-agent.md`](docs/adr/0002-deterministic-agent.md) — why hybrid simulation over pure LLM.
+3. [`0003-event-sourced-supervision.md`](docs/adr/0003-event-sourced-supervision.md) — why a single event log drives grading + UI.
+4. [`0004-mission-manifest-vs-code.md`](docs/adr/0004-mission-manifest-vs-code.md) — content as YAML for editability.
+5. [`0005-sandbox-isolation.md`](docs/adr/0005-sandbox-isolation.md) — Docker rootless + no-network default.
+6. [`0006-scoring-rubric.md`](docs/adr/0006-scoring-rubric.md) — weighted-30 over flat-15.
+7. [`0007-bedrock-llm-provider.md`](docs/adr/0007-bedrock-llm-provider.md) — Anthropic via AWS Bedrock; see §16.A.
+8. [`0008-sqlalchemy-vs-prisma.md`](docs/adr/0008-sqlalchemy-vs-prisma.md) — SQLAlchemy 2.x async over Prisma.
+9. [`0009-multi-attempt-policy.md`](docs/adr/0009-multi-attempt-policy.md) — public aggregates use best-per-mission; attempt count private.
+10. [`0010-give-up-policy.md`](docs/adr/0010-give-up-policy.md) — give-up caps total at 50/100 via `score_cap_reason`; dimensions stay honest.
+11. [`0011-rubric-rebalance.md`](docs/adr/0011-rubric-rebalance.md) — verification 20→15, diff_minimality 5→10; the §11.1 table mirrors this.
 
 ---
 
@@ -1472,12 +1548,14 @@ Anything in §16 of the product definition is out of scope. Additionally for MVP
 
 ## 27. Open Questions (Capture, Don't Block)
 
-- Should partial credit be revealed during the mission (live `ScorePreview`) or hidden entirely until submit? Current plan: reveal *process* signals only.
-- Should "give up" let users see the ideal solution at a score cap of 50?
-- Pricing: free with rate limits; paid tier for unlimited replays?
-- Multi-attempt strategy: best score, latest score, or both shown?
+Tracked in [`docs/open-questions.md`](docs/open-questions.md). Status snapshot:
 
-Track these in `docs/open-questions.md`. Resolve before public beta.
+- **OQ-0001** — should partial credit be revealed during the mission (live `ScorePreview`) or hidden entirely until submit? *Open;* current plan reveals **process** signals only (no hidden-test outcomes, no failure-mode hints, no predicted total). See §13.5.
+- **OQ-0002** — should "give up" let users see the ideal solution at a score cap of 50? *Resolved 2026-05-23 by* [ADR 0010](docs/adr/0010-give-up-policy.md). Yes, 10-min soft block, 50/100 cap via `score_cap_reason`, no hiding from the public profile.
+- **OQ-0003** — pricing: free with rate limits or paid tier for unlimited replays? *Open;* free during MVP + 90-day beta, paid-tier decision deferred to post-≥1000-graded-submissions data.
+- **OQ-0004** — multi-attempt strategy: best score, latest, or both? *Resolved 2026-05-23 by* [ADR 0009](docs/adr/0009-multi-attempt-policy.md). Public aggregates use best-per-mission; private mission detail surfaces count + best + latest + delta; attempt count is never public.
+
+Resolve remaining open items before public beta.
 
 ---
 

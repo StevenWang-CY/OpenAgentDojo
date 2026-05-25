@@ -24,8 +24,8 @@ If you cannot install Docker (locked-down corp laptop), see the [no-Docker fallb
 
 ```bash
 # 1. Clone
-git clone https://github.com/<org>/realrepo-arena.git
-cd realrepo-arena
+git clone https://github.com/StevenWang-CY/OpenAgentDojo.git
+cd OpenAgentDojo
 
 # 2. Install JS + Python deps
 pnpm install
@@ -77,13 +77,15 @@ The UI shows a loud red banner whenever this driver is active. **Never enabled i
 |---|---|
 | Engineering source-of-truth | [IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md) |
 | Domain glossary | [CONTEXT.md](../CONTEXT.md) |
+| Contribution guide | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 | Architecture decisions | [docs/adr/README.md](./adr/README.md) |
 | JSON Schemas (mission, events, score reports) | [docs/schemas/README.md](./schemas/README.md) |
 | API reference | [docs/api.md](./api.md) |
 | How scoring works | [docs/grading.md](./grading.md) |
 | Operational playbooks | [docs/runbooks/README.md](./runbooks/README.md) |
 | Mission design notes | [docs/scenarios/README.md](./scenarios/README.md) |
-| Security posture | [docs/security.md](./security.md) |
+| Security posture | [docs/security.md](./security.md) — disclosure path in [SECURITY.md](../SECURITY.md) |
+| Feature-gap audit + P0 designs | [FEATURE_GAPS.md](../FEATURE_GAPS.md), [P0_DESIGN.md](../P0_DESIGN.md), [P0_DESIGN_11_13.md](../P0_DESIGN_11_13.md) |
 | Open product/eng questions | [docs/open-questions.md](./open-questions.md) |
 
 ## Day-1 reading list

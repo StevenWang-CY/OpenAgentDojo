@@ -51,15 +51,22 @@ Run `pnpm validate:missions` before pushing.
 
 ## Mission inventory
 
-| # | Folder | Status | Repo pack |
-|---|---|---|---|
-| 01 | `01-auth-cookie-expiration` | shipped | `fullstack-auth-demo` |
-| 02 | `02-agent-wrong-file` | shipped | `fullstack-auth-demo` |
-| 03 | `03-missing-regression-test` | shipped | `fullstack-auth-demo` |
-| 04 | `04-overfitted-test-fix` | shipped | `data-api-demo` |
-| 05 | `05-security-validation-removed` | shipped | `fullstack-auth-demo` |
-| 06 | `06-excessive-rewrite` | shipped | `fullstack-auth-demo` |
-| 07 | `07-dependency-misuse` | shipped | `data-api-demo` |
-| 08 | `08-async-race-condition` | shipped | `data-api-demo` |
-| 09 | `09-api-contract-drift` | shipped | `fullstack-auth-demo` |
-| 10 | `10-typecheck-ignored` | shipped | `fullstack-auth-demo` |
+| # | Folder | Kind | Status | Repo pack |
+|---|---|---|---|---|
+| 00 | `00-orientation` | tutorial | shipped (P0-1) | `fullstack-auth-demo` |
+| 01 | `01-auth-cookie-expiration` | standard | shipped | `fullstack-auth-demo` |
+| 02 | `02-agent-wrong-file` | standard | shipped | `fullstack-auth-demo` |
+| 03 | `03-missing-regression-test` | standard | shipped | `fullstack-auth-demo` |
+| 04 | `04-overfitted-test-fix` | standard | shipped | `data-api-demo` |
+| 05 | `05-security-validation-removed` | standard | shipped | `fullstack-auth-demo` |
+| 06 | `06-excessive-rewrite` | standard | shipped | `fullstack-auth-demo` |
+| 07 | `07-dependency-misuse` | standard | shipped | `data-api-demo` |
+| 08 | `08-async-race-condition` | standard | shipped | `data-api-demo` |
+| 09 | `09-api-contract-drift` | standard | shipped | `fullstack-auth-demo` |
+| 10 | `10-typecheck-ignored` | standard | shipped | `fullstack-auth-demo` |
+
+`kind: tutorial` ([P0_DESIGN §P0-1](../P0_DESIGN.md)) short-circuits the grader — the runner marks the user's `tutorial_completed_at` and skips scoring / badge awards. Tutorial missions are exempt from the `acceptance.yaml` envelope checks but still validate against the manifest schema.
+
+## `_calibration/`
+
+`missions/_calibration/<id>.yaml` envelopes are the scoring fixtures the M5 / ADR 0011 rebalance was calibrated against. They are NOT served to users — the calibration test suite at [`apps/api/app/grading/calibration.py`](../apps/api/app/grading/calibration.py) replays each envelope through the scorer to assert the rubric still hits the calibration band. Bumping the rubric requires re-running this suite and updating the envelopes if a calibration target moves.

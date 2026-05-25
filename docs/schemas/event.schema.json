@@ -18,10 +18,14 @@
     },
     "event_type": {
       "type": "string",
+      "description": "One row in supervision_events. account.* events live in the separate account_events table (P0-6) and are NOT part of this schema. consent.* events fire on the per-user consent log; they appear here because the TypeScript SupervisionEvent union mirrors the FE timeline buffer.",
       "enum": [
         "session.started",
         "session.errored",
         "session.abandoned",
+        "session.gave_up",
+        "session.reset",
+        "session.provision_failed",
         "context.selected",
         "prompt.submitted",
         "agent.responded",
@@ -37,7 +41,12 @@
         "validator.flag",
         "submission.requested",
         "submission.graded",
-        "submission.failed"
+        "submission.failed",
+        "tutorial.step_completed",
+        "tutorial.dismissed",
+        "tutorial.completed",
+        "consent.granted",
+        "consent.revoked"
       ]
     },
     "occurred_at": {
@@ -93,6 +102,21 @@
           "additionalProperties": false,
           "properties": {
             "reason": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "session.reset" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["files_discarded", "had_agent_patch", "seconds_into_session"],
+          "properties": {
+            "files_discarded": { "type": "integer", "minimum": 0 },
+            "had_agent_patch": { "type": "boolean" },
+            "seconds_into_session": { "type": "integer", "minimum": 0 }
           }
         }
       }

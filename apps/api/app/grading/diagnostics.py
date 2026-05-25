@@ -517,6 +517,19 @@ _CRITICAL_MOMENT_COPY: dict[str, tuple[str, str, int]] = {
         "before deciding to submit. 30 seconds is a reasonable floor.",
         3,
     ),
+    # P0-12 — anchored to the second ``session.reset`` event when a
+    # supervisor backtracks twice. One reset is exploration; two is a
+    # pattern the post-mortem should call out.
+    "reset_then_repeated_same_mistake": (
+        "You reset the workspace at least twice. A second backtrack "
+        "usually means the supervisor is iterating on the same wrong "
+        "hypothesis rather than re-reading the failure mode.",
+        "After a reset, try a different angle: re-read the mission brief, "
+        "search the codebase for the failure-mode keyword, or ask the "
+        "agent to first explain its mental model of the bug before "
+        "writing any more code.",
+        4,
+    ),
 }
 
 
@@ -767,6 +780,37 @@ def compute_critical_moments(  # noqa: PLR0912, PLR0915 — four heuristics are 
                                 occurred_at=responded_ev.get("occurred_at"),
                             )
                         )
+
+    # ─── reset_then_repeated_same_mistake (P0-12) ────────────────────────
+    # Two ``session.reset`` events on the same session — anchor to the
+    # second one so the timeline scrubber lands on the moment the
+    # backtrack pattern became visible. Walk the full event stream (not
+    # just events_before_submit) so a reset → abandon flow still
+    # surfaces; reset is the load-bearing signal here, not the submit.
+    reset_event_ids: list[int] = []
+    reset_occurred_at: list[str | None] = []
+    for ev in events:
+        if ev.get("event_type") != "session.reset":
+            continue
+        eid = _event_id(ev)
+        if eid is None:
+            continue
+        reset_event_ids.append(eid)
+        reset_occurred_at.append(ev.get("occurred_at"))
+    if len(reset_event_ids) >= 2:
+        explanation, what_to_do, severity = _CRITICAL_MOMENT_COPY[
+            "reset_then_repeated_same_mistake"
+        ]
+        out.append(
+            CriticalMoment(
+                event_id=reset_event_ids[1],
+                kind="reset_then_repeated_same_mistake",
+                explanation=explanation,
+                what_to_do_instead=what_to_do,
+                severity=severity,
+                occurred_at=reset_occurred_at[1],
+            )
+        )
 
     # Dedupe by (event_id, kind) — coalesce duplicates that show up across
     # the heuristics. Stable order by severity desc, then event_id asc.

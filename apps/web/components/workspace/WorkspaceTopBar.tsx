@@ -2,11 +2,19 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { AlertTriangle, ChevronDown, ChevronLeft, Gauge } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronLeft,
+  Gauge,
+  MoreHorizontal,
+  Undo2,
+} from "lucide-react";
 import type { Difficulty, SupervisionEvent } from "@arena/shared-types";
 import { Badge } from "@/components/ui/Badge";
 import { DifficultyBadge } from "@/components/catalog/DifficultyBadge";
 import { GiveUpDialog } from "./GiveUpDialog";
+import { ResetWorkspaceDialog } from "./ResetWorkspaceDialog";
 import { ScorePreview } from "./ScorePreview";
 import { SubmitDialog } from "./SubmitDialog";
 import { cn } from "@/lib/utils";
@@ -154,6 +162,11 @@ export function WorkspaceTopBar({
               onSubmitted={onSubmitted}
             />
           ) : null}
+          {/* P0-12 — overflow menu carries the "Reset workspace" affordance.
+              Rendered as a neutral icon button so the trigger feels free,
+              not shameful (per design); the dialog itself surfaces the
+              count + cost. */}
+          <WorkspaceOverflowMenu sessionId={sessionId} />
           <div data-tutorial-anchor="submit-button" className="contents">
             <SubmitDialog
               sessionId={sessionId}
@@ -199,6 +212,106 @@ export function WorkspaceTopBar({
           />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * P0-12 — overflow menu that surfaces the "Reset workspace" affordance
+ * (and is the obvious home for future workspace-scoped actions like
+ * keyboard help). Built as a small inline disclosure rather than
+ * pulling in a Radix DropdownMenu — three items, neutral visual
+ * weight, escape closes, click-outside closes. ARIA: role="menu" /
+ * role="menuitem" with keyboard support via the dialog's own focus
+ * trap when an item opens it.
+ */
+function WorkspaceOverflowMenu({ sessionId }: { sessionId: string }) {
+  const [open, setOpen] = React.useState(false);
+  const [resetOpen, setResetOpen] = React.useState(false);
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+  const buttonRef = React.useRef<HTMLButtonElement | null>(null);
+
+  // Click-outside + escape close. We listen on mousedown so the close
+  // happens before any other handler on the page (matches the
+  // ScorePreview pop-out behaviour above).
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (menuRef.current?.contains(target)) return;
+      if (buttonRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More workspace actions"
+        data-testid="workspace-overflow-trigger"
+        className={cn(
+          "inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]",
+          "text-[var(--color-muted-foreground)]",
+          "transition-[background-color,color] duration-150 ease-macos hover:bg-[var(--color-muted)] hover:text-[var(--color-foreground)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)]",
+          open && "bg-[var(--color-muted)] text-[var(--color-foreground)]",
+        )}
+      >
+        <MoreHorizontal className="size-4" aria-hidden />
+      </button>
+      {open ? (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label="Workspace actions"
+          className="absolute right-0 top-full z-30 mt-1 min-w-[200px] origin-top-right rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-elevated"
+          style={{
+            animation:
+              "fadeSlideIn 160ms var(--ease-macos, cubic-bezier(0.32, 0.72, 0, 1))",
+          }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              // ``session_reset_requested`` fires inside the dialog on
+              // Confirm so the payload can include ``files_discarded_estimate``
+              // and the signal isn't inflated by users who open the
+              // overflow menu and back out without confirming.
+              setOpen(false);
+              setResetOpen(true);
+            }}
+            data-testid="reset-workspace-menuitem"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-[var(--color-foreground)] transition-colors duration-150 ease-macos hover:bg-[var(--color-muted)] focus-visible:outline-none focus-visible:bg-[var(--color-muted)]"
+          >
+            <Undo2 className="size-3.5 text-[var(--color-muted-foreground)]" aria-hidden />
+            <span>Reset workspace</span>
+          </button>
+        </div>
+      ) : null}
+      <ResetWorkspaceDialog
+        sessionId={sessionId}
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+      />
     </div>
   );
 }

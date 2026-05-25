@@ -46,6 +46,11 @@ export const SupervisionEventType = {
   // P0-4 — emitted by the give-up endpoint (stub plumbing landed under
   // ``apps/api/alembic/versions/0014_give_up.py``).
   SessionGaveUp: "session.gave_up",
+  // P0-12 — workspace reset to the mission's initial commit. Emitted by
+  // ``POST /sessions/{id}/reset``; consumed by the Timeline component
+  // and by the post-mortem walkthrough's ``reset_then_repeated_same_mistake``
+  // critical-moment kind.
+  SessionReset: "session.reset",
   // P0-5 — consent transitions. These are *account-scoped*, not
   // session-scoped: they persist to a dedicated ``consent_events`` table
   // (NOT ``supervision_events``) because the parent record is the user,
@@ -292,6 +297,14 @@ export interface SessionGaveUpPayload {
   seconds_into_session?: number;
 }
 
+// ── P0-12 session-reset payload ──────────────────────────────────────────────
+
+export interface SessionResetPayload {
+  files_discarded: number;
+  had_agent_patch: boolean;
+  seconds_into_session: number;
+}
+
 // ── P0-5 consent payloads ────────────────────────────────────────────────────
 //
 // Account-scoped; not streamed over the per-session WS channel. Kept here
@@ -337,6 +350,7 @@ export type SupervisionEvent =
   | SupervisionEventOf<"tutorial.dismissed", TutorialDismissedPayload>
   | SupervisionEventOf<"tutorial.completed", TutorialCompletedPayload>
   | SupervisionEventOf<"session.gave_up", SessionGaveUpPayload>
+  | SupervisionEventOf<"session.reset", SessionResetPayload>
   | SupervisionEventOf<"consent.granted", ConsentGrantedPayload>
   | SupervisionEventOf<"consent.revoked", ConsentRevokedPayload>;
 

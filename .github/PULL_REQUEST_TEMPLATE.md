@@ -21,6 +21,9 @@
 - [ ] Telemetry events added for new user actions (where applicable)
 - [ ] Accessibility for new UI (axe pass)
 - [ ] Docs updated (`CONTEXT.md`, ADR, runbook) if a new noun, decision, or operational step landed
+- [ ] All commits carry `Signed-off-by:` (DCO — `git commit -s`)
+- [ ] Mission content touched? Ran `pnpm validate:missions` locally
+- [ ] API surface changed? Regenerated `packages/shared-types/`
 
 ## Screenshots / recordings
 

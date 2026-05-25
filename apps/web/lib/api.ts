@@ -639,6 +639,33 @@ export function giveUpSession(sessionId: string): Promise<Submission> {
   );
 }
 
+// ── P0-12 — workspace reset ─────────────────────────────────────────────────
+
+export interface SessionResetResponse {
+  files_reset: number;
+  new_head_commit: string;
+  reset_count: number;
+}
+
+/**
+ * POST /api/v1/sessions/{id}/reset — wipe the workspace back to the
+ * mission's initial commit. Side-effects (server-side):
+ *   1. ``git reset --hard <initial_commit>``.
+ *   2. ``git clean -fd``.
+ *   3. Emit ``session.reset`` supervision event with files_discarded.
+ *   4. Insert a ``FileChange(source='revert', path='*')`` row.
+ *
+ * Errors the FE handles:
+ *   - ``409 session_not_active`` — session isn't ``active``.
+ *   - ``500 git_reset_failed`` — sandbox is unhealthy; surface as a toast.
+ */
+export function resetSession(sessionId: string): Promise<SessionResetResponse> {
+  return request<SessionResetResponse>(
+    `/sessions/${encodeURIComponent(sessionId)}/reset`,
+    { method: "POST" },
+  );
+}
+
 /** GET /api/v1/sessions/{id}/submission — read the graded submission. */
 export function getSubmission(
   sessionId: string,
@@ -669,6 +696,147 @@ export function getReport(
   return request<Submission>(
     `/reports/${encodeURIComponent(submissionId)}`,
     { query, signal }
+  );
+}
+
+// ── P0-11 — verification envelope + render pipeline ─────────────────────────
+
+export interface VerifyEnvelope {
+  schema_version: number;
+  submission_id: string;
+  handle: string;
+  display_name: string | null;
+  mission_id: string;
+  mission_title: string;
+  mission_version: number;
+  rubric_version: string;
+  total_score: number;
+  effective_max: number;
+  missed_failure_mode: boolean;
+  score_cap_reason: "gave_up" | null;
+  proctored: boolean;
+  attempt_index: number;
+  graded_at: string;
+  canonical_url: string;
+  verification_hash: string;
+  verification_signature: string;
+}
+
+export interface ReportRender {
+  id: string;
+  submission_id: string;
+  kind: "pdf" | "png";
+  status: "queued" | "running" | "ready" | "failed";
+  bytes: number | null;
+  error: string | null;
+  created_at: string;
+  ready_at: string | null;
+  poll_after_seconds: number | null;
+}
+
+/**
+ * GET /api/v1/verify/{submission_id} — public, cacheable.
+ *
+ * Used by both the standalone /verify page and any agent that wants to
+ * confirm a credential URL. No auth required.
+ */
+export function getVerifyEnvelope(
+  submissionId: string,
+  signal?: AbortSignal,
+): Promise<VerifyEnvelope> {
+  return request<VerifyEnvelope>(
+    `/verify/${encodeURIComponent(submissionId)}`,
+    { signal },
+  );
+}
+
+/**
+ * GET /api/v1/reports/{id}/render?kind=pdf|png — render lifecycle.
+ *
+ * The endpoint returns ``302`` to a 5-minute signed URL when the render
+ * is ready, ``202`` with a body for queued/running, and ``503`` for
+ * failed. We send ``redirect: "manual"`` so the FE can distinguish
+ * "ready, navigate the user to the signed URL" from "still in flight,
+ * keep polling." When ``ready: true`` we return the render-endpoint
+ * URL itself; the browser's next request follows the server's 302
+ * transparently because the FE just sets ``window.location.href`` to
+ * the same path.
+ */
+export interface RenderStatusReady {
+  ready: true;
+  url: string;
+}
+
+export async function getReportRenderStatus(
+  submissionId: string,
+  kind: "pdf" | "png",
+  share?: string | null,
+  signal?: AbortSignal,
+): Promise<ReportRender | RenderStatusReady> {
+  const params = new URLSearchParams();
+  params.set("kind", kind);
+  if (share) params.set("share", share);
+  const renderUrl = new URL(
+    `/api/v1/reports/${encodeURIComponent(submissionId)}/render?${params.toString()}`,
+    `${env.apiBaseUrl}/`,
+  ).toString();
+
+  const resp = await fetch(renderUrl, {
+    method: "GET",
+    credentials: "include",
+    redirect: "manual",
+    signal,
+  });
+  // Browsers normalise a manual-mode 302 to ``type: "opaqueredirect"``
+  // (status 0). We never see the Location header in JS, but the route
+  // is keyed by submission_id + kind so we can simply navigate the user
+  // to the same endpoint and let the redirect happen transparently in
+  // the new top-level GET (with cookies attached).
+  //
+  // IMPORTANT: ``status === 0`` on its own is NOT a ready signal — it is
+  // also produced by CORS failures and network errors. Only treat the
+  // explicit opaqueredirect (or the rare same-origin 302 the browser
+  // surfaces directly) as ready; everything else with status 0 is a
+  // network failure and must throw so callers can show a toast.
+  if (resp.type === "opaqueredirect" || resp.status === 302) {
+    return { ready: true, url: renderUrl };
+  }
+  if (resp.type === "error" || resp.status === 0) {
+    throw new ApiError(
+      "network failure while polling render status",
+      0,
+      null,
+    );
+  }
+  if (resp.status === 202 || resp.status === 503) {
+    return (await resp.json()) as ReportRender;
+  }
+  if (resp.status >= 400) {
+    let body: ApiErrorBody | null = null;
+    try {
+      body = (await resp.json()) as ApiErrorBody;
+    } catch {
+      // ignore; body remains null
+    }
+    throw new ApiError(
+      `Render endpoint returned ${resp.status}`,
+      resp.status,
+      body,
+    );
+  }
+  throw new ApiError("unexpected render-endpoint response", resp.status, null);
+}
+
+/**
+ * POST /api/v1/reports/{id}/render — force a re-render. Owner only.
+ */
+export function forceReportRender(
+  submissionId: string,
+  kind: "pdf" | "png",
+): Promise<ReportRender> {
+  return request<ReportRender>(
+    `/reports/${encodeURIComponent(submissionId)}/render`,
+    { method: "POST", body: { kind } },
   );
 }
 

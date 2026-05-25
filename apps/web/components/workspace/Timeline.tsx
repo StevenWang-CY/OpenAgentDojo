@@ -277,6 +277,21 @@ function render(event: SupervisionEvent): RenderedEvent {
             ? `${event.payload.seconds_into_session}s into session`
             : "Submitted via give-up affordance",
       };
+    case "session.reset":
+      return {
+        icon: Undo2,
+        tone: "warning",
+        label: "Workspace reset",
+        detail: (() => {
+          const files = event.payload.files_discarded;
+          const hadPatch = event.payload.had_agent_patch;
+          const filesLabel =
+            typeof files === "number"
+              ? `${files} file${files === 1 ? "" : "s"} discarded`
+              : "workspace rolled back to initial commit";
+          return hadPatch ? `${filesLabel} (after agent patch)` : filesLabel;
+        })(),
+      };
     // P0-5 — consent transitions are *account-scoped*, not session-scoped.
     // They live in their own ``consent_events`` table on the backend, so
     // the workspace timeline should never receive one in practice. The

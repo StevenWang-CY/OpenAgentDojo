@@ -34,6 +34,7 @@ from app.missions.router import router as missions_router
 from app.observability import configure_logging, metrics_asgi_app
 from app.profiles.router import router as profiles_router
 from app.reports.router import router as reports_router
+from app.reports.router import verify_router
 from app.sandbox.pool import SandboxPool
 from app.sessions.router import router as sessions_router
 from app.status.router import api_v1_router as status_v1_router
@@ -227,6 +228,9 @@ def create_app() -> FastAPI:
     # generator. ``auth_router`` already exposes ``/auth/me``.
     app.include_router(agent_router, prefix="/api/v1")
     app.include_router(reports_router, prefix="/api/v1")
+    # P0-11 — public verify surface lives at /api/v1/verify/{id} so the
+    # canonical credential URL is short and doesn't pun on /reports.
+    app.include_router(verify_router, prefix="/api/v1")
     app.include_router(profiles_router, prefix="/api/v1")
 
     # WebSocket routers — imported here (not at module top) so optional deps

@@ -14,6 +14,9 @@ This directory holds the load-bearing decisions for OpenAgentDojo. Each ADR is o
 | [0006](./0006-scoring-rubric.md) | Scoring Rubric — Weighted-30 | Accepted | 2026-05-21 |
 | [0007](./0007-bedrock-llm-provider.md) | Anthropic via AWS Bedrock | Accepted | 2026-05-21 |
 | [0008](./0008-sqlalchemy-vs-prisma.md) | SQLAlchemy 2.x (Async) Over Prisma | Accepted | 2026-05-21 |
+| [0009](./0009-multi-attempt-policy.md) | Multi-attempt Scoring Policy | Accepted | 2026-05-23 |
+| [0010](./0010-give-up-policy.md) | Give-up Affordance with Capped Ideal-Solution Reveal | Accepted | 2026-05-23 |
+| [0011](./0011-rubric-rebalance.md) | Rubric Rebalance (verification 20→15, diff_minimality 5→10) | Accepted | 2026-05-25 |
 
 ## Adding a new ADR
 

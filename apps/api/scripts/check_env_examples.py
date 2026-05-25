@@ -45,7 +45,6 @@ import re
 import sys
 from pathlib import Path
 
-
 _ASSIGN_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=")
 _FRONTEND_PREFIXES = ("NEXT_PUBLIC_",)
 

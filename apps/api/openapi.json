@@ -1273,6 +1273,98 @@
         "title": "PublicProfile",
         "type": "object"
       },
+      "ReportRenderRead": {
+        "description": "Lifecycle row for the PDF / PNG render pipeline (P0-11).\n\nReturned by ``GET /api/v1/reports/{id}/render?kind=…`` when the\nrender is still in flight, and by ``POST /api/v1/reports/{id}/render``\nwhen a force-render is enqueued. When ``status == 'ready'`` the\nroute 302s to a signed URL instead of returning this body — the FE\nonly sees this shape during the queued / running / failed lifecycle.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "pdf",
+              "png"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "poll_after_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll After Seconds"
+          },
+          "ready_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ready At"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "ready",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "submission_id": {
+            "format": "uuid",
+            "title": "Submission Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "submission_id",
+          "kind",
+          "status",
+          "created_at"
+        ],
+        "title": "ReportRenderRead",
+        "type": "object"
+      },
       "SessionCreate": {
         "properties": {
           "mission_id": {
@@ -1573,6 +1665,32 @@
         "title": "SessionRead",
         "type": "object"
       },
+      "SessionResetResponse": {
+        "description": "`POST /sessions/{id}/reset` response (P0-12).\n\nCarries the commit HEAD now points to (== mission's initial_commit,\nsince the workspace is now byte-identical to provision-time), the\ncount of files the reset discarded (telemetry — read by the FE store\nto size the toast), and the running count of reset events on this\nsession.",
+        "properties": {
+          "files_reset": {
+            "minimum": 0.0,
+            "title": "Files Reset",
+            "type": "integer"
+          },
+          "new_head_commit": {
+            "title": "New Head Commit",
+            "type": "string"
+          },
+          "reset_count": {
+            "minimum": 1.0,
+            "title": "Reset Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "files_reset",
+          "new_head_commit",
+          "reset_count"
+        ],
+        "title": "SessionResetResponse",
+        "type": "object"
+      },
       "ShareTokenRead": {
         "description": "Response payload for ``POST /reports/{id}/share``.",
         "properties": {
@@ -1748,6 +1866,28 @@
               }
             ],
             "title": "Validator Results"
+          },
+          "verification_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Hash"
+          },
+          "verification_signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Signature"
           },
           "visible_test_results": {
             "anyOf": [
@@ -2006,6 +2146,119 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VerifyEnvelopeRead": {
+        "description": "Public response for ``GET /api/v1/verify/{submission_id}`` (P0-11).\n\nThe shape mirrors the canonical envelope verbatim plus three\nsurface-only fields the FE needs but that are NOT part of the hash:\n``canonical_url`` (so the verify page knows its own URL),\n``verification_hash`` (already computed at grade time), and\n``verification_signature`` (HMAC of the hash). All three are\npersisted columns on ``submissions``; the page never re-derives them\nserver-side because the hash MUST be a function of the row's\ngrade-time state, never the current state of the joined rows.",
+        "properties": {
+          "attempt_index": {
+            "title": "Attempt Index",
+            "type": "integer"
+          },
+          "canonical_url": {
+            "title": "Canonical Url",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "effective_max": {
+            "title": "Effective Max",
+            "type": "integer"
+          },
+          "graded_at": {
+            "title": "Graded At",
+            "type": "string"
+          },
+          "handle": {
+            "title": "Handle",
+            "type": "string"
+          },
+          "missed_failure_mode": {
+            "title": "Missed Failure Mode",
+            "type": "boolean"
+          },
+          "mission_id": {
+            "title": "Mission Id",
+            "type": "string"
+          },
+          "mission_title": {
+            "title": "Mission Title",
+            "type": "string"
+          },
+          "mission_version": {
+            "title": "Mission Version",
+            "type": "integer"
+          },
+          "proctored": {
+            "title": "Proctored",
+            "type": "boolean"
+          },
+          "rubric_version": {
+            "title": "Rubric Version",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "score_cap_reason": {
+            "anyOf": [
+              {
+                "const": "gave_up",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Cap Reason"
+          },
+          "submission_id": {
+            "format": "uuid",
+            "title": "Submission Id",
+            "type": "string"
+          },
+          "total_score": {
+            "title": "Total Score",
+            "type": "integer"
+          },
+          "verification_hash": {
+            "title": "Verification Hash",
+            "type": "string"
+          },
+          "verification_signature": {
+            "title": "Verification Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "submission_id",
+          "handle",
+          "mission_id",
+          "mission_title",
+          "mission_version",
+          "rubric_version",
+          "total_score",
+          "effective_max",
+          "missed_failure_mode",
+          "proctored",
+          "attempt_index",
+          "graded_at",
+          "canonical_url",
+          "verification_hash",
+          "verification_signature"
+        ],
+        "title": "VerifyEnvelopeRead",
+        "type": "object"
+      },
       "WsTokenRead": {
         "description": "Response payload for ``GET /sessions/{id}/ws-token``.",
         "properties": {
@@ -2104,6 +2357,19 @@
           }
         },
         "title": "YourAttempts",
+        "type": "object"
+      },
+      "_ForceRenderBody": {
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "_ForceRenderBody",
         "type": "object"
       }
     }
@@ -2832,6 +3098,183 @@
         ]
       }
     },
+    "/api/v1/reports/{submission_id}/print": {
+      "get": {
+        "description": "Worker-only endpoint that returns the same SubmissionRead shape as\n``GET /reports/{id}`` but authorises by ``X-Render-Token`` header\ninstead of by session ownership / share token. The token is an\nHMAC over the submission id signed with ``VERIFY_SECRET``.\n\nThe route is intentionally undocumented in the public surface — the\nworker's bridge constructs the URL itself and the FE never hits it.",
+        "operationId": "get_report_for_print_api_v1_reports__submission_id__print_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Internal: full report payload for the print-mode worker (P0-11)",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/reports/{submission_id}/render": {
+      "get": {
+        "description": "Owner-or-share endpoint that returns a signed URL when ready.\n\nLifecycle:\n  * row missing → enqueue a fresh render → 202\n  * status=queued|running → 202 with poll_after_seconds\n  * status=ready → 302 to a 5-minute signed R2 URL\n  * status=failed → 503 with the worker's error message",
+        "operationId": "get_render_api_v1_reports__submission_id__render_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "render kind: pdf or png",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "default": "pdf",
+              "description": "render kind: pdf or png",
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional signed share token",
+            "in": "query",
+            "name": "share",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional signed share token",
+              "title": "Share"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "description": "Render is queued or running"
+          },
+          "302": {
+            "description": "Render is ready — Location header carries the signed URL"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Render failed; retry via POST /render"
+          }
+        },
+        "summary": "Retrieve or queue a PDF/PNG render (P0-11)",
+        "tags": [
+          "reports"
+        ]
+      },
+      "post": {
+        "description": "Owner-only: drop any existing row + enqueue a fresh render.\n\nIdempotent during ``queued`` / ``running`` — a second call sees the\nin-flight row and returns it without re-enqueuing. Rate-limited at\n``settings.report_render_force_daily_cap`` force re-renders per\nsubmission per 24h so a user can't cycle the cached PDF.",
+        "operationId": "post_render_api_v1_reports__submission_id__render_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ForceRenderBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRenderRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Force re-render a PDF/PNG (owner only) (P0-11)",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/api/v1/reports/{submission_id}/share": {
       "post": {
         "description": "Owner-only: returns the share URL and token (TTL 30d).",
@@ -3502,6 +3945,50 @@
         ]
       }
     },
+    "/api/v1/sessions/{session_id}/reset": {
+      "post": {
+        "description": "Roll the sandbox back to ``mission.initial_commit``.\n\nPreconditions:\n  * the caller owns the session,\n  * ``session.status == 'active'`` (the mutability gate),\n  * the sandbox handle is alive (the existing 503 path).\n\nSide effects (in order):\n  1. ``git status --porcelain`` → count discarded files (telemetry).\n  2. ``git reset --hard <initial_commit>``.\n  3. ``git clean -fd`` — drops untracked files + directories.\n  4. Emit ``session.reset`` with\n     ``{files_discarded, had_agent_patch, seconds_into_session}``.\n  5. Insert a ``FileChange(source='revert', path='*')`` so the file-\n     change audit trail records the wipe.\n\nConcurrency note: the existing apply-patch path holds no per-handle\nlock today (see ``app/sandbox/pool.py``). A reset issued while a\npatch is mid-apply may race; the workspace store is single-tab so\nthe FE side rarely produces this. A future hardening pass should\nadd a per-handle ``asyncio.Lock`` and wrap both apply-patch and\nreset in it.",
+        "operationId": "post_reset_api_v1_sessions__session_id__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset the workspace to the mission's initial commit (P0-12)",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
     "/api/v1/sessions/{session_id}/submission": {
       "get": {
         "description": "Return the grading submission for an already-graded session.\n\nReturns 404 if the session has not been submitted yet, or 404 if the\nsession itself does not exist. ``ideal_solution`` /\n``ideal_solution_diff`` / ``agent_patch_diff`` are injected from disk\nwhen ``session.status == 'graded'`` so the FE can render the\npost-mortem walkthrough (P0-2) without a second roundtrip to\n``/reports``.",
@@ -3747,6 +4234,50 @@
         "summary": "API status (v1 alias for public /status)",
         "tags": [
           "status"
+        ]
+      }
+    },
+    "/api/v1/verify/{submission_id}": {
+      "get": {
+        "description": "Anonymous endpoint that renders the verification envelope.\n\nNo auth required — the URL is the credential. Returns 404 when:\n  * the submission does not exist,\n  * the session is not yet graded (mid-pipeline),\n  * the mission is a tutorial (tutorials are not credentialing),\n  * the verification hash + signature were never stamped.\n\nThe response is cacheable for a year + immutable: a graded\nsubmission's envelope is frozen forever (the hash pins it). The\n``X-Robots-Tag`` header tells crawlers the URL is intended to be\nindexed — that's the verification path a recruiter follows when they\nGoogle the URL.",
+        "operationId": "get_verify_api_v1_verify__submission_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyEnvelopeRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Public verification page envelope (P0-11)",
+        "tags": [
+          "reports"
         ]
       }
     },

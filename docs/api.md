@@ -38,10 +38,54 @@ Clears the cookie and invalidates the server-side session.
 - Requires auth.
 
 ### `GET /api/v1/me`
-Returns the current user plus a fresh CSRF token.
+Returns the current user plus a fresh CSRF token. (Same handler as `GET /api/v1/auth/me`; the path under `/auth` is the canonical OpenAPI tag.)
 
 - 200 `{ "user": User, "csrf_token": string }`.
 - 401 if unauthenticated.
+
+### `POST /api/v1/auth/csrf-refresh`
+Force-rotate the CSRF cookie. Useful for tooling that wants a fresh token without going through `/auth/callback`. 200 with the same shape as `/me`. Requires auth.
+
+## Account self-service (P0-6)
+
+All require auth + CSRF and emit a row into `account_events` (separate table from `supervision_events`).
+
+### `PATCH /api/v1/auth/me`
+Update mutable profile fields (`display_name`, `handle`). 200 `User`.
+
+### `POST /api/v1/auth/me/email/change`
+Start an email-change flow. Stores `users.pending_email` and emails a confirmation token. 204. Emits `account.email_change_requested`.
+
+### `POST /api/v1/auth/me/email/confirm`
+Confirm the new email with the token from the email. 204 on success. Emits `account.email_changed`.
+
+### `POST /api/v1/auth/me/sessions/sign-out-all`
+Force-rotate `users.session_epoch` so every cookie issued under the previous epoch is rejected. 204.
+
+### `POST /api/v1/auth/me/data-export`
+Enqueue a data-export job. 202 `{ export_id }`.
+
+### `GET /api/v1/auth/me/data-export/{export_id}`
+Poll the export. Returns `{ status: 'queued'|'running'|'ready'|'failed', signed_url? }`.
+
+### `POST /api/v1/auth/me/delete`
+Schedule account deletion with a grace window. 202. Emits `account.deletion_scheduled`. The cron at `scripts/process_deletion_grace.py` tombstones the row when the grace expires (emits `account.deleted`).
+
+### `POST /api/v1/auth/me/delete/cancel`
+Cancel a scheduled deletion. 204. Emits `account.deletion_cancelled`.
+
+## Consent (P0-5)
+
+### `GET /api/v1/auth/me/consent`
+Returns the current consent state plus the active `CONSENT_POLICY_VERSION`.
+
+### `POST /api/v1/auth/me/consent`
+Update the per-kind consent. Emits `consent.granted` or `consent.revoked` with `{kind, version}`. 204.
+
+## Tutorial (P0-1)
+
+### `POST /api/v1/auth/me/tutorial/replay`
+Clear `tutorial_completed_at` + increment `tutorial_replay_count`. 200 `User`.
 
 ## Missions
 
@@ -155,8 +199,32 @@ Freeze the sandbox, run hidden tests + validators, compute the score.
 ## Submissions & Reports
 
 ### `GET /api/v1/reports/{submission_id}`
-- 200 `Submission` with the full `score_report` per [docs/schemas/score_report.schema.json](./schemas/score_report.schema.json). Includes the ideal-solution markdown.
+- 200 `Submission` with the full `score_report` per [docs/schemas/score_report.schema.json](./schemas/score_report.schema.json). Includes the ideal-solution markdown, `ideal_solution_diff`, and the agent's original `agent_patch_diff` (P0-2). The diff payloads are gated on `session.status == 'graded'`.
 - 403 `not_report_owner` unless the report is publicly shared.
+
+### `POST /api/v1/reports/{submission_id}/share`
+Owner-only: mint a 30-day signed share JWT (signed with `SHARE_TOKEN_SECRET`, see [docs/runbooks/rotate-secrets.md](./runbooks/rotate-secrets.md)). Returns `{ share_token, share_url, expires_at }`.
+
+### `GET /api/v1/reports/{submission_id}/render?kind=pdf|png` (P0-11)
+Owner-or-share endpoint. Lifecycle:
+- row missing → enqueue + 202 with `poll_after_seconds`.
+- queued / running → 202.
+- ready → 302 to a 5-minute signed R2 URL.
+- failed → 503 with the worker's error message.
+
+### `POST /api/v1/reports/{submission_id}/render` (P0-11)
+Owner-only: force re-render (`{ kind: "pdf" | "png" }`). 202 with the new row. Idempotent during queued / running. Rate-limited at `report_render_force_daily_cap` per submission per 24h (429 `force_render_rate_limited` when exceeded).
+
+## Verification (P0-11)
+
+### `GET /api/v1/verify/{submission_id}`
+Anonymous, no auth. Returns the canonical verification envelope plus `canonical_url`, `verification_hash`, `verification_signature`. The hash is a SHA-256 over the canonical JSON of the envelope; the signature is HMAC-SHA256 of the hash under `VERIFY_SECRET`. Response is cacheable for one year (`Cache-Control: public, max-age=31536000, immutable`) and carries `X-Robots-Tag: index, follow` so the URL is the verification path a third party can Google.
+
+404 when:
+- the submission does not exist,
+- the session is not yet graded,
+- the mission is `kind=tutorial` (tutorials are not credentialing),
+- `verification_hash` is NULL (older graded rows that predate the stamping path; operators run `scripts/backfill_verification.py` to re-stamp).
 
 ## Profile
 

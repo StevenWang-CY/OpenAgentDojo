@@ -500,7 +500,70 @@ class GradingRunner:
             cm.to_dict() for cm in compute_critical_moments(events=events, manifest=manifest)
         ]
 
+        # Pre-allocate the submission id so the P0-11 verification envelope
+        # can be computed BEFORE ``db.flush()`` — the envelope's
+        # ``submission_id`` is part of the canonical hash, so we cannot rely
+        # on a server-assigned UUID.
+        pre_assigned_id = uuid.uuid4()
+
+        # P0-11 — build + sign the verification envelope from the same
+        # row this insert is about to persist. The envelope is the
+        # smallest authoritative bundle a third party needs to verify
+        # the grading event; same inputs → same hash on every replay.
+        from app.models.user import User
+        from app.reports.verification import (
+            build_envelope,
+            stamp,
+            verify_secret,
+        )
+
+        user_row = (
+            await db.execute(select(User).where(User.id == session.user_id))
+        ).scalar_one_or_none()
+
+        # P0 determinism — pin ``graded_at`` to a single tz-aware UTC value
+        # rounded to seconds and use it for BOTH the envelope and the
+        # persisted ``Submission.created_at``. ``Submission.created_at`` has
+        # a Postgres ``server_default=func.now()`` which would otherwise be
+        # populated at flush time and diverge from the envelope's
+        # ``graded_at`` (which the envelope rounds to seconds in
+        # ``_coerce_iso``). An explicit value on the ORM instance wins over
+        # the server_default, so the DB row stores the exact second the
+        # envelope hashed against. Without this, the verification_hash on
+        # disk can NEVER round-trip — every backfill --reseal call would
+        # reject every row.
+        graded_at = _now_utc().replace(microsecond=0)
+        envelope_submission = _EnvelopeSubmission(
+            id=pre_assigned_id,
+            total_score=result.total_score,
+            score_cap_reason=result.score_cap_reason,
+            score_report=result.score_report,
+            created_at=graded_at,
+        )
+        envelope = build_envelope(
+            submission=envelope_submission,
+            session=session,
+            manifest=manifest,
+            user=user_row,
+        )
+        try:
+            v_hash, v_sig = stamp(envelope, verify_secret(self.settings))
+        except RuntimeError as exc:
+            # No verify secret resolvable — log loudly and persist NULL
+            # columns. The /verify endpoint 404s on NULL, so the rest of
+            # the report continues to work and a misconfig is visible in
+            # the logs without crashing the grade.
+            logger.error(
+                "[grader] verification secret resolution failed for "
+                "session={}: {}",
+                result.session_id,
+                exc,
+            )
+            v_hash = None
+            v_sig = None
+
         submission = Submission(
+            id=pre_assigned_id,
             session_id=result.session_id,
             final_diff=result.final_diff,
             visible_test_results=result.visible_test_results,
@@ -519,6 +582,17 @@ class GradingRunner:
             # this column to dedupe by mission (best non-gave-up beats
             # any gave-up attempt).
             score_cap_reason=result.score_cap_reason,
+            # P0-11 — verification envelope hash + HMAC signature.
+            verification_hash=v_hash,
+            verification_signature=v_sig,
+            # P0 determinism — explicit ``created_at`` overrides the column's
+            # ``server_default=func.now()`` so the row stores the same
+            # tz-aware UTC second the envelope hashed against. The verify
+            # endpoint and the backfill --reseal script both re-derive the
+            # envelope from ``Submission.created_at``; if this value drifts
+            # by even one second from what the runner hashed, every replay
+            # mismatches and the credential becomes unverifiable.
+            created_at=graded_at,
         )
         db.add(submission)
         await db.flush()
@@ -692,6 +766,35 @@ def _now_iso() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).isoformat()
+
+
+def _now_utc() -> Any:
+    """Return a tz-aware UTC datetime for the verification envelope.
+
+    Pulled out so the runner doesn't import ``datetime`` at module top
+    (the existing pattern is to inline the import where needed). The
+    envelope rounds to seconds in :func:`verification._coerce_iso`, so
+    the microsecond resolution here is harmless.
+    """
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC)
+
+
+@dataclass(slots=True)
+class _EnvelopeSubmission:
+    """Lightweight stand-in for ``Submission`` while building the envelope.
+
+    The envelope builder only reads a handful of attributes — bundling
+    them in a dataclass keeps the runner from constructing a partially-
+    initialised ORM row just to call the builder.
+    """
+
+    id: uuid.UUID
+    total_score: int
+    score_cap_reason: str | None
+    score_report: dict[str, Any]
+    created_at: Any
 
 
 def _hidden_suite_names(manifest: Any) -> set[str]:

@@ -13,6 +13,9 @@ def _prod_env(monkeypatch, **overrides) -> None:
         # Required in staging/production AND must differ from SESSION_SECRET
         # (P2-B12). A different alphabet keeps the two demonstrably distinct.
         "SHARE_TOKEN_SECRET": "b" * 64,
+        # P0-11 — verification HMAC secret. Must be set, ≥32 chars, distinct
+        # from both SESSION_SECRET and SHARE_TOKEN_SECRET in staging/prod.
+        "VERIFY_SECRET": "d" * 64,
         "RESEND_API_KEY": "re_xxx",
         "S3_ACCESS_KEY_ID": "akid",
         "S3_SECRET_ACCESS_KEY": "secret",
@@ -152,6 +155,52 @@ def test_short_share_token_secret_rejected_in_production(monkeypatch) -> None:
     with pytest.raises(Exception) as exc_info:
         Settings()
     assert "SHARE_TOKEN_SECRET" in str(exc_info.value)
+
+
+def test_missing_verify_secret_rejected_in_production(monkeypatch) -> None:
+    """``VERIFY_SECRET`` must be set in staging/production (P0-11).
+
+    A blank VERIFY_SECRET would force the credentialing path to fall
+    back to SESSION_SECRET or SHARE_TOKEN_SECRET — rotating either of
+    those would silently invalidate every verification signature on
+    PDFs already in the wild.
+    """
+    from app.config import Settings
+
+    _prod_env(monkeypatch, VERIFY_SECRET="")
+    with pytest.raises(Exception) as exc_info:
+        Settings()
+    assert "VERIFY_SECRET" in str(exc_info.value)
+
+
+def test_verify_secret_equal_to_session_secret_rejected(monkeypatch) -> None:
+    """Sharing VERIFY_SECRET with SESSION_SECRET conflates trust domains."""
+    from app.config import Settings
+
+    _prod_env(monkeypatch, VERIFY_SECRET="a" * 64)  # equal to SESSION_SECRET
+    with pytest.raises(Exception) as exc_info:
+        Settings()
+    assert "VERIFY_SECRET" in str(exc_info.value)
+
+
+def test_verify_secret_equal_to_share_token_secret_rejected(monkeypatch) -> None:
+    """Sharing VERIFY_SECRET with SHARE_TOKEN_SECRET also conflates trust."""
+    from app.config import Settings
+
+    _prod_env(monkeypatch, VERIFY_SECRET="b" * 64)  # equal to SHARE_TOKEN_SECRET
+    with pytest.raises(Exception) as exc_info:
+        Settings()
+    assert "VERIFY_SECRET" in str(exc_info.value)
+
+
+def test_short_verify_secret_rejected_in_production(monkeypatch) -> None:
+    """A short verify secret defeats the HMAC."""
+    from app.config import Settings
+
+    _prod_env(monkeypatch, VERIFY_SECRET="abc123def456")  # < 32 chars
+    with pytest.raises(Exception) as exc_info:
+        Settings()
+    assert "VERIFY_SECRET" in str(exc_info.value)
 
 
 def test_share_token_secret_unrequired_in_development(monkeypatch) -> None:

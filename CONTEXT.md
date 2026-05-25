@@ -59,7 +59,24 @@ Single source of truth for the load-bearing nouns and conventions used across co
 | User edits & reverts | `file_changes` |
 | Shell commands | `command_runs` |
 | Final patch + report | `submissions` |
+| PDF / PNG render cache (P0-11) | `report_renders` |
+| Cached prompt-judge verdicts | `prompt_judgements` |
 | Earned badges | `user_badges` |
 | Replayable timeline | `supervision_events` |
+| Cookie / analytics consent (P0-5) | `user_consents` |
+| Account self-service audit log (P0-6) | `account_events` |
+| Data-export jobs (P0-6) | `data_exports` |
+| Magic-link issuance | `magic_link_tokens` |
 
-See [IMPLEMENTATION_PLAN.md §6](IMPLEMENTATION_PLAN.md) for full DDL.
+See [IMPLEMENTATION_PLAN.md §6](IMPLEMENTATION_PLAN.md) for the original DDL and [P0_DESIGN.md](P0_DESIGN.md) / [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md) for the migrations 0011–0019 that added the rest.
+
+## Architectural decisions of record
+
+The load-bearing decisions live in [docs/adr/](docs/adr/README.md). Of these, the ones most likely to govern day-to-day code review:
+
+- [ADR 0002](docs/adr/0002-deterministic-agent.md) — hybrid-simulation agent; **no LLM on the grading hot path**.
+- [ADR 0003](docs/adr/0003-event-sourced-supervision.md) — append-only `supervision_events` drives both timeline UI and grader.
+- [ADR 0005](docs/adr/0005-sandbox-isolation.md) — rootless Docker, `--cap-drop=ALL`, `--network=none`.
+- [ADR 0006](docs/adr/0006-scoring-rubric.md) + [ADR 0011](docs/adr/0011-rubric-rebalance.md) — the 100-point weighted rubric, post-rebalance (verification 15, diff_minimality 10).
+- [ADR 0009](docs/adr/0009-multi-attempt-policy.md) — public aggregates use best-per-mission; attempt count is private.
+- [ADR 0010](docs/adr/0010-give-up-policy.md) — give-up caps the total at 50/100 via `score_cap_reason`; dimensions remain honest.

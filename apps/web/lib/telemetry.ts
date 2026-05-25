@@ -45,7 +45,32 @@ export type TelemetryEvent =
   // P0-4 — emitted by the GiveUpDialog confirm action. Property:
   // ``session_id``. Fires BEFORE the API call so the abandon signal is
   // recorded even if the network roundtrip fails.
-  | "session_gave_up";
+  | "session_gave_up"
+  // P0-12 — emitted by the workspace overflow menu when the user opens
+  // the Reset confirmation dialog. Properties: ``session_id``. Distinct
+  // from ``session_reset_completed`` (which fires after the API succeeds)
+  // so the drop-off between "intent" and "confirmed reset" is visible.
+  | "session_reset_requested"
+  // P0-12 — emitted after ``POST /sessions/{id}/reset`` returns 200.
+  // Properties: ``session_id``, ``reset_count``, ``files_reset``.
+  | "session_reset_completed"
+  // P0-11 — emitted by the report dropdown when the user requests a
+  // PDF / PNG. Properties: ``kind``, ``cache_hit`` (boolean — true when
+  // the cached row is already ready, false when the worker has to run).
+  | "report_render_requested"
+  // P0-11 — emitted when a render becomes ready (either cache-hit on the
+  // first call or after polling). Properties: ``submission_id``, ``kind``,
+  // ``ms_to_ready`` (number — wall-clock ms from the user's click to the
+  // ready signal; ~0 on a cache hit).
+  | "report_render_succeeded"
+  // P0-11 — emitted when a render gives up: worker reported ``failed``,
+  // a network error during polling, or the 24-attempt (2 min) ceiling
+  // was reached. Properties: ``submission_id``, ``kind``, ``error_class``
+  // (one of ``render_failed`` | ``polling_timeout`` | ``network_error``).
+  | "report_render_failed"
+  // P0-11 — emitted by the public /verify page on first paint.
+  // Properties: ``submission_id``, ``referer_host`` (when available).
+  | "report_verified";
 
 /**
  * Canonical event names, exposed as a const enum-like object so call sites
@@ -65,6 +90,12 @@ export const TelemetryEvents = {
   sign_in_completed: "sign_in_completed",
   mission_retried: "mission_retried",
   session_gave_up: "session_gave_up",
+  session_reset_requested: "session_reset_requested",
+  session_reset_completed: "session_reset_completed",
+  report_render_requested: "report_render_requested",
+  report_render_succeeded: "report_render_succeeded",
+  report_render_failed: "report_render_failed",
+  report_verified: "report_verified",
 } as const satisfies Record<TelemetryEvent, TelemetryEvent>;
 
 // ── Ring buffer & internal state ────────────────────────────────────────────
