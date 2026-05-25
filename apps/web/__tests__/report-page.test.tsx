@@ -1,5 +1,5 @@
 import * as React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Submission } from "@arena/shared-types";
@@ -22,8 +22,10 @@ vi.mock("next/link", () => ({
 
 // useSearchParams is read by ReportView for the optional `?share=` query.
 const searchParamsGet = vi.fn<(key: string) => string | null>(() => null);
+const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useSearchParams: () => ({ get: searchParamsGet }),
+  useRouter: () => ({ push: routerPush, replace: vi.fn() }),
 }));
 
 // Stub recharts ResponsiveContainer (jsdom has no layout); render children.
@@ -40,6 +42,7 @@ vi.mock("recharts", async () => {
 const getReport = vi.fn();
 const getTimeline = vi.fn();
 const shareReport = vi.fn();
+const createSession = vi.fn();
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -48,6 +51,17 @@ vi.mock("@/lib/api", async () => {
     getReport: (...args: unknown[]) => getReport(...args),
     getTimeline: (...args: unknown[]) => getTimeline(...args),
     shareReport: (...args: unknown[]) => shareReport(...args),
+    createSession: (...args: unknown[]) => createSession(...args),
+  };
+});
+
+const trackMock = vi.fn();
+vi.mock("@/lib/telemetry", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/telemetry")>("@/lib/telemetry");
+  return {
+    ...actual,
+    track: (...args: unknown[]) => trackMock(...args),
   };
 });
 
@@ -62,6 +76,7 @@ function buildSubmission(partial?: Partial<Submission>): Submission {
   const base: Submission = {
     id: "submission-123",
     session_id: "session-abc",
+    mission_id: "auth-cookie-expiration",
     final_diff: "diff --git a/file b/file\n",
     visible_test_results: [],
     hidden_test_results: [],
@@ -109,6 +124,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   getTimeline.mockResolvedValue([]);
   searchParamsGet.mockReturnValue(null);
+  try {
+    window.sessionStorage.clear();
+  } catch {
+    /* jsdom always supplies sessionStorage, but be defensive */
+  }
 });
 
 describe("ReportView", () => {
@@ -192,6 +212,98 @@ describe("ReportView", () => {
       expect(screen.getByText(/Report not available/i)).toBeInTheDocument()
     );
     expect(screen.getByText(/incomplete/i)).toBeInTheDocument();
+  });
+
+  it("fires report_viewed with complete=true once the report renders fully", async () => {
+    getReport.mockResolvedValue(FIXTURE);
+
+    renderWithClient(<ReportView submissionId="submission-123" />);
+
+    await waitFor(() => expect(trackMock).toHaveBeenCalled());
+    const call = trackMock.mock.calls.find(
+      ([event]) => event === "report_viewed",
+    );
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({
+      submission_id: "submission-123",
+      total_score: 78,
+      complete: true,
+    });
+  });
+
+  it("fires report_viewed with complete=false on a partial/incomplete report", async () => {
+    getReport.mockResolvedValue(
+      buildSubmission({
+        score_report: {
+          total: 0,
+          missed_failure_mode: false,
+          strengths: [],
+          weaknesses: [],
+          badges_earned: [],
+          dimensions: {} as unknown as Submission["score_report"]["dimensions"],
+        },
+      }),
+    );
+
+    renderWithClient(<ReportView submissionId="submission-123" />);
+
+    await waitFor(() =>
+      expect(screen.getByText(/Report not available/i)).toBeInTheDocument(),
+    );
+    const call = trackMock.mock.calls.find(
+      ([event]) => event === "report_viewed",
+    );
+    expect(call).toBeDefined();
+    expect(call?.[1]).toMatchObject({
+      submission_id: "submission-123",
+      complete: false,
+    });
+  });
+
+  it("persists the retry-after cooldown across unmount/remount via sessionStorage", async () => {
+    const { ApiError } = await import("@/lib/api");
+    getReport.mockResolvedValue(FIXTURE);
+    createSession.mockRejectedValue(
+      new ApiError("Too many requests", 429, null, 30),
+    );
+
+    const view = renderWithClient(
+      <ReportView submissionId="submission-123" />,
+    );
+
+    // Wait for the report (and therefore the retry button) to render.
+    const retryBtn = await screen.findByTestId("retry-mission-button");
+    expect(retryBtn).not.toBeDisabled();
+
+    // First click — triggers the 429 path which persists the deadline.
+    await act(async () => {
+      fireEvent.click(retryBtn);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("retry-mission-button")).toBeDisabled(),
+    );
+    expect(
+      screen.getByTestId("retry-mission-button").textContent ?? "",
+    ).toMatch(/try again in/i);
+
+    // The cooldown is now in sessionStorage — the key encodes mission id.
+    const stored = window.sessionStorage.getItem(
+      "oad.retry_after.auth-cookie-expiration",
+    );
+    expect(stored).not.toBeNull();
+    const persistedDeadline = Number(stored);
+    expect(persistedDeadline).toBeGreaterThan(Date.now());
+
+    // Unmount (e.g. the user clicked away to /missions) and remount the
+    // report view a moment later.
+    view.unmount();
+    const remounted = renderWithClient(
+      <ReportView submissionId="submission-123" />,
+    );
+    const reRetry = await remounted.findByTestId("retry-mission-button");
+    expect(reRetry).toBeDisabled();
+    expect(reRetry.textContent ?? "").toMatch(/try again in/i);
   });
 
   it("renders the error state when one dimension key is missing", async () => {

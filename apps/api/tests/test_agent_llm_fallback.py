@@ -146,6 +146,39 @@ async def test_persistent_timeout_falls_back_to_seed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_outer_budget_short_circuits_retry_loop() -> None:
+    """P1-2: the outer wall-clock budget bounds total retry time.
+
+    A pathological slow remote that keeps timing out within the per-attempt
+    window can otherwise burn ``call_timeout * (retries + 1) + sum(backoffs)``
+    seconds, well past what the caller expects. Configure a tight outer
+    budget + a generous per-attempt timeout so the first retry's
+    "projected = elapsed + backoff + per_attempt" exceeds the budget and
+    the loop aborts after a single attempt.
+    """
+    before_error = _calls_count("error")
+    before_retry = _calls_count("retry")
+    fake = _AlwaysTimeout()
+    # ``call_timeout_seconds=10`` is the per-attempt cap (well above the
+    # 0.5s the first backoff would add). ``outer_timeout_seconds=1`` is
+    # tighter than (any elapsed) + 0.5s backoff + 10s per-attempt, so
+    # the projection at retry-check time MUST trip the guard.
+    client = AnthropicClient(
+        client=fake,
+        call_timeout_seconds=10.0,
+        outer_timeout_seconds=1.0,
+        max_retries=3,
+    )
+    with pytest.raises(httpx.ReadTimeout):
+        await client.messages_create(messages=[{"role": "user", "content": "hi"}])
+    # Exactly one attempt: the budget guard fires BEFORE the second.
+    assert fake.calls == 1
+    assert _calls_count("error") == before_error + 1
+    # No retry was scheduled — the guard fired in the same iteration.
+    assert _calls_count("retry") == before_retry
+
+
+@pytest.mark.asyncio
 async def test_no_civitas_raises_runtime_error_with_clear_message() -> None:
     """When civitas is absent and no test client is injected, calls must fail loudly."""
     client = AnthropicClient()  # no override → _client is None

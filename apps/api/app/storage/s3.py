@@ -25,10 +25,13 @@ boto3 calls into business logic.
 from __future__ import annotations
 
 import io
+import logging
 from functools import lru_cache
 from typing import IO, Any
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=1)
@@ -41,10 +44,21 @@ def get_s3_client() -> Any:
     keeps subsequent calls free.
     """
     import boto3  # local import keeps cold-start cheap
+    from botocore.config import Config
 
     settings = get_settings()
+    # Bounded timeouts + retries: without these, boto3 defaults to a
+    # 60s connect and indefinite-feeling read timeout, which can wedge
+    # workers if R2/MinIO stalls. The retries cover transient 5xx and
+    # connection resets without re-raising into business logic.
+    boto_config = Config(
+        connect_timeout=10,
+        read_timeout=30,
+        retries={"max_attempts": 3, "mode": "standard"},
+    )
     kwargs: dict[str, Any] = {
         "region_name": settings.s3_region,
+        "config": boto_config,
     }
     # MinIO / R2 expose a non-default endpoint; vanilla AWS S3 does not.
     if settings.s3_endpoint_url:
@@ -119,11 +133,28 @@ def generate_download_url(key: str, *, expires_in: int) -> str:
 def delete_object(key: str) -> None:
     """Delete ``key`` from the artifact bucket.
 
-    Raises on transport error so the caller can decide whether to retry or
-    log-and-move-on. The deletion worker treats missing keys as success
-    because the worker is idempotent — a re-run after a partial failure
-    must not 500 on the second pass.
+    Idempotent for missing keys: an S3 ``NoSuchKey``/``NotFound`` is
+    swallowed (with a DEBUG log) because the deletion worker may re-run
+    after a partial failure and must not 500 on the second pass. All
+    other transport errors are re-raised so the caller can decide
+    whether to retry or log-and-move-on.
     """
+    from botocore.exceptions import ClientError
+
     settings = get_settings()
     client = get_s3_client()
-    client.delete_object(Bucket=settings.s3_bucket, Key=key)
+    try:
+        client.delete_object(Bucket=settings.s3_bucket, Key=key)
+    except ClientError as exc:
+        error_code = ""
+        try:
+            error_code = str(exc.response.get("Error", {}).get("Code", ""))
+        except AttributeError:
+            error_code = ""
+        if error_code in {"NoSuchKey", "NotFound", "404"}:
+            logger.debug(
+                "s3_delete_object_missing",
+                extra={"key": key, "error_code": error_code},
+            )
+            return
+        raise

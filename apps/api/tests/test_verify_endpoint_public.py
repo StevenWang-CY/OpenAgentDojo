@@ -70,6 +70,15 @@ async def _seed(
         )
         await db.flush()
 
+        # Pin ``created_at`` explicitly so the stamping path and the
+        # GET-side replay BOTH read the same tz-aware UTC second when
+        # they re-derive the envelope. The runner's real grader uses
+        # this same contract — without an explicit value the DB
+        # server_default fires at flush time, drifting microseconds
+        # past the stamping value and breaking the P1-5 re-verify.
+        from datetime import UTC, datetime
+
+        graded_at = datetime.now(UTC).replace(microsecond=0)
         sub = Submission(
             id=submission_id,
             session_id=session_id,
@@ -80,35 +89,46 @@ async def _seed(
             score_report={"total": 85, "effective_max": 100, "missed_failure_mode": False},
             total_score=85,
             score_cap_reason=None,
+            created_at=graded_at,
         )
         db.add(sub)
         await db.flush()
 
         if stamp:
-            from datetime import UTC, datetime
+            from sqlalchemy import select
 
             from app.config import get_settings
 
             secret = verify_secret(get_settings())
+
+            # Read back the *persisted* mission/session/user rows so the
+            # envelope this stamp produces matches byte-for-byte what
+            # the GET handler will re-derive on a verification request.
+            # The runner's real grader stamps from these same DB rows;
+            # mirroring that here is the only way the P1-5 HMAC
+            # re-verify passes on a freshly-seeded fixture.
+            mission_row = (
+                await db.execute(select(Mission).where(Mission.id == mission_id))
+            ).scalar_one()
+            session_row = (
+                await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+            ).scalar_one()
+            user_row = (await db.execute(select(User).where(User.id == owner_id))).scalar_one()
 
             class _S:
                 id = submission_id
                 total_score = 85
                 score_cap_reason = None
                 score_report = sub.score_report
-                created_at = datetime.now(UTC)
+                created_at = graded_at
+                verified = False
 
             envelope = build_envelope(
                 submission=_S(),
-                session=SessionRow(
-                    id=session_id,
-                    user_id=owner_id,
-                    mission_id=mission_id,
-                    status="graded",
-                    attempt_index=1,
-                ),
+                session=session_row,
                 manifest=None,
-                user=User(id=owner_id, handle="owner", display_name="Owner"),
+                user=user_row,
+                mission_row=mission_row,
             )
             h = compute_hash(envelope)
             sub.verification_hash = h
@@ -166,3 +186,39 @@ async def test_verify_endpoint_404s_on_unknown_id(client, db_engine) -> None:
     await _seed(db_engine)
     resp = await client.get(f"/api/v1/verify/{uuid.uuid4()}")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_verify_endpoint_410s_on_rotated_secret(client, db_engine) -> None:
+    """P1-5: a credential signed under a retired secret returns 410 GONE.
+
+    Seed the submission, then OVERWRITE the persisted
+    ``verification_signature`` with one produced under a different
+    secret. The GET handler must re-derive the canonical hash, sign it
+    with the CURRENT ``VERIFY_SECRET``, and fail the constant-time
+    comparison — surfacing the documented rotation error.
+    """
+    _owner, submission_id = await _seed(db_engine)
+
+    from sqlalchemy import select, update
+
+    from app.db import session as session_module
+
+    # Overwrite the signature with one produced under a brand-new secret.
+    bogus_secret = "definitely-not-the-current-VERIFY_SECRET-value-zzz"
+    async with session_module.AsyncSessionLocal() as db:
+        sub = (
+            await db.execute(select(Submission).where(Submission.id == submission_id))
+        ).scalar_one()
+        forged = compute_signature(sub.verification_hash, bogus_secret)
+        await db.execute(
+            update(Submission)
+            .where(Submission.id == submission_id)
+            .values(verification_signature=forged)
+        )
+        await db.commit()
+
+    resp = await client.get(f"/api/v1/verify/{submission_id}")
+    assert resp.status_code == 410, resp.text
+    body = resp.json()
+    assert body["detail"]["code"] == "verification_secret_rotated"

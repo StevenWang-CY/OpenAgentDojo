@@ -65,6 +65,70 @@ describe("CodeEditor file fetch", () => {
     expect(getFile).not.toHaveBeenCalled();
   });
 
+  it("ignores the stale invalidation/refetch from an earlier revert when a newer revert fires mid-flight", async () => {
+    // FE-P2 audit fix — handleRevert captures a monotonic `revertEpoch`
+    // before awaiting `revertFile`. If a second revert starts while the
+    // first is mid-await, the first one's post-await invalidate/refetch
+    // chain must bail (the newer one will own the final write into the
+    // store). Otherwise we'd flicker pre-revert content over the
+    // freshly-reverted file.
+    getFile.mockResolvedValue({
+      path: "backend/auth/session.ts",
+      content: "first\n",
+      encoding: "utf-8",
+      truncated: false,
+    });
+
+    // Resolve revertFile slowly enough that we can fire a second revert
+    // before the first's promise settles.
+    let resolveFirstRevert!: () => void;
+    const firstRevertPending = new Promise<void>((res) => {
+      resolveFirstRevert = res;
+    });
+    revertFile
+      .mockImplementationOnce(async () => {
+        await firstRevertPending;
+      })
+      .mockImplementationOnce(async () => {
+        // Second revert resolves immediately.
+      });
+
+    renderWithClient(
+      <CodeEditor sessionId="session-1" path="backend/auth/session.ts" />,
+    );
+
+    await waitFor(() => expect(getFile).toHaveBeenCalledTimes(1));
+    const callsAfterMount = getFile.mock.calls.length;
+
+    const revertBtn = await screen.findByRole("button", {
+      name: /revert backend\/auth\/session\.ts/i,
+    });
+
+    // Two reverts in quick succession.
+    fireEvent.click(revertBtn);
+    fireEvent.click(revertBtn);
+
+    // Both reverts are now in flight; only the second one's epoch matches.
+    // Allow the second revert (and its post-await invalidate/fetch) to run.
+    await waitFor(() => expect(revertFile).toHaveBeenCalledTimes(2));
+
+    // The second revert refetches the file exactly once.
+    await waitFor(() =>
+      expect(getFile.mock.calls.length).toBe(callsAfterMount + 1),
+    );
+
+    const callsAfterSecondRevert = getFile.mock.calls.length;
+
+    // Now finish the first (stale) revert. Its post-await invalidate/fetch
+    // chain must bail out because the epoch has moved on — so getFile must
+    // NOT be called a second time after this.
+    resolveFirstRevert();
+
+    // Give the microtask queue a tick to settle the stale revert.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(getFile.mock.calls.length).toBe(callsAfterSecondRevert);
+  });
+
   it("renders an inline error with a Retry button when fetch fails, and retries on click", async () => {
     const { ApiError } = await import("@/lib/api");
     // The CodeEditor retries once on non-404 failures, so the initial fetch

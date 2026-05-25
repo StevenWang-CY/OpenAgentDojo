@@ -47,10 +47,20 @@ export function AgentChat({
       context_files: contextPaths.length,
     });
     setSubmitting(true);
+    // FE-P1 audit fix — only clear the textarea on a successful submit.
+    // If the parent's submit handler rejects (e.g. backend 500, network
+    // blip) we leave the prompt in place so the user can retry without
+    // re-typing. The parent surfaces the actual error via toast.
+    let succeeded = false;
     try {
       await onSubmit(trimmed);
-      setDraft("");
+      succeeded = true;
+    } catch {
+      // Swallow — toast/UX surfacing is the parent's job. We intentionally
+      // do NOT re-throw because the form is a fire-and-forget submit; we
+      // just need the draft to survive.
     } finally {
+      if (succeeded) setDraft("");
       setSubmitting(false);
     }
   }

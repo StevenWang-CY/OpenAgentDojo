@@ -29,6 +29,26 @@ type XtermModule = typeof import("xterm");
 type FitAddonModule = typeof import("xterm-addon-fit");
 type WebLinksAddonModule = typeof import("xterm-addon-web-links");
 
+/**
+ * Surfaced when the WS close code is 1008 (policy violation, used for auth)
+ * or 4401 (token expired). Exported so the test can pin the literal copy
+ * without re-typing the magic string.
+ */
+export const SESSION_EXPIRED_MESSAGE =
+  "Session expired. Refresh the page to reconnect.";
+
+/**
+ * Map a WebSocket close code to an actionable error message, or null if the
+ * default StatusBadge ("Disconnected" / "Reconnecting…") is fine. Pulled out
+ * so the close-code policy can be unit-tested without booting xterm.
+ */
+export function errorMessageForCloseCode(code: number): string | null {
+  // 1008 = policy violation (FastAPI auth deps close with this), 4401 =
+  // custom "token expired" code matching the backend convention.
+  if (code === 1008 || code === 4401) return SESSION_EXPIRED_MESSAGE;
+  return null;
+}
+
 type TerminalInstance = InstanceType<XtermModule["Terminal"]>;
 type FitAddonInstance = InstanceType<FitAddonModule["FitAddon"]>;
 
@@ -171,6 +191,15 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
           onOpen() {
             if (socket) flushPending(socket);
           },
+          onClose(event) {
+            // FE-P2 audit fix — 1008 (policy / auth) and 4401 (token
+            // expired) both mean the session id ↔ token pair is no
+            // longer valid. The generic "Disconnected" badge isn't
+            // actionable; tell the user exactly what to do.
+            if (disposed) return;
+            const friendly = errorMessageForCloseCode(event.code);
+            if (friendly) setError(friendly);
+          },
           onMessage(ev) {
             const data = ev.data;
             if (typeof data === "string") {
@@ -277,8 +306,14 @@ function StatusBadge({
   error: string | null;
 }) {
   if (status === "open" && !error) return null;
+  const isSessionExpired = error === SESSION_EXPIRED_MESSAGE;
+  // FE-P2 audit fix — session-expired surfaces the friendly literal so the
+  // user knows it's recoverable with a refresh, and we pair it with a
+  // pointer-events-on Refresh button next to the badge.
   const label = error
-    ? "Error"
+    ? isSessionExpired
+      ? "Session expired"
+      : "Error"
     : status === "connecting"
       ? "Connecting…"
       : status === "reconnecting"
@@ -288,13 +323,29 @@ function StatusBadge({
           : "Idle";
 
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-[oklch(from_var(--color-background)_l_c_h/0.85)] px-2 py-0.5 text-[10px] font-mono text-[var(--color-muted-foreground)] backdrop-blur"
-    >
-      {status !== "open" ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
-      {label}
+    <div className="absolute right-2 top-2 flex items-center gap-1.5">
+      <div
+        role="status"
+        aria-live="polite"
+        title={isSessionExpired ? SESSION_EXPIRED_MESSAGE : undefined}
+        className="pointer-events-none inline-flex items-center gap-1 rounded-md bg-[oklch(from_var(--color-background)_l_c_h/0.85)] px-2 py-0.5 font-mono text-xs text-[var(--color-muted-foreground)] backdrop-blur"
+      >
+        {status !== "open" && !isSessionExpired ? (
+          <Loader2 className="size-3 animate-spin" aria-hidden />
+        ) : null}
+        {label}
+      </div>
+      {isSessionExpired ? (
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof window !== "undefined") window.location.reload();
+          }}
+          className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-0.5 font-mono text-xs text-[var(--color-foreground)] backdrop-blur transition-colors hover:bg-[var(--color-surface-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--color-background)]"
+        >
+          Refresh
+        </button>
+      ) : null}
     </div>
   );
 }

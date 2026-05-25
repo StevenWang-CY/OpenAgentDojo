@@ -67,9 +67,16 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
     retry: false,
   });
 
+  // FE-P2 audit fix — dedupe is now keyed by (submissionId, complete) so
+  // a partial report that later finishes grading and re-renders as the
+  // complete view still emits a second `report_viewed` event. Analytics
+  // can split incomplete (early-render / failed-grade) from complete.
   const reportedRef = React.useRef<string | null>(null);
   const total = reportQuery.data?.total_score;
   const missed = reportQuery.data?.score_report?.missed_failure_mode;
+  const reportComplete = hasAllDimensions(
+    reportQuery.data?.score_report?.dimensions,
+  );
 
   // P0-2 — single highlight slot consumed by the timeline replay. Hoisted
   // above the early returns so the hook order stays stable across renders.
@@ -82,22 +89,23 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
     setHighlightEventId(null);
     requestAnimationFrame(() => setHighlightEventId(eventId));
   }, []);
-  // Telemetry fires exactly once per submission per mount via `reportedRef`.
-  // We intentionally do NOT include `effectiveShare` in the deps array — it
-  // doesn't change the identity of the report being viewed, and adding it
-  // would cause a duplicate event if a viewer switched between owned-view
-  // and share-token-view of the same submission. The dedupe key is the
-  // submission id, not the URL.
+  // Telemetry fires once per (submissionId, complete) tuple per mount via
+  // `reportedRef`. We intentionally do NOT include `effectiveShare` in the
+  // deps array — it doesn't change the identity of the report being viewed,
+  // and adding it would cause a duplicate event if a viewer switched
+  // between owned-view and share-token-view of the same submission.
   React.useEffect(() => {
-    if (reportQuery.data && reportedRef.current !== submissionId) {
-      reportedRef.current = submissionId;
-      track("report_viewed", {
-        submission_id: submissionId,
-        total_score: total,
-        passed: missed === undefined ? null : missed === false,
-      });
-    }
-  }, [reportQuery.data, submissionId, total, missed]);
+    if (!reportQuery.data) return;
+    const dedupeKey = `${submissionId}::${reportComplete ? "complete" : "partial"}`;
+    if (reportedRef.current === dedupeKey) return;
+    reportedRef.current = dedupeKey;
+    track("report_viewed", {
+      submission_id: submissionId,
+      total_score: total,
+      passed: missed === undefined ? null : missed === false,
+      complete: reportComplete,
+    });
+  }, [reportQuery.data, submissionId, total, missed, reportComplete]);
 
   if (reportQuery.isLoading) {
     return <ReportSkeleton />;
@@ -174,7 +182,7 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
         {submission.verified ? (
           <span
             data-testid="verified-badge"
-            className="inline-flex items-center gap-1.5 rounded-full border border-[oklch(from_var(--color-primary)_l_c_h/0.5)] bg-[oklch(from_var(--color-primary)_l_c_h/0.08)] px-2.5 py-0.5 text-[10.5px] font-medium text-[var(--color-primary)]"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[oklch(from_var(--color-primary)_l_c_h/0.5)] bg-[oklch(from_var(--color-primary)_l_c_h/0.08)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--color-primary)]"
           >
             <span aria-hidden className="font-mono">{"//"}</span>
             verified · proctored
@@ -182,7 +190,7 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
         ) : (
           <span
             data-testid="honor-mode-chip"
-            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10.5px] text-[var(--color-muted-foreground)]"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[11px] text-[var(--color-muted-foreground)]"
           >
             <span aria-hidden className="font-mono">{"//"}</span>
             honor mode · practice score
@@ -298,6 +306,57 @@ interface RetryMissionButtonProps {
   previousSessionId: string;
 }
 
+/**
+ * Per-mission sessionStorage key for the retry-after deadline. Persisting
+ * survives the inevitable navigation-then-back pattern after a 429 — the
+ * cooldown is a server-side budget, so it has to outlive a component unmount
+ * or the user just walks the button back into another 429 storm.
+ */
+function retryAfterStorageKey(missionId: string): string {
+  return `oad.retry_after.${missionId}`;
+}
+
+/** Read the persisted retry-after deadline (epoch ms) for this mission.
+ *  Returns null on SSR, missing key, garbage value, or an already-elapsed
+ *  deadline (with a cleanup write in that last case). */
+function readRetryAfterDeadline(missionId: string): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(retryAfterStorageKey(missionId));
+    if (!raw) return null;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return null;
+    if (parsed <= Date.now()) {
+      window.sessionStorage.removeItem(retryAfterStorageKey(missionId));
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeRetryAfterDeadline(missionId: string, deadline: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      retryAfterStorageKey(missionId),
+      String(deadline),
+    );
+  } catch {
+    /* sessionStorage may be unavailable (Safari private mode quirks) */
+  }
+}
+
+function clearRetryAfterDeadline(missionId: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(retryAfterStorageKey(missionId));
+  } catch {
+    /* ignore */
+  }
+}
+
 function RetryMissionButton({
   missionId,
   previousSessionId,
@@ -306,28 +365,38 @@ function RetryMissionButton({
   const queryClient = useQueryClient();
   // FE-P1 audit fix — when the user hits 429 (rate limit), disable the
   // button for the retry-after window AND surface a live countdown in
-  // the label so they don't spam the button and rack up 429s. Using a
-  // simple state machine keyed off the response header.
+  // the label so they don't spam the button and rack up 429s. The
+  // deadline is persisted to sessionStorage keyed by missionId so a
+  // navigate-away → come-back cycle can't sneak the user past the
+  // cooldown.
   const [retryAfterDeadline, setRetryAfterDeadline] = React.useState<
     number | null
-  >(null);
+  >(() => readRetryAfterDeadline(missionId));
   const [, force] = React.useReducer((n: number) => n + 1, 0);
+  // Re-sync from storage when the mission id changes (defensive — the
+  // current callsite mounts a fresh button per submission, but the hook
+  // should still behave correctly if reused).
+  React.useEffect(() => {
+    setRetryAfterDeadline(readRetryAfterDeadline(missionId));
+  }, [missionId]);
   React.useEffect(() => {
     if (retryAfterDeadline === null) return;
     const remaining = retryAfterDeadline - Date.now();
     if (remaining <= 0) {
       setRetryAfterDeadline(null);
+      clearRetryAfterDeadline(missionId);
       return;
     }
     const interval = window.setInterval(() => {
       if (Date.now() >= retryAfterDeadline) {
         setRetryAfterDeadline(null);
+        clearRetryAfterDeadline(missionId);
         return;
       }
       force();
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [retryAfterDeadline]);
+  }, [retryAfterDeadline, missionId]);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -386,10 +455,13 @@ function RetryMissionButton({
         }
         if (err.status === 429) {
           const wait = err.retryAfterSeconds ?? 60;
+          const deadline = Date.now() + wait * 1000;
           // FE-P1 audit fix — disable the button AND show a live countdown
           // until the rate-limit budget refills, instead of letting the
-          // user spam the button and accumulate more 429s.
-          setRetryAfterDeadline(Date.now() + wait * 1000);
+          // user spam the button and accumulate more 429s. Persist the
+          // deadline so a tab switch / nav-away can't reset the cooldown.
+          setRetryAfterDeadline(deadline);
+          writeRetryAfterDeadline(missionId, deadline);
           toast.error(
             `You're submitting too quickly. Try again in ${wait}s.`,
           );
@@ -542,7 +614,7 @@ function ReportHeader({
           onCopyLink={() => void handleShare()}
           sharing={sharing}
         />
-        <p className="font-mono text-[10.5px] text-[var(--color-muted-foreground)]">
+        <p className="font-mono text-[11px] text-[var(--color-muted-foreground)]">
           {sharedExpiresAt
             ? `link expires ${formatShareExpiry(sharedExpiresAt)}`
             : "share links last 30 days"}

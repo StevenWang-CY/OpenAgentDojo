@@ -69,7 +69,17 @@ def _context_to_list(context: ContextSelection) -> list[str]:
 
 
 def _manifest_sha(manifest: Any) -> str:
-    """Best-effort sha lookup; falls back to id when sha is not on the manifest."""
+    """Return the manifest's content sha. Raises when the sha is missing.
+
+    Mirrors the contract enforced in :func:`app.grading.runner._build_prompt_judgements`:
+    silently falling back to ``manifest.id`` lets a stale (id-keyed)
+    judgement cache survive an edit to the prompts / intents /
+    forbidden_changes block, which violates the determinism contract
+    that re-grading after a mission edit produces different numbers.
+    Surfacing it loudly forces the bug to be fixed at the loader (where
+    the sha is computed from the YAML bytes) rather than papered over
+    here.
+    """
     sha = getattr(manifest, "manifest_sha256", "") or ""
     if sha:
         return str(sha)
@@ -79,7 +89,10 @@ def _manifest_sha(manifest: Any) -> str:
         sha2 = getattr(inner, "manifest_sha256", "") or ""
         if sha2:
             return str(sha2)
-    return str(getattr(manifest, "id", "") or "")
+    raise RuntimeError(
+        f"manifest_sha256 missing for mission "
+        f"{getattr(manifest, 'id', None) or getattr(inner, 'id', None) or '<unknown>'}"
+    )
 
 
 def _manifest_id(manifest: Any) -> str:
@@ -274,10 +287,15 @@ class AgentService:
         inner_manifest = getattr(manifest, "manifest", manifest)
 
         # -- 1. Classify intent + render template (cached per mission) --------
-        classifier = _classifier_for(inner_manifest, mission_folder)
+        # The classifier + renderer cache by ``(mission_id, manifest_sha256)``
+        # so a hot-reload that bumps the manifest invalidates them. Pass the
+        # LoadedMission (which carries the sha) rather than the bare
+        # MissionManifest so ``_manifest_sha`` finds it; the bare manifest
+        # has no content sha and would now raise.
+        classifier = _classifier_for(manifest, mission_folder)
         intent = classifier(prompt)
 
-        renderer = _renderer_for(inner_manifest, mission_folder)
+        renderer = _renderer_for(manifest, mission_folder)
         selected_context = _context_to_list(context)
         failure_mode_title, failure_mode_description = _manifest_failure_mode(inner_manifest)
         seed_response = renderer.render(

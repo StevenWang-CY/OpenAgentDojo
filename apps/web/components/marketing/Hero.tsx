@@ -31,6 +31,7 @@ const RUBRIC_TOTAL = RUBRIC.reduce((sum, d) => sum + d.pts, 0);
  * is what gives the scene depth. Removing the blobs makes the glass go
  * dead.
  */
+// Marketing hero — uses hand-tuned non-token type sizes for poster impact; do not copy these literals into app shell components.
 export function Hero() {
   return (
     <section
@@ -90,7 +91,7 @@ export function Hero() {
         <div
           role="group"
           aria-label={`The ${RUBRIC_TOTAL}-point supervision rubric`}
-          className="mt-14 overflow-hidden rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-soft"
+          className="mt-14 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-soft"
         >
           <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-4 py-2.5">
             <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-[var(--color-muted-foreground)]">

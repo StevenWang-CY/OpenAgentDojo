@@ -60,7 +60,7 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: agentarena-minio
     restart: unless-stopped
     environment:
@@ -79,7 +79,7 @@ services:
       retries: 20
 
   minio-bucket-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-04-08T15-39-49Z
     container_name: agentarena-minio-init
     depends_on:
       minio:
@@ -94,7 +94,7 @@ services:
     restart: "no"
 
   mailhog:
-    image: mailhog/mailhog:latest
+    image: mailhog/mailhog:v1.0.1
     container_name: agentarena-mailhog
     restart: unless-stopped
     ports:

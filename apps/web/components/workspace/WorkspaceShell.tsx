@@ -909,9 +909,14 @@ async function handleAgentSubmit(
     });
     pushAgentTurn(turn);
   } catch (err) {
+    // FE-P1 audit fix — surface the toast AND re-throw so the caller
+    // (AgentChat) keeps the user's typed prompt in the textarea. The
+    // previous swallow cleared the draft on a backend 500, dumping the
+    // user's words on the floor.
     toast.error(
       err instanceof ApiError ? err.message : "Failed to send prompt."
     );
+    throw err;
   }
 }
 
@@ -965,8 +970,12 @@ function synthesiseAgentTurn(event: SupervisionEvent): AgentTurn | null {
   if (event.event_type !== "agent.responded") return null;
   const payload = event.payload;
   if (!isValidAgentRespondedPayload(payload)) {
+    // FE-P2 audit fix — name the offending field so a future schema
+    // bump surfaces in DevTools as "missing turn_index" rather than as
+    // an opaque "malformed payload" dump.
+    const offendingField = firstInvalidAgentRespondedField(payload);
     console.warn(
-      "[workspace] dropping malformed agent.responded payload",
+      `[workspace] dropping malformed agent.responded payload (invalid field: ${offendingField ?? "unknown"})`,
       payload
     );
     return null;
@@ -1004,6 +1013,24 @@ function isValidAgentRespondedPayload(value: unknown): value is {
     Number.isFinite(v.turn_index) &&
     typeof v.response_summary === "string"
   );
+}
+
+/**
+ * Sibling of `isValidAgentRespondedPayload` that returns the *name* of the
+ * first invalid field instead of a boolean. Used exclusively in the warn
+ * path so DevTools surfaces a precise reason ("turn_index" / "response_summary"
+ * / "payload") rather than an opaque "malformed" string.
+ */
+function firstInvalidAgentRespondedField(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return "payload";
+  const v = value as Record<string, unknown>;
+  if (typeof v.turn_index !== "number" || !Number.isFinite(v.turn_index)) {
+    return "turn_index";
+  }
+  if (typeof v.response_summary !== "string") {
+    return "response_summary";
+  }
+  return null;
 }
 
 /** Pull the changed paths out of a unified diff for the ScorePreview hint. */

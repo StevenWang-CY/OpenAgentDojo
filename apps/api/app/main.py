@@ -51,6 +51,38 @@ class ArenaError(Exception):
         self.status_code = status_code
 
 
+# P1-4 — periodic sweep for ``report_renders`` rows pinned at ``running``
+# past the worker's job timeout. Spawned by the lifespan handler.
+_RENDER_SWEEP_INTERVAL_S = 60
+_RENDER_SWEEP_STALE_AFTER_S = 300
+
+
+async def _render_sweep_loop() -> None:
+    """Periodically flip stuck ``report_renders.status='running'`` rows to
+    ``failed`` so a wedged worker doesn't pin a row forever.
+
+    The loop opens a fresh ``AsyncSession`` per iteration so a transient
+    DB error in one sweep doesn't poison a long-lived session. Errors
+    are logged and swallowed — the worker recovers on the next tick;
+    the loop exits cleanly on ``CancelledError`` (the lifespan path).
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.workers.report_render import sweep_stuck_renders
+
+    while True:
+        try:
+            await asyncio.sleep(_RENDER_SWEEP_INTERVAL_S)
+        except asyncio.CancelledError:
+            return
+        try:
+            async with AsyncSessionLocal() as db:
+                await sweep_stuck_renders(db, stale_after_s=_RENDER_SWEEP_STALE_AFTER_S)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # sweep must keep ticking past per-iteration errors
+            logger.warning("report_render_sweep_iteration_failed: {}", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = get_settings()
@@ -113,6 +145,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     reaper_task = asyncio.create_task(pool.reaper_loop(), name="sandbox-reaper")
     orphan_task = asyncio.create_task(pool.orphan_sweeper_loop(), name="sandbox-orphan-sweeper")
 
+    # P1-4 — periodic sweep for ``report_renders`` rows pinned at
+    # ``running`` past the worker's own job timeout (e.g. worker SIGTERM
+    # during shutdown, OOM kill, Playwright wedged). Without this, the
+    # row hangs forever, the FE poll never resolves, and the user's
+    # force-rerender budget is silently consumed.
+    render_sweep_task = asyncio.create_task(_render_sweep_loop(), name="report-render-sweep")
+
     # Let the in-process provision fallback see the running app so it can
     # register handles on the pool (the WS terminal route reads from it).
     from app.workers.provision import register_app
@@ -122,19 +161,45 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        for task in (reaper_task, orphan_task):
+        # Drain any in-flight background grading tasks first so they get
+        # a chance to commit their submission row + verification envelope
+        # before the thread pool that backs ``driver.read_file`` shims
+        # tears down. Bounded so a wedged grader can't block shutdown.
+        from app.grading.runner import (
+            await_active_grading_tasks,
+            shutdown_fs_executor,
+        )
+
+        completed, timed_out = await await_active_grading_tasks(deadline_seconds=10.0)
+        if completed or timed_out:
+            logger.info(
+                "shutdown: drained grading tasks completed={} timed_out={}",
+                completed,
+                timed_out,
+            )
+        for task in (reaper_task, orphan_task, render_sweep_task):
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                # Cooperative cancellation is the expected shutdown path
+                # for these loops — not a signal worth shouting about.
                 pass
+            except Exception:
+                # Anything else (a bug in the loop body) is worth a
+                # structured signal so on-call has something to chase
+                # without it stopping shutdown.
+                logger.warning(
+                    "shutdown_task_swallowed task={}",
+                    task.get_name(),
+                    exc_info=True,
+                )
         await pool.shutdown()
         # Tear down the grading FS thread pool last — by this point no
-        # validator should still be running, so cancel_futures wins us back
-        # idle worker threads without blocking shutdown (P1-2).
-        from app.grading.runner import shutdown_fs_executor
-
-        shutdown_fs_executor()
+        # validator should still be running. ``wait=True`` blocks until
+        # any in-flight ``driver.read_file`` shim returns, which is the
+        # belt to the suspenders of the grading-task drain above.
+        shutdown_fs_executor(wait=True)
         # Close the cached Redis client so we don't leak a socket past
         # process shutdown. Best-effort — never block shutdown on it.
         try:

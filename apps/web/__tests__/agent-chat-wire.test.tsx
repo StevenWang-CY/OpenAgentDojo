@@ -59,6 +59,50 @@ describe("AgentChat wiring", () => {
     expect(onApplyPatch).toHaveBeenCalledWith("turn-1");
   });
 
+  it("preserves the typed prompt in the textarea when onSubmit rejects", async () => {
+    // FE-P1 audit fix — a backend 500 used to silently clear the draft via
+    // the parent's swallow. We now leave the prompt in place so the user
+    // can retry without retyping.
+    const onSubmit = vi.fn().mockRejectedValue(new Error("boom"));
+    render(
+      <AgentChat
+        turns={[]}
+        contextPaths={[]}
+        onSubmit={onSubmit}
+      />,
+    );
+    const textarea = screen.getByLabelText(
+      /prompt the agent/i,
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, {
+      target: { value: "Investigate the cookie check." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    // After the promise rejects, the form is re-enabled and the draft is
+    // still in the textarea exactly as typed.
+    await waitFor(() =>
+      expect(textarea).not.toBeDisabled(),
+    );
+    expect(textarea.value).toBe("Investigate the cookie check.");
+  });
+
+  it("clears the textarea when onSubmit resolves", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <AgentChat turns={[]} contextPaths={[]} onSubmit={onSubmit} />,
+    );
+    const textarea = screen.getByLabelText(
+      /prompt the agent/i,
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Run the tests." } });
+    fireEvent.click(screen.getByRole("button", { name: /send/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(textarea.value).toBe(""));
+  });
+
   it("does not show Apply Patch once the turn has been applied", () => {
     const applied: AgentTurn = {
       ...TURN,

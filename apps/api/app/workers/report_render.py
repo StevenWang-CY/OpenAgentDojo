@@ -204,6 +204,57 @@ async def _mark_failed(db: Any, row: ReportRender, error: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Stuck-row sweeper (P1-4)
+# ---------------------------------------------------------------------------
+
+
+async def sweep_stuck_renders(db: Any, *, stale_after_s: int = 300) -> int:
+    """Mark any ``running`` ``report_renders`` row older than ``stale_after_s``
+    seconds as ``failed``. Returns the number of rows flipped.
+
+    A worker that crashed mid-render (OOM kill, SIGTERM during shutdown
+    that didn't finish committing, Playwright deadlock) leaves the row
+    pinned at ``running`` forever. Clients polling the row hang on it;
+    the daily-force-rerender cap counts it against the user's budget;
+    nothing ever moves it. This sweep — invoked on a periodic lifespan
+    task — is the safety net.
+
+    Uses ``created_at`` rather than a missing ``updated_at`` column
+    because the schema doesn't carry per-mutation timestamps; a
+    ``running`` row whose creation is older than the worker's own job
+    timeout (300s by default) is dead by every plausible definition.
+
+    Idempotent: no matching rows → no-op, returns 0.
+    """
+    from datetime import timedelta
+
+    horizon = datetime.now(UTC) - timedelta(seconds=int(max(1, stale_after_s)))
+    rows = (
+        (
+            await db.execute(
+                select(ReportRender).where(
+                    ReportRender.status == RENDER_STATUS_RUNNING,
+                    ReportRender.created_at < horizon,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return 0
+    for row in rows:
+        row.status = RENDER_STATUS_FAILED
+        row.error = "render_timed_out_after_shutdown"
+    await db.commit()
+    logger.warning(
+        "report_render sweep: flipped {} stuck running row(s) to failed",
+        len(rows),
+    )
+    return len(rows)
+
+
+# ---------------------------------------------------------------------------
 # Playwright bridge
 # ---------------------------------------------------------------------------
 

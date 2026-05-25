@@ -449,6 +449,11 @@ async def get_verify(
     # the persisted columns — never recomputed — so a future change to
     # the envelope builder cannot invalidate an issued credential.
     from app.missions.cache import cached_manifests
+    from app.reports.verification import (
+        compute_hash,
+        compute_signature,
+        verify_secret,
+    )
 
     loaded = cached_manifests().get(session.mission_id)
     manifest = loaded.manifest if loaded is not None else None
@@ -459,6 +464,51 @@ async def get_verify(
         user=user,
         mission_row=mission_row,
     )
+
+    # P1-5 — re-verify the HMAC on every GET so a retired ``VERIFY_SECRET``
+    # cannot keep serving a credential as valid. The recomputed hash is
+    # over the freshly-derived envelope (same inputs → same bytes on
+    # every replay); the recomputed signature uses the CURRENT secret.
+    # When the persisted signature was produced under a previous secret,
+    # ``hmac.compare_digest`` returns False and the credential is gone
+    # — the owner can re-seal it from their profile to re-sign under
+    # the active secret. ``410 GONE`` (rather than 404) signals
+    # "resource existed but is intentionally retired" so a recruiter's
+    # client can render an actionable message rather than the generic
+    # not-found view.
+    try:
+        current_secret = verify_secret(settings)
+    except RuntimeError as exc:
+        logger.error("verify endpoint cannot resolve secret: {}", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "verification_secret_unavailable",
+                "message": "verification service is misconfigured; try again later",
+            },
+        ) from exc
+
+    recomputed_hash = compute_hash(envelope)
+    recomputed_signature = compute_signature(recomputed_hash, current_secret)
+    import hmac as _hmac
+
+    if not _hmac.compare_digest(recomputed_signature, submission.verification_signature or ""):
+        # The persisted signature does NOT match a signature produced
+        # under the current secret. Either the secret rotated since
+        # this credential was sealed, or the envelope inputs the
+        # builder reads today have drifted from what was hashed at
+        # grade time. Either way the credential is no longer
+        # verifiable from this server; the owner has to re-seal it.
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "code": "verification_secret_rotated",
+                "message": (
+                    "This credential was signed with a retired secret. "
+                    "The owner can re-seal it from their profile."
+                ),
+            },
+        )
 
     base = (settings.web_origin or "http://localhost:3000").rstrip("/")
     canonical_url = f"{base}/verify/{submission_id}"

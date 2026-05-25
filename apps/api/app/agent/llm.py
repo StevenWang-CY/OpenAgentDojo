@@ -66,6 +66,15 @@ _NARRATE_MAX_TOKENS = 600
 
 # Defaults for the resilience contract.
 _DEFAULT_CALL_TIMEOUT_SECONDS = 20.0
+# Outer budget for the entire ``messages_create`` call — bounds the
+# elapsed wall-clock across all attempts + backoffs. Without this, a
+# pathological pattern of (slow attempt → backoff → slow attempt) can
+# spend ``call_timeout * attempts + sum(backoffs)`` seconds, blocking
+# the supervision request well past the per-attempt timeout the
+# caller expects. ``45s`` is wider than the 20s per-attempt timeout +
+# 0.5/1.0/2.0 backoffs we currently use, so the happy path is
+# unaffected; the cap only bites on actual stalls.
+_DEFAULT_OUTER_TIMEOUT_SECONDS = 45.0
 _DEFAULT_MIN_LENGTH = 30
 _DEFAULT_MAX_LENGTH_RATIO = 2.0
 
@@ -105,6 +114,7 @@ class AnthropicClient:
         *,
         client: Any | None = None,
         call_timeout_seconds: float = _DEFAULT_CALL_TIMEOUT_SECONDS,
+        outer_timeout_seconds: float | None = None,
         max_retries: int = 1,
         min_length: int = _DEFAULT_MIN_LENGTH,
         max_length_ratio: float = _DEFAULT_MAX_LENGTH_RATIO,
@@ -117,6 +127,20 @@ class AnthropicClient:
         self._available: bool = _HAS_CIVITAS or client is not None
         self._call_timeout_seconds = call_timeout_seconds
         self._max_retries = max(0, int(max_retries))
+        # Outer wall-clock budget across all attempts + backoffs. Default
+        # of ``call_timeout * (retries + 1)`` keeps the budget at least
+        # as wide as the worst-case attempt sum, but is capped at
+        # ``_DEFAULT_OUTER_TIMEOUT_SECONDS`` so callers don't accidentally
+        # get a very loose budget when they pass a generous per-attempt
+        # timeout for a single attempt.
+        if outer_timeout_seconds is None:
+            derived = max(
+                _DEFAULT_OUTER_TIMEOUT_SECONDS,
+                call_timeout_seconds * (self._max_retries + 1),
+            )
+            self._outer_timeout_seconds = float(derived)
+        else:
+            self._outer_timeout_seconds = float(outer_timeout_seconds)
         self._min_length = max(0, int(min_length))
         self._max_length_ratio = max(1.0, float(max_length_ratio))
         self._banned_tokens: tuple[str, ...] = tuple(banned_tokens or ())
@@ -165,6 +189,10 @@ class AnthropicClient:
         model_label = str(kwargs["model"])
         attempts = self._max_retries + 1
         last_exc: Exception | None = None
+        # Outer-budget anchor: ``monotonic`` is immune to wall-clock
+        # adjustments so a midstream NTP step can't make us think we
+        # have a fresh budget.
+        outer_started = time.monotonic()
 
         for attempt in range(attempts):
             client = self._ensure()
@@ -185,6 +213,33 @@ class AnthropicClient:
                 last_exc = exc
                 if attempt + 1 < attempts and _retryable(exc):
                     backoff = 0.5 * (2**attempt)
+                    # P1-2 — bail out of the retry loop if the next
+                    # attempt (worst case: backoff + full per-attempt
+                    # timeout) would push us past the outer wall-clock
+                    # budget. Without this guard, a slow remote + 1+
+                    # retries can spend ``call_timeout * attempts +
+                    # sum(backoffs)`` seconds, well past the budget
+                    # the caller expects. Surface the last error so
+                    # the agent's fallback path runs immediately.
+                    elapsed_total = time.monotonic() - outer_started
+                    projected = elapsed_total + backoff + self._call_timeout_seconds
+                    if projected > self._outer_timeout_seconds:
+                        logger.warning(
+                            "llm call outer budget exhausted "
+                            "(elapsed={:.2f}s, projected={:.2f}s, budget={:.2f}s); "
+                            "surfacing last error after attempt {}/{}",
+                            elapsed_total,
+                            projected,
+                            self._outer_timeout_seconds,
+                            attempt + 1,
+                            attempts,
+                        )
+                        llm_calls_total.labels(
+                            provider=self.provider_name,
+                            model=model_label,
+                            outcome="error",
+                        ).inc()
+                        raise
                     logger.warning(
                         "llm call failed (attempt {}/{}, retrying in {:.2f}s): {}",
                         attempt + 1,

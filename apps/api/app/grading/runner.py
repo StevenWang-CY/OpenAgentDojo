@@ -109,16 +109,61 @@ def _ensure_all_dimensions(
 _FS_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="grading-fs")
 
 
-def shutdown_fs_executor() -> None:
+# Module-level anchor for grading futures whose callers don't otherwise hold
+# a strong reference (e.g. fire-and-forget background grader tasks). The
+# lifespan handler awaits these on shutdown so an in-flight grade can finish
+# committing its submission row + envelope before the process tears down.
+# Empty in the common case where grading runs inline inside a FastAPI
+# request handler (the request task is the strong reference there).
+_ACTIVE_GRADING_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def register_grading_task(task: asyncio.Task[Any]) -> None:
+    """Register an in-flight grading ``asyncio.Task`` for shutdown awaiting.
+
+    Background graders (anything spawned via ``asyncio.create_task`` that
+    invokes :meth:`GradingRunner.run` / ``run_and_persist``) MUST register
+    here so :func:`await_active_grading_tasks` can drain them on lifespan
+    shutdown. Inline graders inside a FastAPI request handler don't need
+    to register — the request task already keeps the coroutine pinned.
+    """
+    _ACTIVE_GRADING_TASKS.add(task)
+    task.add_done_callback(_ACTIVE_GRADING_TASKS.discard)
+
+
+def active_grading_task_count() -> int:
+    """Test-friendly snapshot of how many graders are still in flight."""
+    return len(_ACTIVE_GRADING_TASKS)
+
+
+async def await_active_grading_tasks(deadline_seconds: float = 10.0) -> tuple[int, int]:
+    """Wait for tracked grading tasks to finish; return (completed, timed_out).
+
+    Used by the FastAPI lifespan to drain background graders before the
+    thread pool is torn down. Bounded by ``deadline_seconds`` so a
+    wedged grader cannot block process shutdown forever; whatever
+    didn't finish in time is reported in the log line the caller emits.
+    """
+    if not _ACTIVE_GRADING_TASKS:
+        return (0, 0)
+    pending = set(_ACTIVE_GRADING_TASKS)
+    done, still_pending = await asyncio.wait(pending, timeout=deadline_seconds)
+    return (len(done), len(still_pending))
+
+
+def shutdown_fs_executor(*, wait: bool = True) -> None:
     """Stop the grading FS thread pool — invoked by the FastAPI lifespan.
 
-    Uses ``cancel_futures=True`` so any work queued but not yet started is
-    dropped immediately; in-flight worker calls still finish their current
-    iteration but ``wait=False`` keeps shutdown non-blocking. Idempotent — a
-    second call after shutdown is a no-op (``ThreadPoolExecutor`` flags itself
-    as shutdown).
+    Default ``wait=True`` blocks until any in-flight worker thread's
+    current iteration finishes — the previous ``wait=False`` could
+    abandon a partially-flushed file read mid-grade, which the runner
+    then surfaced as a confusing ``RuntimeError`` after lifespan exit.
+    ``cancel_futures=True`` still drops queued-but-unstarted work so
+    shutdown is bounded by the longest in-flight call rather than the
+    full queue depth. Idempotent — a second call after shutdown is a
+    no-op (``ThreadPoolExecutor`` flags itself as shutdown).
     """
-    _FS_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+    _FS_EXECUTOR.shutdown(wait=wait, cancel_futures=True)
 
 
 @dataclass
@@ -502,6 +547,14 @@ class GradingRunner:
         )
         emitter = EventEmitter(db=db)
 
+        # Pre-allocate the submission id so the P0-11 verification envelope
+        # can be computed BEFORE ``db.flush()`` — the envelope's
+        # ``submission_id`` is part of the canonical hash, so we cannot rely
+        # on a server-assigned UUID. Allocated here (rather than just before
+        # the envelope build) so the critical-moments failure log below can
+        # carry the same submission_id the row will eventually persist with.
+        pre_assigned_id = uuid.uuid4()
+
         # P0-2 — compute the deterministic critical-moment list off the same
         # event stream the score engine just consumed. Stored in its own
         # column (migration 0012) so the FE can render the post-mortem
@@ -509,15 +562,24 @@ class GradingRunner:
         events = await _load_events(db, result.session_id)
         from app.grading.diagnostics import compute_critical_moments
 
-        critical_moments = [
-            cm.to_dict() for cm in compute_critical_moments(events=events, manifest=manifest)
-        ]
-
-        # Pre-allocate the submission id so the P0-11 verification envelope
-        # can be computed BEFORE ``db.flush()`` — the envelope's
-        # ``submission_id`` is part of the canonical hash, so we cannot rely
-        # on a server-assigned UUID.
-        pre_assigned_id = uuid.uuid4()
+        # Defensive: a malformed event payload (e.g. a non-dict slipping
+        # past the supervision pipeline, or a new event variant the
+        # critical-moment heuristics don't yet understand) must NOT take
+        # the grade down with it. The submission row is the durable
+        # record; degrading ``critical_moments`` to an empty list keeps
+        # the report renderable and surfaces the bug to the operator
+        # without dropping the grade on the floor.
+        try:
+            critical_moments = [
+                cm.to_dict() for cm in compute_critical_moments(events=events, manifest=manifest)
+            ]
+        except Exception:  # diagnostic failure must not block grading.
+            logger.exception(
+                "[grader] critical_moments_computation_failed session_id={} submission_id={}",
+                result.session_id,
+                pre_assigned_id,
+            )
+            critical_moments = []
 
         # P0-11 — build + sign the verification envelope from the same
         # row this insert is about to persist. The envelope is the
@@ -546,34 +608,68 @@ class GradingRunner:
         # disk can NEVER round-trip — every backfill --reseal call would
         # reject every row.
         graded_at = _now_utc().replace(microsecond=0)
-        envelope_submission = _EnvelopeSubmission(
-            id=pre_assigned_id,
-            total_score=result.total_score,
-            score_cap_reason=result.score_cap_reason,
-            score_report=result.score_report,
-            created_at=graded_at,
-            verified=result.verified,
-        )
-        envelope = build_envelope(
-            submission=envelope_submission,
-            session=session,
-            manifest=manifest,
-            user=user_row,
-        )
-        try:
-            v_hash, v_sig = stamp(envelope, verify_secret(self.settings))
-        except RuntimeError as exc:
-            # No verify secret resolvable — log loudly and persist NULL
-            # columns. The /verify endpoint 404s on NULL, so the rest of
-            # the report continues to work and a misconfig is visible in
-            # the logs without crashing the grade.
-            logger.error(
-                "[grader] verification secret resolution failed for session={}: {}",
+
+        # P0-3 — if the user row vanished between submit and grade (account
+        # deletion race, or an old session pointing at a tombstoned user)
+        # we skip the envelope entirely and persist NULL hash/sig. The
+        # report endpoint already 404s on NULL, so the grade still lands;
+        # we just don't issue a verification credential against a missing
+        # subject. Logged at WARNING so on-call sees the rare race.
+        v_hash: str | None = None
+        v_sig: str | None = None
+        if user_row is None:
+            logger.warning(
+                "[grader] verification_envelope_skipped_user_missing "
+                "session_id={} submission_id={} user_id={}",
                 result.session_id,
-                exc,
+                pre_assigned_id,
+                getattr(session, "user_id", None),
             )
-            v_hash = None
-            v_sig = None
+        else:
+            envelope_submission = _EnvelopeSubmission(
+                id=pre_assigned_id,
+                total_score=result.total_score,
+                score_cap_reason=result.score_cap_reason,
+                score_report=result.score_report,
+                created_at=graded_at,
+                verified=result.verified,
+            )
+            try:
+                envelope = build_envelope(
+                    submission=envelope_submission,
+                    session=session,
+                    manifest=manifest,
+                    user=user_row,
+                )
+                v_hash, v_sig = stamp(envelope, verify_secret(self.settings))
+            except RuntimeError as exc:
+                # No verify secret resolvable — log loudly and persist NULL
+                # columns. The /verify endpoint 404s on NULL, so the rest of
+                # the report continues to work and a misconfig is visible in
+                # the logs without crashing the grade.
+                logger.error(
+                    "[grader] verification secret resolution failed for session={}: {}",
+                    result.session_id,
+                    exc,
+                )
+                v_hash = None
+                v_sig = None
+            except (AttributeError, TypeError) as exc:
+                # Envelope build itself errored on an unexpected shape
+                # (e.g. a stale session/manifest fixture missing an
+                # attribute the builder reads). Persist NULL hash/sig so
+                # the grade still lands; the operator gets a structured
+                # log to chase. Mirror the same swallow contract the
+                # RuntimeError branch above uses.
+                logger.error(
+                    "[grader] verification_envelope_build_failed "
+                    "session_id={} submission_id={} error={}",
+                    result.session_id,
+                    pre_assigned_id,
+                    exc,
+                )
+                v_hash = None
+                v_sig = None
 
         submission = Submission(
             id=pre_assigned_id,
@@ -1027,6 +1123,17 @@ async def _build_prompt_judgements(  # noqa: PLR0915
     for idx, turn in enumerate(sorted_turns):
         prompt_text = turn.get("user_prompt", turn.get("prompt", "")) or ""
         if not prompt_text:
+            # P2 — a turn that lacks BOTH ``user_prompt`` and ``prompt`` is a
+            # contract violation upstream (the chat ingestor must always
+            # carry the user's text); silently skipping it hides the
+            # gap from operators and produces a confusing partial
+            # judgement set. Skip behaviour is preserved; we just
+            # surface it.
+            logger.warning(
+                "[grader] grading_turn_missing_prompt turn_index={} turn_id={}",
+                idx,
+                turn.get("id"),
+            )
             continue
         prior: str | None = None
         if idx > 0:

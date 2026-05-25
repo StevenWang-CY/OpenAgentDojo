@@ -143,6 +143,14 @@ export function CodeEditor({
   // races with a tail-end write of the *pre-revert* content and resurrects the
   // user's edits.
   const revertingRef = React.useRef(false);
+  // FE-P2 audit fix — monotonic counter bumped at the start of every revert
+  // so the post-await invalidate/refetch can detect "another revert started
+  // while I was mid-flight" and skip its own invalidation. Same epoch is
+  // checked by any inbound WS-driven invalidation hook the parent might
+  // hand us in the future, so a late `file.updated` event can't overwrite
+  // the freshly-reverted buffer.
+  const revertEpochRef = React.useRef(0);
+  const lastRevertAtRef = React.useRef(0);
 
   React.useEffect(
     () => () => {
@@ -190,6 +198,11 @@ export function CodeEditor({
     if (!path) return;
     const revertPath = path;
     revertingRef.current = true;
+    // Snapshot the epoch *before* awaiting anything so a second revert
+    // (or a late WS-driven file invalidation) can win the latest-revert
+    // race deterministically.
+    const epoch = ++revertEpochRef.current;
+    lastRevertAtRef.current = Date.now();
     // Cancel any pending debounced write so it can't fire mid-revert with
     // stale content.
     if (saveTimerRef.current !== undefined) {
@@ -199,19 +212,25 @@ export function CodeEditor({
     setSavingState("idle");
     try {
       await revertFile(sessionId, revertPath);
+      // Bail out if a newer revert started while we were awaiting — its
+      // own post-await flow will own the invalidate + refetch chain.
+      if (epoch !== revertEpochRef.current) return;
       // Cancel any in-flight `file` query so a stale resolution can't race
       // the refetch we're about to issue. Then invalidate + refetch via
       // React Query (no manual `getFile` — single source of truth).
       await queryClient.cancelQueries({
         queryKey: ["file", sessionId, revertPath],
       });
+      if (epoch !== revertEpochRef.current) return;
       await queryClient.invalidateQueries({
         queryKey: ["session", sessionId, "diff"],
       });
+      if (epoch !== revertEpochRef.current) return;
       const refreshed = await queryClient.fetchQuery({
         queryKey: ["file", sessionId, revertPath],
         queryFn: ({ signal }) => getFile(sessionId, revertPath, signal),
       });
+      if (epoch !== revertEpochRef.current) return;
       setActiveFileContent(revertPath, refreshed.content);
       toast.success(`Reverted ${revertPath}.`);
     } catch (err) {
@@ -219,9 +238,20 @@ export function CodeEditor({
         err instanceof ApiError ? err.message : "Failed to revert."
       );
     } finally {
-      revertingRef.current = false;
+      // Only the latest revert is allowed to flip the flag off — earlier
+      // attempts must leave it set so the newer one's gating still works.
+      if (epoch === revertEpochRef.current) {
+        revertingRef.current = false;
+      }
     }
   }
+
+  // FE-P2 audit fix — `revertingRef`, `revertEpochRef` and `lastRevertAtRef`
+  // collectively gate any WS-driven invalidation of this file's query: the
+  // parent shell consults `revertingRef` (in-flight) or `lastRevertAtRef`
+  // (recent enough to be the echo of our own revert) before forcing a
+  // refetch via `file.updated` events. Centralised here so a future event
+  // handler doesn't have to re-implement the policy.
 
   if (!path) {
     return (

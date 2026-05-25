@@ -52,6 +52,13 @@ _MAX_EVENT_BYTES = 65_536  # 64 KiB
 # subscribe-time truncation produces structurally identical output.
 _TRUNCATED_PAYLOAD_REASON = "payload_exceeds_max_event_bytes"
 
+# P1-6 — circuit-break threshold for ``drain_pending_publishes``. After this
+# many CONSECUTIVE publish failures inside a single drain, the loop bails
+# out and counts any remaining events as ``circuit_broken``. Anything
+# under this threshold (e.g. a one-off transient hiccup mid-batch) is
+# still retried for the rest of the queue.
+_DRAIN_FAILURE_THRESHOLD = 3
+
 
 def _payload_size_bytes(payload: dict[str, Any]) -> int | None:
     """Return the JSON byte-size of ``payload`` or None on serialisation error.
@@ -209,8 +216,36 @@ async def drain_pending_publishes(db: AsyncSession) -> None:
         event_publish_failures_total.labels(reason="no_redis").inc(len(pending))
         return
 
-    for channel, message in pending:
-        await _publish(redis, channel, message)
+    # P1-6 — circuit-break the drain after a run of consecutive
+    # failures. A wedged Redis (or a process that's been partitioned
+    # off the cluster for tens of seconds) can otherwise burn the
+    # entire request handler's exit budget retrying the same broken
+    # publisher; each attempt typically goes through a socket
+    # connect/write/timeout cycle. After ``_DRAIN_FAILURE_THRESHOLD``
+    # back-to-back failures we count the *remaining* events as
+    # circuit-broken (so the drop is visible in the metric) and stop.
+    # The queue is already empty at this point — we don't preserve
+    # in-place because the contract is that ``drain_pending_publishes``
+    # is one-shot per transaction commit; the next request will
+    # re-establish a fresh batch.
+    failures = 0
+    for idx, (channel, message) in enumerate(pending):
+        ok = await _publish(redis, channel, message)
+        if ok:
+            failures = 0
+            continue
+        failures += 1
+        if failures > _DRAIN_FAILURE_THRESHOLD:
+            remaining = len(pending) - (idx + 1)
+            if remaining > 0:
+                event_publish_failures_total.labels(reason="circuit_broken").inc(remaining)
+            logger.error(
+                "[events] drain circuit-broken after {} consecutive failures; "
+                "dropping {} remaining event(s)",
+                failures,
+                remaining,
+            )
+            return
 
 
 def clear_pending_publishes(db: AsyncSession) -> None:

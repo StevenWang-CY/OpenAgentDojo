@@ -203,6 +203,42 @@ describe("WorkspaceShell — malformed agent.responded payload", () => {
       expect.stringContaining("malformed agent.responded payload"),
       expect.anything()
     );
+    // FE-P2 audit fix — the warn names the specific failing field so a
+    // future schema bump surfaces in DevTools as "invalid field:
+    // turn_index" rather than as an opaque dump.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("invalid field: turn_index"),
+      expect.anything()
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it("names response_summary as the failing field when turn_index is valid", async () => {
+    const store = useWorkspaceStore("session-1");
+    store.getState().reset();
+
+    renderShell();
+    await waitFor(() => expect(lastSocketOptions.current).not.toBeNull());
+    const opts = lastSocketOptions.current!;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    opts.onMessage!({
+      data: JSON.stringify({
+        id: 43,
+        session_id: "session-1",
+        event_type: "agent.responded",
+        occurred_at: "2026-05-21T10:00:00Z",
+        // turn_index is a valid number but response_summary is wrong type.
+        payload: { turn_index: 2, response_summary: 99 },
+      }),
+    } as MessageEvent);
+
+    expect(store.getState().agentTurns).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("invalid field: response_summary"),
+      expect.anything(),
+    );
 
     warnSpy.mockRestore();
   });
