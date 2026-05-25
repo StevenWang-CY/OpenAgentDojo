@@ -17,9 +17,13 @@ export const env = {
   ),
   /** PostHog project API key. Empty string disables product analytics. */
   posthogKey: process.env.NEXT_PUBLIC_POSTHOG_KEY ?? "",
-  /** PostHog ingest host (US cloud by default). */
-  posthogHost:
-    process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com",
+  /**
+   * PostHog ingest host. No default — must be set explicitly per env so a
+   * deploy that forgets to configure analytics cannot silently ship
+   * telemetry to a third-party host without explicit operator intent.
+   * Empty string disables product analytics (paired with posthogKey).
+   */
+  posthogHost: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "",
 } as const;
 
 function trimTrailingSlash(s: string): string {

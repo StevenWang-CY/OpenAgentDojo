@@ -86,6 +86,7 @@ async def test_run_and_persist_rejects_tutorial_manifest(
             handle=None,
             manifest=manifest,
             manifest_folder=None,  # type: ignore[arg-type]
+            manifest_sha256="deadbeef" * 8,
         )
 
 

@@ -273,6 +273,7 @@ async def test_submit_timeout_bumps_submissions_total_with_timeout_outcome(
 
         class _Loaded:
             manifest = object()
+            manifest_sha256 = "0" * 64
 
         class _Loader:
             def __init__(self, *_args, **_kwargs) -> None:

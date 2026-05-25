@@ -54,6 +54,17 @@ repos:
             .*\.diff
           )$
 
+  # ---------- local: .env.example cross-file parity ----------
+  - repo: local
+    hooks:
+      - id: check-env-examples
+        name: check .env.example parity (root / api / compose)
+        entry: bash -c 'cd apps/api && uv run python scripts/check_env_examples.py'
+        language: system
+        pass_filenames: false
+        files: ^(\.env\.example|apps/api/\.env\.example|infra/compose/\.env\.compose\.example)$
+        stages: [pre-commit]
+
   # ---------- local: forbid ABSK bearer tokens ----------
   - repo: local
     hooks:

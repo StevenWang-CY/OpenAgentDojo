@@ -217,6 +217,7 @@ async def submit_session(  # noqa: PLR0915
             handle=handle,
             manifest=manifest,
             manifest_folder=manifest_folder,
+            manifest_sha256=loaded.manifest_sha256,
         )
     except TimeoutError as exc:
         # Flip the session to a terminal ``error`` state BEFORE we attempt to

@@ -183,6 +183,27 @@ class SandboxPool:
         if self._closed:
             raise RuntimeError("sandbox pool is closed")
 
+        # Defensive idempotency: a retry of provisioning (e.g. after a
+        # transient driver failure) would otherwise leak the previous
+        # handle — _handles_by_session would just overwrite, leaving the
+        # by-id entry and the semaphore slot held forever. Release the
+        # stale handle BEFORE the semaphore acquire so the retry can
+        # reuse the slot.
+        stale = self._handles_by_session.get(session_id)
+        if stale is not None:
+            logger.warning(
+                "sandbox pool: stale handle for session {} — releasing before re-acquire",
+                session_id,
+            )
+            try:
+                await self.release(stale)
+            except Exception as exc:
+                logger.warning(
+                    "sandbox pool: release of stale handle for session {} failed: {}",
+                    session_id,
+                    exc,
+                )
+
         await self._semaphore.acquire()
         started = time.perf_counter()
         try:

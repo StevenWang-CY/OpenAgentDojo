@@ -50,7 +50,10 @@ export function TelemetryProvider({ children }: TelemetryProviderProps) {
     const key = env.posthogKey;
     const host = env.posthogHost;
 
-    if (!key) return;
+    // Both must be set explicitly. We deliberately do NOT default the host to
+    // a third-party hosted endpoint — a deploy that forgets to configure
+    // analytics should be a no-op, not silent telemetry to a foreign domain.
+    if (!key || !host) return;
     if (typeof window === "undefined") return;
 
     // The live client (post-import). Captured in a closure so the consent

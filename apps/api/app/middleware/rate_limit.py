@@ -274,7 +274,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             pipe.expire(bucket_key, window_s)
             results = await asyncio.wait_for(pipe.execute(), timeout=2.0)
             return int(results[0])
-        except (TimeoutError, Exception) as exc:
+        except Exception as exc:
             # Throttled per-process WARNING — see ``_log_fail_open`` docstring.
             # We deliberately keep the immediate (non-throttled) ``warning``
             # nuance off here so a flapping redis doesn't drown the logs.

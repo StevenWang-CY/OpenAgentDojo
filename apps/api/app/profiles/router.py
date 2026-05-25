@@ -98,7 +98,14 @@ async def _fetch_badges(db: AsyncSession, user_id: uuid.UUID) -> list[EarnedBadg
 
 
 async def _fetch_history(db: AsyncSession, user_id: uuid.UUID) -> list[MissionHistoryItemRead]:
-    """Last ``_HISTORY_LIMIT`` graded sessions joined to mission title/difficulty."""
+    """Last ``_HISTORY_LIMIT`` graded sessions joined to mission title/difficulty.
+
+    Filters out grader-failure stubs (``score_report.is_stub == True``) so the
+    public history doesn't surface 0/100 rows that the radar deliberately
+    excludes via :func:`_best_per_mission`. ``is_stub`` lives in the
+    ``score_report`` JSONB column rather than a dedicated column, so the
+    skip is applied in Python after a small over-fetch.
+    """
     stmt = (
         select(
             SessionRow.id,
@@ -107,16 +114,28 @@ async def _fetch_history(db: AsyncSession, user_id: uuid.UUID) -> list[MissionHi
             SessionRow.score,
             Mission.title,
             Mission.difficulty,
+            Submission.score_report,
         )
         .join(Mission, Mission.id == SessionRow.mission_id)
+        .outerjoin(Submission, Submission.session_id == SessionRow.id)
         .where(
             SessionRow.user_id == user_id,
             SessionRow.status == "graded",
         )
         .order_by(SessionRow.completed_at.desc().nulls_last(), SessionRow.started_at.desc())
-        .limit(_HISTORY_LIMIT)
+        # Over-fetch so we still return _HISTORY_LIMIT rows after stubs are
+        # filtered out; cap at 3× to keep the query cheap.
+        .limit(_HISTORY_LIMIT * 3)
     )
-    rows = (await db.execute(stmt)).all()
+    raw = (await db.execute(stmt)).all()
+    rows = []
+    for row in raw:
+        report = row.score_report
+        if isinstance(report, dict) and report.get("is_stub"):
+            continue
+        rows.append(row)
+        if len(rows) >= _HISTORY_LIMIT:
+            break
     return [
         MissionHistoryItemRead(
             session_id=row.id,

@@ -278,8 +278,10 @@ class LocalSandboxDriver(SandboxDriver):
         # can't clobber each other's patch files (and so a stray patch
         # never ends up in the shared sandbox-root listing). Write with
         # mode 0o600 — the diff may contain unreviewed model output and
-        # has no business being world-readable on the host.
-        diff_file = handle.workdir / ".arena_patch.diff"
+        # has no business being world-readable on the host. UUID suffix
+        # matches the docker driver — without it, two in-flight applies
+        # on the same handle race on the same filename.
+        diff_file = handle.workdir / f".arena_patch_{uuid.uuid4().hex}.diff"
         diff_bytes = diff_text.encode("utf-8")
         fd = os.open(
             str(diff_file),

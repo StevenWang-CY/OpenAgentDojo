@@ -246,7 +246,16 @@ def _on_persist_done(task: asyncio.Task[None]) -> None:
 
 
 async def _persist_revocation(jti: str) -> None:
-    """Best-effort: push the revocation into Redis with a 30d TTL."""
+    """Best-effort: push the revocation into Redis with a 30d TTL.
+
+    Failures here matter: without the Redis row, a logout on worker A
+    is invisible to workers B/C and a logged-out cookie can still
+    authenticate elsewhere until that JTI's natural expiry. We deliberately
+    keep the API request itself successful (logout is a UX-critical
+    button) but raise the log level to WARNING and bump a counter so
+    operators see the failure rate on dashboards rather than silently
+    eating it at debug-level.
+    """
     try:
         from app.sessions.events import get_redis
 
@@ -254,8 +263,18 @@ async def _persist_revocation(jti: str) -> None:
         if redis is None:
             return
         await redis.set(_REVOCATION_KEY_PREFIX + jti, "1", ex=_COOKIE_MAX_AGE)
-    except Exception as exc:  # pragma: no cover — telemetry only
-        logger.debug("could not persist JTI revocation: {}", exc)
+    except Exception as exc:
+        logger.warning(
+            "could not persist JTI revocation to Redis — logout will only "
+            "apply to this worker until natural expiry: {}",
+            exc,
+        )
+        try:
+            from app.observability import jti_revocation_persist_failures_total
+
+            jti_revocation_persist_failures_total.inc()
+        except Exception:  # pragma: no cover — observability is best-effort
+            pass
 
 
 def _is_revoked(jti: str) -> bool:

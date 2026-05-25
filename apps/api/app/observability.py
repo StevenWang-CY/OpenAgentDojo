@@ -170,6 +170,16 @@ account_sign_out_all_total = Counter(
     "POST /me/sessions/sign-out-all requests that bumped the session epoch.",
     registry=REGISTRY,
 )
+# Failures to persist a JTI revocation to Redis on logout. The logout itself
+# still succeeds (best-effort by design), but persistent failures here mean
+# multi-worker logout is degraded: a logged-out cookie can still authenticate
+# on workers that never saw the revocation until the token's natural expiry.
+# Alert on a non-zero sustained rate.
+jti_revocation_persist_failures_total = Counter(
+    "auth_jti_revocation_persist_failures_total",
+    "POST /auth/logout requests where Redis JTI persistence failed.",
+    registry=REGISTRY,
+)
 data_exports_requested_total = Counter(
     "account_data_exports_requested_total",
     "Data-export rows transitioning into the labelled status.",

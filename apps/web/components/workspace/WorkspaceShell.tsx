@@ -186,7 +186,7 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   // safe to keep mounted — `auth.me()` is a tiny GET that the layout already
   // primes elsewhere via React Query's shared cache.
   const meQuery = useQuery({
-    queryKey: ["auth-me"],
+    queryKey: ["me"],
     queryFn: ({ signal }) => auth.me(signal),
     staleTime: 60_000,
     retry: false,
@@ -230,8 +230,12 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   // open for a short trailing window — long enough to ingest a
   // `submission.failed` frame that the backend may emit *just after* the
   // session row transitions. The window is cleared once the event lands or
-  // 3s elapses, whichever is first.
+  // 3s elapses, whichever is first. We pair the timestamp ref with a
+  // state-backed "open" flag so the WS-attach effect actually re-runs when
+  // the window closes; without it the boolean was only ever recomputed on
+  // an unrelated render and the socket would linger open past the deadline.
   const errorIngestionWindowRef = React.useRef<number | null>(null);
+  const [errorWindowOpen, setErrorWindowOpen] = React.useState(false);
   // Authoritative "we already saw submission.failed" check used by both
   // the trailing-WS window below and the status-branch render below.
   const submissionFailed = React.useMemo(
@@ -240,10 +244,22 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   );
 
   React.useEffect(() => {
-    if (status === "error" && errorIngestionWindowRef.current === null) {
-      errorIngestionWindowRef.current = Date.now();
-    } else if (status !== "error" && errorIngestionWindowRef.current !== null) {
+    if (status === "error") {
+      if (errorIngestionWindowRef.current === null) {
+        errorIngestionWindowRef.current = Date.now();
+        setErrorWindowOpen(true);
+        const timer = setTimeout(() => {
+          setErrorWindowOpen(false);
+        }, 3_000);
+        return () => {
+          clearTimeout(timer);
+        };
+      }
+      return;
+    }
+    if (errorIngestionWindowRef.current !== null) {
       errorIngestionWindowRef.current = null;
+      setErrorWindowOpen(false);
     }
   }, [status]);
 
@@ -261,12 +277,13 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   React.useEffect(() => {
     if (!sessionLoaded) return;
     if (!wsToken) return;
-    const errorWindowOpen =
-      status === "error" &&
-      !submissionFailed &&
-      errorIngestionWindowRef.current !== null &&
-      Date.now() - errorIngestionWindowRef.current < 3_000;
-    if (status !== "active" && status !== "submitting" && !errorWindowOpen) {
+    const trailingErrorWindowOpen =
+      status === "error" && !submissionFailed && errorWindowOpen;
+    if (
+      status !== "active" &&
+      status !== "submitting" &&
+      !trailingErrorWindowOpen
+    ) {
       return;
     }
 
@@ -343,6 +360,7 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
     wsToken,
     sessionLoaded,
     submissionFailed,
+    errorWindowOpen,
     pushEvent,
     pushAgentTurn,
     queryClient,
@@ -405,7 +423,6 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   React.useEffect(() => {
     if (status === "graded" && missionKind === "tutorial") {
       void queryClient.invalidateQueries({ queryKey: ["me"] });
-      void queryClient.invalidateQueries({ queryKey: ["auth-me"] });
       void queryClient.invalidateQueries({ queryKey: ["missions"] });
       router.replace("/missions?tutorial=completed");
     }

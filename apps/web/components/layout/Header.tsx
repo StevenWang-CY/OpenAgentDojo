@@ -51,7 +51,6 @@ export function Header({ showCta = true }: HeaderProps) {
     },
     onSuccess({ session }) {
       void queryClient.invalidateQueries({ queryKey: ["me"] });
-      void queryClient.invalidateQueries({ queryKey: ["auth-me"] });
       // The catalog grid renders off the missions list + the user query
       // (for the "// start here" banner). Refreshing only `me` would
       // leave a stale banner the user could click through.
@@ -91,8 +90,7 @@ export function Header({ showCta = true }: HeaderProps) {
       // previous user's /profile/me, /skills, mission/session, and
       // workspace caches stay live for their staleTime (≥ 60s for most
       // entries) — on a shared device the next user inherits the previous
-      // user's data. Also invalidates the duplicate ``["auth-me"]`` key
-      // used by WorkspaceShell.
+      // user's data.
       queryClient.clear();
       router.push("/");
     },

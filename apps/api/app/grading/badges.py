@@ -149,7 +149,13 @@ def compute_badges(
 
     # ---- concurrency-debugger (mission-scoped) -----------------------
     if mission_id == "async-race-condition":
-        hidden = [r for r in test_results if "hidden" in r.suite.lower()]
+        # Use the canonical hidden-suite predicate so a manifest that
+        # declares custom hidden suite names (via hidden_tests.suites)
+        # is treated consistently with the rest of the score engine.
+        # Local import to break the runner ⇄ badges circular dep.
+        from app.grading.runner import is_hidden_suite
+
+        hidden = [r for r in test_results if is_hidden_suite(manifest, r.suite)]
         if hidden and all(r.exit_code == 0 and r.failed == 0 for r in hidden):
             earned.append(CONCURRENCY_DEBUGGER)
 

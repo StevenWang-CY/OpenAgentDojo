@@ -357,6 +357,7 @@ async def test_runner_ideal_solution_scores_at_least_92(
             handle=handle,
             manifest=manifest,
             manifest_folder=folder,
+            manifest_sha256="deadbeef" * 8,
         )
 
     assert submission.total_score >= 92, (
@@ -438,6 +439,7 @@ async def test_runner_agent_patch_lands_in_unmodified_band(
             handle=handle,
             manifest=manifest,
             manifest_folder=folder,
+            manifest_sha256="deadbeef" * 8,
         )
 
     assert 35 <= submission.total_score <= 60, (
@@ -471,6 +473,7 @@ async def test_runner_validator_exception_is_fail_soft(monkeypatch, session_fact
             handle=handle,
             manifest=manifest,
             manifest_folder=folder,
+            manifest_sha256="deadbeef" * 8,
         )
 
     # Each broken validator surfaces a passed=False ValidatorResult. The
@@ -511,6 +514,7 @@ async def test_runner_timeout_marks_session_error(session_factory) -> None:
                 handle=handle,
                 manifest=manifest,
                 manifest_folder=folder,
+                manifest_sha256="deadbeef" * 8,
             )
 
     async with session_factory() as db:
@@ -617,6 +621,7 @@ async def test_submission_graded_breakdown_always_has_seven_dimensions(
                 handle=handle,
                 manifest=manifest,
                 manifest_folder=folder,
+                manifest_sha256="deadbeef" * 8,
             )
     finally:
         _logger.remove(sink_id)

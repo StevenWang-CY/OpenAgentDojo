@@ -186,8 +186,17 @@ class GradingRunner:
         handle: Any,
         manifest: Any,
         manifest_folder: Path,
+        manifest_sha256: str,
     ) -> GradingResult:
         """Execute the grading pipeline with a wall-clock budget.
+
+        ``manifest_sha256`` comes from :class:`LoadedMission.manifest_sha256`
+        and is the on-disk manifest content hash. A bare
+        :class:`MissionManifest` does not carry the hash, so callers MUST
+        supply it — it anchors the prompt-judge cache revision and the
+        ``Submission.manifest_sha256`` column so an edit to a mission's
+        prompts / intents / forbidden rules invalidates stale judgements
+        per the determinism contract in CONTEXT.md.
 
         On timeout, sets the session's status to ``'error'``, emits
         ``submission.failed``, and raises :class:`asyncio.TimeoutError`.
@@ -210,7 +219,16 @@ class GradingRunner:
 
         try:
             return await asyncio.wait_for(
-                self._pipeline(db, session, driver, handle, manifest, manifest_folder, emitter),
+                self._pipeline(
+                    db,
+                    session,
+                    driver,
+                    handle,
+                    manifest,
+                    manifest_folder,
+                    emitter,
+                    manifest_sha256,
+                ),
                 timeout=self.budget_seconds,
             )
         except TimeoutError:
@@ -261,6 +279,7 @@ class GradingRunner:
         manifest: Any,
         manifest_folder: Path,
         emitter: EventEmitter,
+        manifest_sha256: str,
     ) -> GradingResult:
         session_id: uuid.UUID = session.id
 
@@ -369,7 +388,10 @@ class GradingRunner:
         # unavailable on a cold cache, the resulting judgement carries
         # ``score=None`` and the prompt_quality dimension reports pending.
         prompt_judgements = await _build_prompt_judgements(
-            db=db, manifest=manifest, agent_turns=agent_turns
+            db=db,
+            manifest=manifest,
+            agent_turns=agent_turns,
+            manifest_sha256=manifest_sha256,
         )
 
         # Already-attempted missions for this user — the diagnostic
@@ -445,6 +467,7 @@ class GradingRunner:
         handle: Any,
         manifest: Any,
         manifest_folder: Path,
+        manifest_sha256: str,
     ) -> tuple[Submission, GradingResult]:
         """Run the pipeline and persist a ``submissions`` row.
 
@@ -461,7 +484,9 @@ class GradingRunner:
                 "mission; use complete_tutorial() instead — tutorial "
                 "missions must not be graded through the standard pipeline."
             )
-        result = await self.run(db, session, driver, handle, manifest, manifest_folder)
+        result = await self.run(
+            db, session, driver, handle, manifest, manifest_folder, manifest_sha256
+        )
         emitter = EventEmitter(db=db)
 
         # P0-2 — compute the deterministic critical-moment list off the same
@@ -486,7 +511,7 @@ class GradingRunner:
             # Anchor to the exact manifest content this submission was
             # graded against (the column was added in migration 0008
             # specifically so replays can detect content drift).
-            manifest_sha256=getattr(manifest, "manifest_sha256", None),
+            manifest_sha256=manifest_sha256,
             critical_moments=critical_moments,
             # P0-4 — mirrored from the cap applied in ``_pipeline``. NULL
             # when the user submitted normally; ``'gave_up'`` when the
@@ -837,6 +862,7 @@ async def _build_prompt_judgements(  # noqa: PLR0915
     db: AsyncSession,
     manifest: Any,
     agent_turns: list[dict[str, Any]],
+    manifest_sha256: str,
 ) -> dict[str, JudgementResult]:
     """Cache-first lookup of LLM-judge scores for every prompt in the run.
 
@@ -889,13 +915,18 @@ async def _build_prompt_judgements(  # noqa: PLR0915
         return {}
 
     mission_id = str(getattr(manifest, "id", "") or "")
-    # Use the manifest content hash as the cache revision so any
-    # brief / failure_mode / expected_files edit invalidates the cache.
-    # Falls back to the int version when the manifest didn't carry a
-    # sha (older fixtures); the int form is at least stable per-mission.
-    mission_rev = str(
-        getattr(manifest, "manifest_sha256", None) or getattr(manifest, "version", "1") or "1"
-    )
+    # Cache revision MUST be the manifest content sha — supplied by the
+    # caller from LoadedMission.manifest_sha256. Refuse to silently
+    # fall back: anything else re-uses stale judgements after an edit
+    # to prompts / intents / forbidden_changes, violating the
+    # determinism contract that re-grading after a mission edit
+    # produces different numbers.
+    if not manifest_sha256:
+        raise RuntimeError(
+            "_build_prompt_judgements requires a non-empty manifest_sha256 "
+            "(from LoadedMission); bare MissionManifest has no content hash."
+        )
+    mission_rev = manifest_sha256
     expected_files = list(getattr(manifest, "expected_files", []) or [])
     expected_context = getattr(manifest, "expected_context", None)
     required_ctx = (

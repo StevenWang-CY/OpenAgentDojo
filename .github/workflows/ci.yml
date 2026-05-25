@@ -60,6 +60,12 @@ jobs:
       - name: mypy
         run: uv run mypy app
 
+      - name: env-example parity
+        # Catches drift between root, apps/api, and compose .env.example
+        # files. Backstops the pre-commit hook; CI must fail if any of
+        # the three falls out of lockstep with the others.
+        run: uv run python scripts/check_env_examples.py
+
   # ---------------------------------------------------------------------
   # lint-web — eslint + tsc --noEmit on the Next.js frontend.
   # ---------------------------------------------------------------------

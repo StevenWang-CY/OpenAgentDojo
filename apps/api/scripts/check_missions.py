@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import re
 import sys
 import uuid
@@ -251,6 +252,9 @@ async def _grade_one_diff(
                 await db.commit()
 
             runner = GradingRunner(settings=None, budget_seconds=600)
+            manifest_sha = hashlib.sha256(
+                (manifest_folder / "mission.yaml").read_bytes()
+            ).hexdigest()
             submission, result = await runner.run_and_persist(
                 db=db,
                 session=session,
@@ -258,6 +262,7 @@ async def _grade_one_diff(
                 handle=handle,
                 manifest=manifest,
                 manifest_folder=manifest_folder,
+                manifest_sha256=manifest_sha,
             )
             return int(submission.total_score)
     finally:

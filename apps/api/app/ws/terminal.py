@@ -194,7 +194,27 @@ async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> Non
         finally:
             closed.set()
 
-    await asyncio.gather(reader_task(), writer_task(), return_exceptions=True)
+    # Spawn each direction as a tracked task so when one finishes (clean
+    # close, broken PTY, etc.) we explicitly cancel the other instead of
+    # leaving it blocked on ``websocket.receive`` indefinitely. The
+    # shared ``closed`` event coordinates a graceful stop; the cancel is
+    # the safety net for half-closed sockets that never trip the event
+    # naturally (manifested as a PTY fd leak under disconnect churn).
+    reader = asyncio.create_task(reader_task())
+    writer = asyncio.create_task(writer_task())
+    try:
+        _done, pending = await asyncio.wait(
+            {reader, writer}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+    finally:
+        closed.set()
 
     try:
         proc.terminate()
@@ -252,7 +272,21 @@ async def _bridge_docker_socket(websocket: WebSocket, attach) -> None:
         finally:
             closed.set()
 
-    await asyncio.gather(reader_task(), writer_task(), return_exceptions=True)
+    reader = asyncio.create_task(reader_task())
+    writer = asyncio.create_task(writer_task())
+    try:
+        _done, pending = await asyncio.wait(
+            {reader, writer}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+    finally:
+        closed.set()
     try:
         raw.close()
     except OSError:

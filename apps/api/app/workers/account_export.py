@@ -261,14 +261,18 @@ async def _build_zip(
                 # a belt-and-braces guarantee against future refactors.
                 if fk_col == "user_id":
                     for row in rows:
-                        assert row.user_id == user.id, (
-                            f"export ownership invariant violated for {model.__name__}"
-                        )
+                        # Explicit raise (not assert) so `python -O` cannot
+                        # silently strip the cross-user leakage guard.
+                        if row.user_id != user.id:
+                            raise RuntimeError(
+                                f"export ownership invariant violated for {model.__name__}"
+                            )
                 else:
                     for row in rows:
-                        assert row.session_id in session_ids, (
-                            f"export session-ownership invariant violated for {model.__name__}"
-                        )
+                        if row.session_id not in session_ids:
+                            raise RuntimeError(
+                                f"export session-ownership invariant violated for {model.__name__}"
+                            )
 
                 zf.writestr(filename, _to_jsonl(rows, serialiser))
 

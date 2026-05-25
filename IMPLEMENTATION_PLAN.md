@@ -466,12 +466,12 @@ validators:                                         # see §10
 
 scoring_weights:
   final_correctness: 30
-  verification:      20
+  verification:      15
   agent_review:      15
   prompt_quality:    10
   context_selection: 10
   safety:            10
-  diff_minimality:    5
+  diff_minimality:   10
 
 reward_signals:                                     # process-based scoring inputs
   prompt_quality:
@@ -727,13 +727,20 @@ Implementation: `apps/api/app/grading/score.py`. Source of truth for the weighte
 | Dimension | Max | Source |
 |---|---|---|
 | Final Patch Correctness | 30 | Hidden + visible tests |
-| Verification Discipline | 20 | Command run events |
+| Verification Discipline | 15 | Command run events |
 | Agent Output Review | 15 | Diff events + corrections |
 | Prompt Quality | 10 | Turn analysis |
 | Context Selection | 10 | Selected vs expected sets |
 | Safety Awareness | 10 | Forbidden-change detection + safe behavior |
-| Diff Minimality | 5 | Diff-scope validator |
+| Diff Minimality | 10 | Diff-scope validator |
 | **Total** | **100** | |
+
+> Runtime truth: `apps/api/app/grading/dimensions.py` is the single source
+> of the weights — verification and diff_minimality were re-balanced from
+> `20 / 5` to `15 / 10` so that minimal diffs (a strong proxy for surgical
+> reasoning) carry the same weight as "did you bother to run tests" and
+> are not buried under the catch-all verification bonus. Mission YAMLs and
+> the §15 schema reflect the same numbers.
 
 ### 11.2 Sub-scoring rules
 
@@ -749,17 +756,18 @@ base = 0
 
 Floor when hidden tests fail: cap at 18 even if everything else is green.
 
-#### 11.2.2 Verification Discipline (20)
+#### 11.2.2 Verification Discipline (15)
 
 ```
-+ 8 if any test command ran against a relevant suite (matches mission.reward_signals.verification.require_targeted_test)
-+ 4 if typecheck ran
-+ 3 if lint ran
-+ 5 if a NEW regression test exists in the final diff (validator: regression_test_required passes)
-- 8 if submitted with zero verification commands
++ 6 if any test command ran against a relevant suite (matches mission.reward_signals.verification.require_targeted_test)
++ 3 if typecheck ran
++ 2 if lint ran
++ 4 if a NEW regression test exists in the final diff (validator: regression_test_required passes)
+- 6 if submitted with zero verification commands
 ```
 
-Cap at 20.
+Cap at 15. Sub-bonuses sum to 15 by design so a fully diligent run can
+reach the ceiling without the regression-test bonus carrying it over.
 
 #### 11.2.3 Agent Output Review (15)
 
@@ -805,34 +813,37 @@ clamp(0, 10)
 + 1 if no banned commands run (rm -rf, curl into pipes, etc.)
 ```
 
-#### 11.2.7 Diff Minimality (5)
+#### 11.2.7 Diff Minimality (10)
 
 Linear scale on lines added relative to mission's `expected_diff_lines_p50`:
 
 ```
 ratio = added_lines / expected_p50
-score = 5 if ratio <= 1.0
-      = 4 if 1.0 < ratio <= 1.5
-      = 3 if 1.5 < ratio <= 2.0
-      = 2 if 2.0 < ratio <= 3.0
-      = 0 otherwise
+score = 10 if ratio <= 1.0
+      =  8 if 1.0 < ratio <= 1.5
+      =  6 if 1.5 < ratio <= 2.0
+      =  4 if 2.0 < ratio <= 3.0
+      =  0 otherwise
 ```
 
-`expected_diff_lines_p50` lives in each `mission.yaml`.
+`expected_diff_lines_p50` lives in each `mission.yaml`. The doubled max
+(was 5 in the original draft) brings minimality into parity with the
+other process-discipline dimensions, since a surgical diff is one of
+the cleanest signals that the supervisor reasoned about the change.
 
 ### 11.3 Score report shape (persisted JSONB)
 
 ```json
 {
-  "total": 78,
+  "total": 80,
   "dimensions": {
     "final_correctness":  { "score": 24, "max": 30, "signals": ["3/4 hidden tests passed", "visible green"] },
-    "verification":       { "score": 14, "max": 20, "signals": ["ran auth tests", "no typecheck"] },
+    "verification":       { "score": 11, "max": 15, "signals": ["ran auth tests", "no typecheck"] },
     "agent_review":       { "score": 11, "max": 15, "signals": ["diff opened", "1 corrective prompt"] },
     "prompt_quality":     { "score": 7,  "max": 10, "signals": ["mentions regression test", "scoped"] },
     "context_selection":  { "score": 8,  "max": 10, "signals": ["selected middleware + session.ts"] },
     "safety":             { "score": 9,  "max": 10, "signals": ["no validation removed"] },
-    "diff_minimality":    { "score": 5,  "max":  5, "signals": ["12 lines added"] }
+    "diff_minimality":    { "score": 10, "max": 10, "signals": ["12 lines added"] }
   },
   "strengths": ["Selected the right context up front", "Asked for a regression test"],
   "weaknesses": ["Did not run typecheck", "Missed the refresh-token edge case"],
@@ -848,7 +859,7 @@ Awarded post-submission based on score-report signals. MVP set:
 - `regression-test-writer` — added a regression test that matches failure-mode keywords.
 - `security-aware-reviewer` — caught a forbidden change and corrected it.
 - `agent-skeptic` — at least 1 corrective prompt + diff opened + edits to agent's lines.
-- `minimal-diff` — diff_minimality == 5 and final_correctness >= 24.
+- `minimal-diff` — diff_minimality == 10 and final_correctness >= 24.
 - `concurrency-debugger` — earned on Scenario 8 with all hidden tests passing.
 - `api-contract-guardian` — earned on Scenario 9 with no regression.
 
@@ -1100,12 +1111,12 @@ Repo: `data-api-demo`. Bug: occasional duplicate processing in `process_job`. Ag
       "type":"object",
       "properties": {
         "final_correctness":{"const":30},
-        "verification":{"const":20},
+        "verification":{"const":15},
         "agent_review":{"const":15},
         "prompt_quality":{"const":10},
         "context_selection":{"const":10},
         "safety":{"const":10},
-        "diff_minimality":{"const":5}
+        "diff_minimality":{"const":10}
       },
       "required":["final_correctness","verification","agent_review",
                   "prompt_quality","context_selection","safety","diff_minimality"]
