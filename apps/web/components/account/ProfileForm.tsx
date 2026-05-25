@@ -17,7 +17,7 @@
  */
 
 import * as React from "react";
-import { Loader2 } from "lucide-react";
+import { BadgeCheck, Github, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { User } from "@arena/shared-types";
@@ -238,6 +238,59 @@ export function ProfileForm({ user, locked }: ProfileFormProps) {
           )}
         </div>
       </div>
+
+      {/* P0-7 — Connected-to-GitHub panel. Renders only when the user has
+          completed the OAuth round-trip (``github_verified_at`` non-null).
+          Read-only by design: the disconnect path is out of scope for
+          P0-7 (a disconnect that wipes the verified badge but keeps the
+          account around needs a separate audit pass — see the design doc). */}
+      {user.github_verified_at ? (
+        <div className="border-t border-[var(--color-border)] pt-6">
+          <SectionLabel>identity</SectionLabel>
+          <h3 className="mt-1 text-base font-semibold">Connected to GitHub</h3>
+          <p className="mt-1 text-sm text-[var(--color-muted-foreground)]">
+            Your public profile shows a verified-via-GitHub badge so
+            consumers can independently sanity-check the identity.
+          </p>
+          <div
+            className="mt-3 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-3 py-3"
+            data-testid="github-connected-panel"
+          >
+            <BadgeCheck
+              className="size-5 text-[var(--color-success)]"
+              aria-hidden
+            />
+            <div className="min-w-0 flex-1">
+              <p className="font-mono text-sm">
+                {user.github_login ? (
+                  <>
+                    <Github
+                      className="mr-1 inline size-3.5"
+                      aria-hidden
+                    />
+                    @{user.github_login}
+                  </>
+                ) : (
+                  "GitHub identity attached"
+                )}
+              </p>
+              <p className="mt-0.5 font-mono text-[11px] text-[var(--color-muted-foreground)]">
+                verified {formatJoinedDate(user.github_verified_at)}
+              </p>
+            </div>
+            {user.github_html_url ? (
+              <a
+                href={user.github_html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs underline underline-offset-2 hover:text-[var(--color-foreground)]"
+              >
+                view on github
+              </a>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="border-t border-[var(--color-border)] pt-6">
         <SectionLabel>session</SectionLabel>

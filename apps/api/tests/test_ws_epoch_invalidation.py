@@ -77,9 +77,7 @@ async def _seed_user(session_local, *, epoch: int = 1) -> uuid.UUID:
 
 async def _rotate_epoch(session_local, user_id: uuid.UUID, *, new: int) -> None:
     async with session_local() as db:
-        await db.execute(
-            update(User).where(User.id == user_id).values(session_epoch=new)
-        )
+        await db.execute(update(User).where(User.id == user_id).values(session_epoch=new))
         await db.commit()
 
 
@@ -178,6 +176,4 @@ async def test_v0_legacy_token_rejected(monkeypatch) -> None:
 
     monkeypatch.setattr(ws_auth, "_load_current_epoch", _spy)
     assert verify_ws_token(legacy_token, sid, secret=_SECRET) is False
-    assert called.get("count", 0) == 0, (
-        "version gate must reject v0 tokens before any DB lookup"
-    )
+    assert called.get("count", 0) == 0, "version gate must reject v0 tokens before any DB lookup"

@@ -14,20 +14,28 @@ import type {
   EmailChangeConfirm,
   EmailChangeRequest,
   FileContent,
+  FileListResponse,
   FileTreeNode,
   MagicLinkInput,
+  MagicLinkResendResponse,
   Mission,
   MissionDetail,
   PatchResult,
   PromptInput,
   PublicProfile,
+  ReportRenderRead,
+  SearchRequest,
+  SearchResponse,
   Session,
   SessionDetail,
+  SessionResetResponse,
+  ShareTokenRead,
   SkillsCatalog,
   Submission,
   SupervisionEvent,
   UnifiedDiff,
   User,
+  VerifyEnvelopeRead,
   WsTokenResponse,
 } from "@arena/shared-types";
 import { env } from "./env";
@@ -142,6 +150,11 @@ export function getCsrfToken(): string | null {
  */
 const CSRF_EXEMPT_PATHS = new Set<string>([
   "/auth/magic-link",
+  // P0-10 — resend endpoint also exempt; the user may not yet have a
+  // CSRF cookie when they hit "didn't get the link?" (e.g. they opened
+  // sign-in in an incognito session). Keep in lockstep with the
+  // backend's CSRFMiddleware exempt list.
+  "/auth/magic-link/resend",
   "/auth/callback",
 ]);
 
@@ -264,6 +277,34 @@ export const auth = {
   sendMagicLink(input: MagicLinkInput): Promise<void> {
     return request<void>("/auth/magic-link", { method: "POST", body: input });
   },
+  /**
+   * POST /api/v1/auth/magic-link/resend — resend the magic link with a
+   * 60-second per-email cooldown (P0-10).
+   *
+   * Returns ``{wait_seconds}`` — ``0`` when a fresh send proceeded,
+   * positive when the call was suppressed because a previous send is
+   * still in the cooldown window. The FE uses the value to render its
+   * countdown timer.
+   *
+   * The endpoint deliberately responds with the same shape regardless
+   * of whether the user exists so it cannot be used as an
+   * account-existence oracle. Throwing on non-OK responses (i.e. the
+   * caller getting a real error like 422) is delegated to the
+   * underlying ``request`` wrapper.
+   */
+  async resendMagicLink(
+    input: MagicLinkInput,
+  ): Promise<MagicLinkResendResponse> {
+    const body = await request<Partial<MagicLinkResendResponse> | null>(
+      "/auth/magic-link/resend",
+      { method: "POST", body: input },
+    );
+    // The backend always sends ``{wait_seconds}``; fall back to 0 so a
+    // future contract drift can't crash the FE (the timer just won't
+    // start, which surfaces in QA before it ships).
+    const wait = typeof body?.wait_seconds === "number" ? body.wait_seconds : 0;
+    return { wait_seconds: wait };
+  },
   /** POST /api/v1/auth/logout — clears the session cookie. */
   logout(): Promise<void> {
     return request<void>("/auth/logout", { method: "POST" });
@@ -309,6 +350,64 @@ export const auth = {
       body: input,
       signal,
     });
+  },
+
+  // ── P0-7 — GitHub OAuth identity verification ─────────────────────────────
+  //
+  // OAuth requires a real top-level browser navigation (the redirect to
+  // github.com sets a session for the user there, then redirects back to
+  // our callback which sets our cookie). ``fetch`` is the wrong tool for
+  // the start path — the FE must ``window.location.assign`` instead.
+  // ``isGithubOAuthAvailable`` is a cheap pre-flight so the FE only ever
+  // shows the button when the backend would honour the click.
+
+  /**
+   * GET /api/v1/auth/github/available — feature-flag probe.
+   *
+   * Returns ``true`` only when both ``GITHUB_OAUTH_CLIENT_ID`` and
+   * ``GITHUB_OAUTH_CLIENT_SECRET`` are set on the backend. The FE polls
+   * this on the sign-in page mount and hides the "Continue with GitHub"
+   * button when it returns ``false`` so users never see a path that
+   * would 503 on click. Errors are treated as "disabled" — failing
+   * closed keeps the magic-link path as the obvious fallback.
+   */
+  async isGithubOAuthAvailable(signal?: AbortSignal): Promise<boolean> {
+    try {
+      const body = await request<{ enabled: boolean }>(
+        "/auth/github/available",
+        { signal },
+      );
+      return body?.enabled === true;
+    } catch {
+      // Fail closed — better to hide the button than to surface a path
+      // the backend can't honour.
+      return false;
+    }
+  },
+
+  /**
+   * Initiate the GitHub OAuth round-trip via a top-level browser
+   * navigation.
+   *
+   * This is NOT a ``fetch`` — OAuth needs a real top-level navigation so
+   * the browser carries the user's GitHub session cookies forward and so
+   * the final redirect lands back on our origin with the new session
+   * cookie. The function returns ``void`` immediately and the page
+   * navigates as soon as the assignment runs.
+   *
+   * ``returnTo`` is an in-app relative path (must start with ``/``). The
+   * backend validates it before storing in the state JWT; tainted values
+   * are silently dropped and the callback falls back to ``/missions``.
+   */
+  startGithubOAuth(opts?: { returnTo?: string }): void {
+    const base = new URL(env.apiBaseUrl);
+    const url = new URL("/api/v1/auth/github/start", base.origin);
+    if (opts?.returnTo) {
+      url.searchParams.set("return_to", opts.returnTo);
+    }
+    if (typeof window !== "undefined") {
+      window.location.assign(url.toString());
+    }
   },
 };
 
@@ -570,6 +669,60 @@ export function revertFile(sessionId: string, path: string): Promise<void> {
   });
 }
 
+// ── P0-9 — Find-in-files / repo-wide workspace search ──────────────────────
+//
+// Two endpoints back the quick-open palette + find-in-files panel. Both
+// accept an ``AbortSignal`` so the FE can cancel in-flight requests as the
+// user types (the palette debounces by 120ms; the panel cancels on every
+// new query).
+
+/**
+ * GET /api/v1/sessions/{id}/files/list — workspace file paths (gitignore-aware).
+ *
+ * ``query`` does a substring filter server-side so the FE can ship a small
+ * candidate set to the client-side fuzzy ranker without re-fetching every
+ * keystroke. ``max`` caps the response (server hard-caps to 5000 regardless).
+ * The response includes ``truncated`` so the palette can surface a
+ * "// some files omitted" hint.
+ */
+export function getFileList(
+  sessionId: string,
+  opts?: { query?: string; max?: number; signal?: AbortSignal },
+): Promise<FileListResponse> {
+  const query: Record<string, string | number | undefined> = {};
+  if (opts?.query) query.query = opts.query;
+  if (opts?.max !== undefined) query.max = opts.max;
+  return request<FileListResponse>(
+    `/sessions/${encodeURIComponent(sessionId)}/files/list`,
+    { query, signal: opts?.signal },
+  );
+}
+
+/**
+ * POST /api/v1/sessions/{id}/files/search — find-in-files via ripgrep.
+ *
+ * Errors the caller must surface:
+ *   - 400 ``invalid_regex`` — the regex toggle is on and the pattern is
+ *     malformed. ``error.body.detail.message`` carries the ripgrep error.
+ *   - 504 ``search_timeout`` — the ripgrep subprocess exceeded the 10s
+ *     wall-clock budget. The FE shows a friendly toast and lets the user
+ *     refine the pattern.
+ *
+ * Side-effect: every successful call lands a ``command.run`` supervision
+ * event so the grader can credit the supervisor for actually poking around
+ * the workspace before prompting.
+ */
+export function searchFiles(
+  sessionId: string,
+  req: SearchRequest,
+  opts?: { signal?: AbortSignal },
+): Promise<SearchResponse> {
+  return request<SearchResponse>(
+    `/sessions/${encodeURIComponent(sessionId)}/files/search`,
+    { method: "POST", body: req, signal: opts?.signal },
+  );
+}
+
 /** GET /api/v1/sessions/{id}/diff — unified diff vs. initial_commit. */
 export function getDiff(
   sessionId: string,
@@ -639,13 +792,49 @@ export function giveUpSession(sessionId: string): Promise<Submission> {
   );
 }
 
-// ── P0-12 — workspace reset ─────────────────────────────────────────────────
+// ── P0-8 — proctored-mode integrity signals ─────────────────────────────────
 
-export interface SessionResetResponse {
-  files_reset: number;
-  new_head_commit: string;
-  reset_count: number;
+/** Kinds the backend accepts on ``POST /sessions/{id}/events/integrity``.
+ *  Mirror of the Python ``IntegrityKind`` Literal — keep these in lockstep. */
+export type IntegrityEventKind =
+  | "tab.blurred"
+  | "tab.focused"
+  | "paste.large"
+  | "focus.lost"
+  | "proctored.violation";
+
+/** Best-effort POST of an integrity signal. The endpoint accepts the
+ *  call on self-study sessions but persists nothing (returns 204); on
+ *  proctored sessions it persists + increments the counter; on rate
+ *  limit it returns 429. Callers (the ``IntegritySignaller``) catch
+ *  errors so the workspace UX never tilts on this supplementary
+ *  channel. */
+export async function postIntegrityEvent(
+  sessionId: string,
+  kind: IntegrityEventKind,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await request<void>(
+      `/sessions/${encodeURIComponent(sessionId)}/events/integrity`,
+      { method: "POST", body: { kind, payload } },
+    );
+  } catch (err) {
+    // 409 means the backend rejected the kind (e.g. honor mode bouncer
+    // — though in practice the endpoint returns 204 for self-study).
+    // Swallow it so the FE's listener stack never crashes the session.
+    if (err instanceof ApiError && err.status === 409) {
+      return;
+    }
+    throw err;
+  }
 }
+
+// ── P0-12 — workspace reset ─────────────────────────────────────────────────
+//
+// Wire shape is generated from ``SessionResetResponse`` (backend Pydantic
+// model). The re-export keeps the historical FE name on this layer.
+export type { SessionResetResponse };
 
 /**
  * POST /api/v1/sessions/{id}/reset — wipe the workspace back to the
@@ -700,39 +889,14 @@ export function getReport(
 }
 
 // ── P0-11 — verification envelope + render pipeline ─────────────────────────
-
-export interface VerifyEnvelope {
-  schema_version: number;
-  submission_id: string;
-  handle: string;
-  display_name: string | null;
-  mission_id: string;
-  mission_title: string;
-  mission_version: number;
-  rubric_version: string;
-  total_score: number;
-  effective_max: number;
-  missed_failure_mode: boolean;
-  score_cap_reason: "gave_up" | null;
-  proctored: boolean;
-  attempt_index: number;
-  graded_at: string;
-  canonical_url: string;
-  verification_hash: string;
-  verification_signature: string;
-}
-
-export interface ReportRender {
-  id: string;
-  submission_id: string;
-  kind: "pdf" | "png";
-  status: "queued" | "running" | "ready" | "failed";
-  bytes: number | null;
-  error: string | null;
-  created_at: string;
-  ready_at: string | null;
-  poll_after_seconds: number | null;
-}
+//
+// The wire shapes live in ``@arena/shared-types`` (generated from
+// ``apps/api/openapi.json``). The aliases below preserve the historical
+// FE-facing names (``VerifyEnvelope`` / ``ReportRender``) so call-sites
+// don't churn; the underlying contract is now sourced from the backend
+// Pydantic model rather than a hand-authored copy that could drift.
+export type VerifyEnvelope = VerifyEnvelopeRead;
+export type ReportRender = ReportRenderRead;
 
 /**
  * GET /api/v1/verify/{submission_id} — public, cacheable.
@@ -860,12 +1024,10 @@ export function getMySkills(signal?: AbortSignal): Promise<SkillsCatalog> {
  * Response shape for `POST /api/v1/reports/{submission_id}/share` — mints (or
  * retrieves) a public share URL for a graded submission. The backend returns
  * an absolute URL so the canonical host stays authoritative.
+ *
+ * Wire shape sourced from the generated ``ShareTokenRead`` (Pydantic model).
  */
-export interface ShareReportResponse {
-  share_url: string;
-  share_token: string;
-  expires_at: string;
-}
+export type ShareReportResponse = ShareTokenRead;
 
 export function shareReport(submissionId: string): Promise<ShareReportResponse> {
   return request<ShareReportResponse>(

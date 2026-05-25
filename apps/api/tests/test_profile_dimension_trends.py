@@ -26,9 +26,7 @@ async def _bind_engine(db_engine):
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return session_module.AsyncSessionLocal
@@ -66,9 +64,7 @@ def _report(
 
 
 @pytest.mark.asyncio
-async def test_profile_anonymous_view_omits_dimension_trends(
-    db_engine, client
-) -> None:
+async def test_profile_anonymous_view_omits_dimension_trends(db_engine, client) -> None:
     """Anonymous viewers see the radar averages but not the per-session
     trail — the trail is a fingerprintable skill trajectory and is gated
     behind authenticated self-view."""
@@ -121,8 +117,7 @@ async def test_profile_anonymous_view_omits_dimension_trends(
     body = resp.json()
     # Anonymous viewer → trends omitted (privacy gate).
     assert body.get("dimension_trends") == {}, (
-        f"anonymous viewer must not receive per-session trail; "
-        f"got {body.get('dimension_trends')!r}"
+        f"anonymous viewer must not receive per-session trail; got {body.get('dimension_trends')!r}"
     )
     # Radar averages remain public so the public profile is still
     # informative.
@@ -135,6 +130,7 @@ async def test_profile_trends_exclude_pending_scores(db_engine, client) -> None:
     handler level via _fetch_dimension_trends since the public route
     gates the field behind self-view."""
     from app.profiles.router import _fetch_dimension_trends
+
     Session = await _bind_engine(db_engine)
     handle = f"user-{uuid.uuid4().hex[:8]}"
     async with Session() as db:
@@ -185,9 +181,7 @@ async def test_profile_trends_exclude_pending_scores(db_engine, client) -> None:
     # Call the aggregator directly (route gates dimension_trends behind
     # self-view, which isn't easily reproduced in this test).
     async with Session() as db:
-        user = (
-            await db.execute(select(User).where(User.handle == handle))
-        ).scalar_one()
+        user = (await db.execute(select(User).where(User.handle == handle))).scalar_one()
         trends = await _fetch_dimension_trends(db, user.id)
     pq_trail = trends.get("prompt_quality") or []
     # The pending session is dropped — only sessions 1 and 3 appear.

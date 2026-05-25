@@ -43,7 +43,7 @@ def _mint_uuid_with_prefix(prefix_hex: str) -> uuid.UUID:
     """
     if len(prefix_hex) > 32 or len(prefix_hex) % 2 != 0:
         raise ValueError("prefix_hex must be an even number of hex chars, <= 32")
-    suffix = uuid.uuid4().hex[len(prefix_hex):]
+    suffix = uuid.uuid4().hex[len(prefix_hex) :]
     return uuid.UUID(hex=prefix_hex + suffix)
 
 
@@ -108,10 +108,10 @@ async def test_two_users_with_colliding_8char_prefix_both_tombstone(
 
     async with session_local() as db:
         rows = (
-            await db.execute(
-                select(User).where(User.id.in_([user_a_id, user_b_id]))
-            )
-        ).scalars().all()
+            (await db.execute(select(User).where(User.id.in_([user_a_id, user_b_id]))))
+            .scalars()
+            .all()
+        )
     assert len(rows) == 2, "tombstones must remain as rows (not hard-deleted)"
 
     by_id = {row.id: row for row in rows}

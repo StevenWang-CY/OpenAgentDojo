@@ -56,6 +56,7 @@ def _make_app(db_session: AsyncSession, user: User | None) -> Any:
     app.dependency_overrides[get_db] = _override_db
 
     if user is not None:
+
         def _as_user() -> User:
             return user
 
@@ -96,9 +97,7 @@ async def test_get_returns_all_nulls_for_new_user(
 
 
 @pytest.mark.asyncio
-async def test_post_then_get_reflects_record(
-    consent_user: User, db_session: AsyncSession
-) -> None:
+async def test_post_then_get_reflects_record(consent_user: User, db_session: AsyncSession) -> None:
     """POST analytics granted=true → GET shows the freshly-recorded row."""
     app = _make_app(db_session, consent_user)
     transport = ASGITransport(app=app)
@@ -153,9 +152,7 @@ async def test_post_same_kind_twice_get_returns_latest(
 
 
 @pytest.mark.asyncio
-async def test_posts_are_append_only(
-    consent_user: User, db_session: AsyncSession
-) -> None:
+async def test_posts_are_append_only(consent_user: User, db_session: AsyncSession) -> None:
     """N POSTs against the same kind insert N rows (no UPDATE / no dedupe)."""
     app = _make_app(db_session, consent_user)
     transport = ASGITransport(app=app)
@@ -278,12 +275,16 @@ async def test_post_emits_supervision_event_with_payload(
         assert revoked_resp.status_code == 204, revoked_resp.text
 
     events = (
-        await db_session.execute(
-            select(AccountEvent)
-            .where(AccountEvent.user_id == consent_user.id)
-            .order_by(AccountEvent.id)
+        (
+            await db_session.execute(
+                select(AccountEvent)
+                .where(AccountEvent.user_id == consent_user.id)
+                .order_by(AccountEvent.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [e.event_type for e in events] == [
         "consent.granted",
         "consent.revoked",
@@ -294,9 +295,7 @@ async def test_post_emits_supervision_event_with_payload(
 
 
 @pytest.mark.asyncio
-async def test_post_without_csrf_returns_403(
-    consent_user: User, db_session: AsyncSession
-) -> None:
+async def test_post_without_csrf_returns_403(consent_user: User, db_session: AsyncSession) -> None:
     """The CSRF middleware must reject a POST that omits the double-submit pair."""
     app = _make_app(db_session, consent_user)
     transport = ASGITransport(app=app)

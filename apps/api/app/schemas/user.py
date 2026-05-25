@@ -19,7 +19,17 @@ class UserRead(BaseModel):
     email: EmailStr
     handle: str | None = None
     display_name: str | None = None
+    # P0-7 — GitHub OAuth identity surface. ``github_login`` is the user's
+    # current GitHub handle (kept here for backwards-compat with the
+    # pre-OAuth shape); the other three columns make the verified badge
+    # legible: ``github_avatar_url`` to show next to the chip,
+    # ``github_html_url`` so the FE can deep-link to github.com/$login,
+    # and ``github_verified_at`` so the chip can show "verified on YYYY-MM-DD"
+    # without an extra round trip.
     github_login: str | None = None
+    github_avatar_url: str | None = None
+    github_html_url: str | None = None
+    github_verified_at: datetime | None = None
     created_at: datetime
     last_login_at: datetime | None = None
     # ``/auth/me`` always sets a CSRF token (either the existing cookie or a
@@ -74,9 +84,7 @@ class DisplayNameUpdate(BaseModel):
         if len(v) == 0:
             raise ValueError("display_name must not be empty")
         if len(v) > DISPLAY_NAME_MAX_LEN:
-            raise ValueError(
-                f"display_name must be at most {DISPLAY_NAME_MAX_LEN} characters"
-            )
+            raise ValueError(f"display_name must be at most {DISPLAY_NAME_MAX_LEN} characters")
         return v
 
 

@@ -38,10 +38,8 @@ def test_diff_dwell_under_5s_earns_partial_credit() -> None:
         _evt("patch.applied", {}, "2026-05-22T10:00:00Z"),
         _evt("diff.opened", {}, "2026-05-22T10:00:10Z"),
         # Two seconds later — the supervisor closed without reading.
-        _evt("file.edited", {"path": "src/a.ts", "added": 1, "removed": 0},
-             "2026-05-22T10:00:12Z"),
-        _evt("prompt.submitted", {"text": "let me revise"},
-             "2026-05-22T10:00:13Z"),
+        _evt("file.edited", {"path": "src/a.ts", "added": 1, "removed": 0}, "2026-05-22T10:00:12Z"),
+        _evt("prompt.submitted", {"text": "let me revise"}, "2026-05-22T10:00:13Z"),
     ]
     ds = _score(events)
     assert any("open-and-close, partial credit only" in s for s in ds.signals)
@@ -54,10 +52,8 @@ def test_diff_dwell_over_5s_earns_full_credit() -> None:
         _evt("patch.applied", {}, "2026-05-22T10:00:00Z"),
         _evt("diff.opened", {}, "2026-05-22T10:00:10Z"),
         # 30s of dwell — supervisor was reading.
-        _evt("file.edited", {"path": "src/a.ts", "added": 1, "removed": 1},
-             "2026-05-22T10:00:40Z"),
-        _evt("prompt.submitted", {"text": "let me revise"},
-             "2026-05-22T10:00:45Z"),
+        _evt("file.edited", {"path": "src/a.ts", "added": 1, "removed": 1}, "2026-05-22T10:00:40Z"),
+        _evt("prompt.submitted", {"text": "let me revise"}, "2026-05-22T10:00:45Z"),
     ]
     ds = _score(events)
     assert any("(dwell 30000 ms)" in s for s in ds.signals)
@@ -70,15 +66,13 @@ def test_zero_line_edit_not_credited() -> None:
     events = [
         _evt("patch.applied", {}, "2026-05-22T10:00:00Z"),
         _evt("diff.opened", {}, "2026-05-22T10:00:10Z"),
-        _evt("file.edited", {"path": "src/a.ts", "added": 0, "removed": 0},
-             "2026-05-22T10:00:30Z"),  # no-op write
-        _evt("prompt.submitted", {"text": "let me revise"},
-             "2026-05-22T10:00:35Z"),
+        _evt(
+            "file.edited", {"path": "src/a.ts", "added": 0, "removed": 0}, "2026-05-22T10:00:30Z"
+        ),  # no-op write
+        _evt("prompt.submitted", {"text": "let me revise"}, "2026-05-22T10:00:35Z"),
     ]
     ds = _score(events)
-    assert any(
-        "file.edited events present but all were no-op" in s for s in ds.signals
-    )
+    assert any("file.edited events present but all were no-op" in s for s in ds.signals)
     # +6 diff (dwell ok) + 0 edit + 4 revise = 10.
     assert ds.score == 10
 
@@ -89,8 +83,7 @@ def test_file_reverted_always_meaningful_even_without_line_counts() -> None:
         _evt("diff.opened", {}, "2026-05-22T10:00:10Z"),
         # 10s dwell, then revert.
         _evt("file.reverted", {"path": "src/a.ts"}, "2026-05-22T10:00:20Z"),
-        _evt("prompt.submitted", {"text": "let me revise"},
-             "2026-05-22T10:00:21Z"),
+        _evt("prompt.submitted", {"text": "let me revise"}, "2026-05-22T10:00:21Z"),
     ]
     ds = _score(events)
     assert any("meaningful file edit or revert" in s for s in ds.signals)
@@ -103,15 +96,10 @@ def test_diff_never_opened_after_patch_earns_zero() -> None:
     events = [
         _evt("diff.opened", {}, "2026-05-22T10:00:00Z"),  # before patch
         _evt("patch.applied", {}, "2026-05-22T10:00:30Z"),
-        _evt("file.edited", {"path": "src/a.ts", "added": 1, "removed": 0},
-             "2026-05-22T10:01:00Z"),
-        _evt("prompt.submitted", {"text": "revise"},
-             "2026-05-22T10:01:05Z"),
+        _evt("file.edited", {"path": "src/a.ts", "added": 1, "removed": 0}, "2026-05-22T10:01:00Z"),
+        _evt("prompt.submitted", {"text": "revise"}, "2026-05-22T10:01:05Z"),
     ]
     ds = _score(events)
-    assert any(
-        "diff not opened after the most recent patch applied" in s
-        for s in ds.signals
-    )
+    assert any("diff not opened after the most recent patch applied" in s for s in ds.signals)
     # 0 + 5 + 4 = 9.
     assert ds.score == 9

@@ -5,6 +5,7 @@ user's per-dim score toward zero on every retry. Counting it in
 ``/me/skills`` would claim the user attempted (and failed) a mission
 they never actually attempted.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -32,9 +33,7 @@ def _stub_report() -> dict:
 def _real_report(scores: dict[str, int]) -> dict:
     return {
         "total": sum(scores.values()),
-        "dimensions": {
-            k: {"score": v, "max": 30, "signals": []} for k, v in scores.items()
-        },
+        "dimensions": {k: {"score": v, "max": 30, "signals": []} for k, v in scores.items()},
     }
 
 

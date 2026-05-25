@@ -68,8 +68,7 @@ def _backend_only(keys: set[str]) -> set[str]:
 
 def _report(label: str, target: str, missing: list[str]) -> None:
     print(
-        f"check_env_examples: {target} is missing {label} keys "
-        "declared in the root example:",
+        f"check_env_examples: {target} is missing {label} keys declared in the root example:",
         file=sys.stderr,
     )
     for key in missing:

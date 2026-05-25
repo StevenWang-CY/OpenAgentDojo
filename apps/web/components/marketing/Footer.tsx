@@ -40,6 +40,10 @@ export function MarketingFooter() {
         <FooterColumn title="Product">
           <FooterLink href="/missions">Missions</FooterLink>
           <FooterLink href="/auth/sign-in">Sign in</FooterLink>
+          {/* P0-10 — direct link into the magic-link troubleshooting
+              FAQ so users hitting deliverability issues can find help
+              without opening sign-in first. */}
+          <FooterLink href="/help/signin">Sign-in help</FooterLink>
         </FooterColumn>
 
         <FooterColumn title="Project">

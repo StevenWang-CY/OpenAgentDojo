@@ -305,6 +305,15 @@ _FE_KNOWN_EVENT_TYPES: set[str] = {
     "account.deletion_scheduled",
     "account.deletion_cancelled",
     "account.deleted",
+    # P0-8 — proctored-mode integrity signals. The FE
+    # ``IntegritySignaller`` posts these to
+    # ``POST /sessions/{id}/events/integrity``; the backend persists
+    # them via the standard ``EventEmitter.emit`` call.
+    "tab.blurred",
+    "tab.focused",
+    "paste.large",
+    "focus.lost",
+    "proctored.violation",
 }
 
 

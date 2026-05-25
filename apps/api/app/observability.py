@@ -246,6 +246,45 @@ magic_link_suppressed_total = Counter(
     ["reason"],  # reason ∈ {"pending_email_in_flight"} today; extensible.
     registry=REGISTRY,
 )
+# P0-10 — deliverability dashboard signal. Every magic-link delivery
+# attempt bumps this counter; operators page off the failure / timeout /
+# throttled rates and pipe the ``backend`` label into a per-provider
+# sender-reputation board. ``backend`` ∈ {"resend", "smtp", "dev-log",
+# "unknown"} reflects the actual transport selected by the dispatch
+# chain. ``outcome`` ∈ {"delivered", "timeout", "failed", "throttled"}.
+# "throttled" specifically covers the resend-rate-limit short-circuit
+# in ``POST /auth/magic-link[/resend]``, which never reaches a transport.
+magic_link_email_total = Counter(
+    "magic_link_email_total",
+    "Magic-link email delivery attempts by outcome.",
+    ["backend", "outcome"],
+    registry=REGISTRY,
+)
+# Phase 4.A.16 — dedicated counter for resend-throttle short-circuits.
+# Previously this lived as ``magic_link_email_total{backend="unknown",
+# outcome="throttled"}`` which polluted the per-transport delivery
+# dashboard with a non-transport signal AND mislabelled the backend
+# (no transport was selected). Split out so the throttle alert can fire
+# independently of any per-backend dashboard.
+magic_link_throttled_total = Counter(
+    "magic_link_throttled_total",
+    "Magic-link send requests short-circuited by the 60s resend throttle (P0-10).",
+    registry=REGISTRY,
+)
+# Phase 4.A.16 — workspace ``POST /sessions/{id}/files/search`` outcome
+# counter. The ``outcome`` label distinguishes the four legal terminal
+# states a search request can reach: ``ok`` (matches returned),
+# ``invalid_regex`` (PCRE compile error → 400), ``timeout`` (ripgrep
+# exceeded the wall-clock budget → 504), and ``truncated`` (matches
+# capped by ``max_results``). The counter lets dashboards spot a
+# misconfigured FE (every search timing out) or a regex denial-of-
+# service from a specific mission.
+workspace_search_total = Counter(
+    "workspace_search_total",
+    "POST /sessions/{id}/files/search outcomes (P0-9).",
+    ["outcome"],  # outcome ∈ {"ok", "invalid_regex", "timeout", "truncated"}
+    registry=REGISTRY,
+)
 
 
 def metrics_asgi_app():

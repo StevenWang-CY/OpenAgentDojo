@@ -44,11 +44,6 @@ from app.observability import deletion_lock_blocked_total
 
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-# Fallback path used only when the startup resolver hasn't run yet (e.g.
-# unit tests that build a TestClient without going through the lifespan).
-# Production runs the lifespan and overrides this via ``app.state``.
-_CANCEL_PATH_FALLBACK = "/api/v1/auth/me/delete/cancel"
-
 
 class DeletionLockMiddleware(BaseHTTPMiddleware):
     """Block mutating requests while the caller's deletion grace is open."""
@@ -59,9 +54,18 @@ class DeletionLockMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        cancel_path = getattr(
-            request.app.state, "deletion_cancel_path", _CANCEL_PATH_FALLBACK
-        )
+        # Phase 4.A.14 — no string fallback. The cancel path MUST be
+        # resolved at app construction time so a router-prefix change
+        # can't silently make every cancel POST 403 itself. Both
+        # ``app.main.create_app`` AND the lifespan stamp this; tests
+        # that build a bare FastAPI without going through ``create_app``
+        # are required to register the route explicitly.
+        cancel_path = getattr(request.app.state, "deletion_cancel_path", None)
+        if cancel_path is None:
+            raise RuntimeError(
+                "DeletionLockMiddleware requires app.state.deletion_cancel_path; "
+                "run app.main.create_app() to wire this"
+            )
         if path == cancel_path:
             return await call_next(request)
 
@@ -84,9 +88,7 @@ class DeletionLockMiddleware(BaseHTTPMiddleware):
         from app.models.user import User
 
         async with AsyncSessionLocal() as db:
-            user = (
-                await db.execute(select(User).where(User.id == user_id))
-            ).scalar_one_or_none()
+            user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
 
         if user is None:
             return await call_next(request)

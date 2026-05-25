@@ -36,9 +36,7 @@ class _Repo:
 class _Manifest:
     id: str = "hidden-partial-credit-test"
     repo: _Repo = field(default_factory=_Repo)
-    hidden_tests: _HiddenTests = field(
-        default_factory=lambda: _HiddenTests(suites=["hidden"])
-    )
+    hidden_tests: _HiddenTests = field(default_factory=lambda: _HiddenTests(suites=["hidden"]))
     expected_files: list[str] = field(default_factory=list)
     expected_diff_lines_p50: int = 20
     expected_context: object = None
@@ -205,6 +203,6 @@ def test_full_pipeline_partial_credit_preserves_replay_determinism() -> None:
         manifest=manifest,
         agent_turns=[],
     )
-    assert first.dimensions["final_correctness"].score == second.dimensions[
-        "final_correctness"
-    ].score
+    assert (
+        first.dimensions["final_correctness"].score == second.dimensions["final_correctness"].score
+    )

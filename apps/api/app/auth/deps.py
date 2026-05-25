@@ -115,9 +115,7 @@ async def get_current_user(
                 uid = uuid.UUID(user_id_str)
             except ValueError:
                 return None
-            user = (
-                await db.execute(select(User).where(User.id == uid))
-            ).scalar_one_or_none()
+            user = (await db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
             if user is None:
                 return None
             # P0-6 — per-user session epoch. A cookie minted before

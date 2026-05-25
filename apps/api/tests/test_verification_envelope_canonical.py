@@ -82,9 +82,7 @@ def user() -> SimpleNamespace:
 
 
 def test_envelope_keys_match_design(submission, session, manifest, user):
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     expected = {
         "schema_version",
         "submission_id",
@@ -121,9 +119,7 @@ def test_envelope_hash_is_stable_across_calls(submission, session, manifest, use
 
 
 def test_canonical_json_is_key_sorted(submission, session, manifest, user):
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     serialized = canonical_json(env).decode("utf-8")
     parsed = json.loads(serialized)
     assert list(parsed.keys()) == sorted(parsed.keys())
@@ -132,21 +128,15 @@ def test_canonical_json_is_key_sorted(submission, session, manifest, user):
     assert ": " not in serialized
 
 
-def test_envelope_hash_ignores_python_dict_insertion_order(
-    submission, session, manifest, user
-):
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+def test_envelope_hash_ignores_python_dict_insertion_order(submission, session, manifest, user):
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     # Shuffle by serialising then reordering keys; hash should remain.
     reordered = {k: env[k] for k in reversed(list(env.keys()))}
     assert compute_hash(env) == compute_hash(reordered)
 
 
 def test_envelope_strips_microseconds(submission, session, manifest, user):
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     # The fixture's created_at has microseconds; the envelope rounds them.
     assert env["graded_at"] == "2026-05-23T18:42:11+00:00"
 
@@ -162,26 +152,20 @@ def test_envelope_handles_tombstoned_user(submission, session, manifest):
         handle="deleted-11111111",
         display_name=None,
     )
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=deleted
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=deleted)
     assert env["handle"].startswith("deleted-")
     assert env["display_name"] is None
 
 
 def test_envelope_handles_score_cap_reason(submission, session, manifest, user):
     submission.score_cap_reason = "gave_up"
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     assert env["score_cap_reason"] == "gave_up"
 
 
 def test_envelope_defaults_effective_max_when_missing(submission, session, manifest, user):
     submission.score_report = {}
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     assert env["effective_max"] == 100
 
 
@@ -199,18 +183,14 @@ def test_envelope_defaults_mission_version_to_1(submission, session, user):
 
 
 def test_compute_signature_is_hex_64(submission, session, manifest, user):
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     sig = compute_signature(compute_hash(env), "test-secret-1234567890abcdefghij")
     assert len(sig) == 64
     int(sig, 16)
 
 
 def test_signature_changes_when_secret_changes(submission, session, manifest, user):
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     h = compute_hash(env)
     sig_a = compute_signature(h, "secret-a-1234567890abcdefghij")
     sig_b = compute_signature(h, "secret-b-1234567890abcdefghij")
@@ -223,9 +203,7 @@ def test_signature_is_function_of_hash_string(submission, session, manifest, use
     This is what the secret-rotation script relies on (design §P0-11
     Open decisions).
     """
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     h1 = compute_hash(env)
     # Re-derive the envelope and confirm the same hash → same signature
     # for the same secret.
@@ -238,9 +216,7 @@ def test_signature_is_function_of_hash_string(submission, session, manifest, use
 
 
 def test_stamp_returns_matching_hash_and_signature(submission, session, manifest, user):
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=user)
     secret = "test-secret-1234567890abcdefghij"
     h, sig = stamp(env, secret)
     assert h == compute_hash(env)
@@ -274,9 +250,7 @@ def test_verify_secret_falls_back_to_share_then_session():
 
 
 def test_verify_secret_raises_when_no_secret_resolvable():
-    settings = SimpleNamespace(
-        verify_secret=None, share_token_secret=None, session_secret=None
-    )
+    settings = SimpleNamespace(verify_secret=None, share_token_secret=None, session_secret=None)
     with pytest.raises(RuntimeError):
         verify_secret(settings)
 
@@ -288,9 +262,7 @@ def test_verify_secret_raises_when_no_secret_resolvable():
 # ---------------------------------------------------------------------------
 
 
-def test_canonical_json_preserves_raw_utf8_for_non_ascii(
-    submission, session, manifest
-):
+def test_canonical_json_preserves_raw_utf8_for_non_ascii(submission, session, manifest):
     """Non-ASCII handles (e.g. CJK) must NOT escape to ``\\uXXXX``.
 
     Without ``ensure_ascii=False`` the canonical bytes would carry
@@ -306,14 +278,10 @@ def test_canonical_json_preserves_raw_utf8_for_non_ascii(
         handle="私",  # "私"
         display_name="私さん",  # "私さん"
     )
-    env = build_envelope(
-        submission=submission, session=session, manifest=manifest, user=cjk_user
-    )
+    env = build_envelope(submission=submission, session=session, manifest=manifest, user=cjk_user)
     raw = canonical_json(env)
     # The raw UTF-8 encoding of "私" is the three bytes 0xE7 0xA7 0x81.
-    assert "私".encode() in raw, (
-        "canonical_json must emit raw UTF-8, not \\uXXXX escape sequences"
-    )
+    assert "私".encode() in raw, "canonical_json must emit raw UTF-8, not \\uXXXX escape sequences"
     # And the escape form must NOT be present.
     assert b"\\u79c1" not in raw
 

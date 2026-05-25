@@ -32,6 +32,10 @@ const FIXTURE: PublicProfile = {
   handle: "alice",
   display_name: "Alice Liddell",
   joined_at: "2026-01-12T00:00:00Z",
+  github_login: null,
+  github_avatar_url: null,
+  github_html_url: null,
+  github_verified_at: null,
   badges: [
     {
       id: "regression-test-writer",
@@ -55,6 +59,8 @@ const FIXTURE: PublicProfile = {
   radar_averages: {},
   total_missions: 1,
   best_score: 78,
+  has_verified_attempts: false,
+  verified_attempts_only: false,
 };
 
 function renderWithClient(node: React.ReactElement) {

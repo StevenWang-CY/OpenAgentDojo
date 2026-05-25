@@ -203,9 +203,7 @@ async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> Non
     reader = asyncio.create_task(reader_task())
     writer = asyncio.create_task(writer_task())
     try:
-        _done, pending = await asyncio.wait(
-            {reader, writer}, return_when=asyncio.FIRST_COMPLETED
-        )
+        _done, pending = await asyncio.wait({reader, writer}, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
         for task in pending:
@@ -227,7 +225,7 @@ async def _bridge_local_pty(websocket: WebSocket, attach, driver, handle) -> Non
         logger.debug("close_pty failed: {}", exc)
 
 
-async def _bridge_docker_socket(websocket: WebSocket, attach) -> None:
+async def _bridge_docker_socket(websocket: WebSocket, attach) -> None:  # noqa: PLR0915
     _exec_id, sock = attach
     loop = asyncio.get_running_loop()
     closed = asyncio.Event()
@@ -275,9 +273,7 @@ async def _bridge_docker_socket(websocket: WebSocket, attach) -> None:
     reader = asyncio.create_task(reader_task())
     writer = asyncio.create_task(writer_task())
     try:
-        _done, pending = await asyncio.wait(
-            {reader, writer}, return_when=asyncio.FIRST_COMPLETED
-        )
+        _done, pending = await asyncio.wait({reader, writer}, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
         for task in pending:

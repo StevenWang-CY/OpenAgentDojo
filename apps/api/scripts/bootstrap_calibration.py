@@ -49,7 +49,9 @@ def _build_inputs(scenario: str, manifest, folder: Path):
     raise ValueError(f"unknown scenario {scenario!r}")
 
 
-def _build_baseline(mission_id: str, mission_version: int, folder: Path, manifest) -> CalibrationFile:
+def _build_baseline(
+    mission_id: str, mission_version: int, folder: Path, manifest
+) -> CalibrationFile:
     scenarios: list[CalibrationScenario] = []
     for scenario in SCENARIO_NAMES:
         inputs = _build_inputs(scenario, manifest, folder)
@@ -104,13 +106,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"SKIP {m.manifest.id} (file exists; --regenerate to overwrite)")
             skipped += 1
             continue
-        calib = _build_baseline(
-            m.manifest.id, int(m.manifest.version), m.folder, m.manifest
-        )
+        calib = _build_baseline(m.manifest.id, int(m.manifest.version), m.folder, m.manifest)
         out_path.write_text(dump_calibration_yaml(calib), encoding="utf-8")
-        print(
-            f"WROTE {m.manifest.id} → {out_path.relative_to(root.parent)}"
-        )
+        print(f"WROTE {m.manifest.id} → {out_path.relative_to(root.parent)}")
         wrote += 1
     print(f"\n{wrote} written, {skipped} skipped")
     return 0

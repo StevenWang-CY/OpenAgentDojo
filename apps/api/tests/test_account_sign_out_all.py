@@ -102,9 +102,7 @@ async def test_sign_out_all_invalidates_prior_cookie(client_with_db, db_engine) 
 
     # Re-fetch the user — epoch should have incremented.
     async with session_local() as db:
-        refreshed = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        refreshed = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
     assert refreshed.session_epoch == 2, "sign-out-all must bump session_epoch"
 
     # The fresh cookie's epoch claim must verify against the new epoch.
@@ -113,9 +111,7 @@ async def test_sign_out_all_invalidates_prior_cookie(client_with_db, db_engine) 
     decoded_new = jwt.decode(new_cookie, settings.session_secret, algorithms=["HS256"])
     assert decoded_new["epoch"] == 2
 
-    decoded_old = jwt.decode(
-        device_b_cookie, settings.session_secret, algorithms=["HS256"]
-    )
+    decoded_old = jwt.decode(device_b_cookie, settings.session_secret, algorithms=["HS256"])
     assert decoded_old["epoch"] == 1, (
         "device B was minted at epoch 1; it should now be rejected on next request"
     )

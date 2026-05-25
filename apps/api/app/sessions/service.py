@@ -62,6 +62,7 @@ async def create_session(
     user_id: uuid.UUID,
     mission_id: str,
     previous_session_id: uuid.UUID | None = None,
+    mode: str = "self_study",
 ) -> SessionRow:
     """Create a new session for ``user_id`` against ``mission_id``.
 
@@ -131,12 +132,19 @@ async def create_session(
         if prev is not None and prev.user_id == user_id and prev.mission_id == mission_id:
             resolved_prev = prev.id
 
+    # P0-8 — clamp ``mode`` to the legal enum at the service boundary so a
+    # stray value can't reach the DB CHECK constraint as a 500. The router
+    # also pydantic-validates this; the belt-and-braces guard is for any
+    # background worker / CLI that might call ``create_session`` directly.
+    safe_mode = mode if mode in {"self_study", "proctored"} else "self_study"
+
     row = SessionRow(
         user_id=user_id,
         mission_id=mission_id,
         status="provisioning",
         attempt_index=next_attempt_index,
         previous_session_id=resolved_prev,
+        mode=safe_mode,
     )
     db.add(row)
     try:

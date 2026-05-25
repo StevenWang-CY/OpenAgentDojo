@@ -3,6 +3,7 @@ logged as a warning so incident response has a thread to pull. Previously
 ``consume_magic_token`` returned ``None`` for both unknown and
 already-used tokens with no observable difference.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,9 +20,7 @@ from app.models.user import User
 @pytest.mark.asyncio
 async def test_replay_of_used_token_logs_warning(db_session) -> None:  # type: ignore[no-untyped-def]
     captured: list[str] = []
-    sink_id = logger.add(
-        lambda m: captured.append(m.record["message"]), level="WARNING"
-    )
+    sink_id = logger.add(lambda m: captured.append(m.record["message"]), level="WARNING")
     try:
         user = User(email="replay-test@example.com")
         db_session.add(user)
@@ -50,9 +49,7 @@ async def test_replay_of_used_token_logs_warning(db_session) -> None:  # type: i
 @pytest.mark.asyncio
 async def test_unknown_token_returns_none_silently(db_session) -> None:  # type: ignore[no-untyped-def]
     captured: list[str] = []
-    sink_id = logger.add(
-        lambda m: captured.append(m.record["message"]), level="WARNING"
-    )
+    sink_id = logger.add(lambda m: captured.append(m.record["message"]), level="WARNING")
     try:
         result = await consume_magic_token(db_session, "never-issued-token")
         assert result is None

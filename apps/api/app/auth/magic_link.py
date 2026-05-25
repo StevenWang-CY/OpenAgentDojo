@@ -27,6 +27,145 @@ from app.models.user import User
 
 _HANDLE_INVALID_RE = re.compile(r"[^a-z0-9]+")
 
+# P0-10 — resend-throttle window. Identical to the FE's 60-second
+# countdown timer so the two stay in lockstep when the operator adjusts
+# the policy. Exposed as a module constant (not a Setting) because the
+# magic-link reminder cadence is a security-relevant policy, not a
+# per-deploy knob — bumping it requires a code review.
+MAGIC_LINK_RESEND_WINDOW_SECONDS = 60
+
+# Redis key prefix for the per-email throttle. SHA-256 the email so the
+# key set in Redis can't be used as a directory of known email addresses
+# by an operator with cluster access.
+_RESEND_REDIS_KEY_PREFIX = "auth:magic_resend:"
+
+
+def _hash_email_for_throttle(email: str) -> str:
+    """Stable SHA-256 hex of the lowercased email for throttle keys.
+
+    Distinct from ``hash_email_for_event`` (which uses a settings-salt
+    so log lines can't be cross-referenced with throttle keys) — this
+    one is a pure deterministic digest used as a Redis key suffix and a
+    structured-log identifier.
+    """
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+
+
+async def magic_link_resend_wait_seconds(email: str) -> int | None:
+    """Return seconds the caller must wait before another link is sent.
+
+    Phase 4.A.17 — the return type tightened from ``int`` to ``int | None``
+    so the route can distinguish "Redis down" (``None``) from "Redis
+    says no throttle" (``0``). Only the down case forces a second
+    query against the DB fallback (one extra SELECT per request);
+    before the fix the route ran the DB fallback on every send because
+    the integer ``0`` collapsed both cases.
+
+    Implementation:
+
+    * Preferred path: Redis. The key ``auth:magic_resend:{sha256(email)}``
+      is written with a 60-second TTL when a send proceeds. Re-reading
+      the TTL gives the precise remaining wait time, which the route
+      passes back to the caller via the ``Retry-After`` header and the
+      JSON body on ``/magic-link/resend``.
+    * Fallback: ``None`` is returned when Redis is unavailable. The
+      caller (the route) then consults
+      :func:`magic_link_resend_db_fallback_wait_seconds` which reads the
+      most-recent ``MagicLinkToken`` row for any user whose email
+      matches and derives the elapsed-since-mint from ``created_at`` /
+      ``expires_at - magic_link_ttl_minutes``. Cheap and correct as long
+      as the user's row exists; for first-time sign-up requests the DB
+      fallback returns 0 (no prior token), which matches the "first
+      send" semantics.
+
+    Never raises — every failure mode degrades to "allow the send" so
+    a flaky Redis can't lock a user out of sign-in entirely.
+    """
+    return await _resend_wait_from_redis(email)
+
+
+async def magic_link_resend_db_fallback_wait_seconds(db: AsyncSession, email: str) -> int:
+    """DB fallback for the resend throttle.
+
+    Computes how long ago the most-recent sign-in token for this email
+    was minted. If less than ``MAGIC_LINK_RESEND_WINDOW_SECONDS`` ago,
+    returns the remaining wait. Only consulted by the route when Redis
+    is unavailable — see ``_record_resend_in_redis`` for the happy path.
+    """
+    settings = get_settings()
+    row: MagicLinkToken | None = (
+        await db.execute(
+            select(MagicLinkToken)
+            .join(User, User.id == MagicLinkToken.user_id)
+            .where(
+                sa_func.lower(User.email) == email.strip().lower(),
+                MagicLinkToken.purpose == PURPOSE_SIGN_IN,
+            )
+            .order_by(MagicLinkToken.expires_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None or row.expires_at is None:
+        return 0
+    # ``created_at = expires_at - ttl``; derive instead of adding a column.
+    expires_at = row.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    created_at = expires_at - timedelta(minutes=settings.magic_link_ttl_minutes)
+    elapsed = (datetime.now(UTC) - created_at).total_seconds()
+    remaining = MAGIC_LINK_RESEND_WINDOW_SECONDS - int(elapsed)
+    return remaining if remaining > 0 else 0
+
+
+async def _resend_wait_from_redis(email: str) -> int | None:
+    """Return the Redis-backed wait time or ``None`` when Redis is down.
+
+    The TTL query is wrapped in a tight try/except so a Redis blip falls
+    through to the DB path rather than 500-ing the route.
+    """
+    from app.sessions.events import get_redis
+
+    try:
+        redis = await get_redis()
+    except Exception:  # pragma: no cover — defence-in-depth
+        return None
+    if redis is None:
+        return None
+    key = _RESEND_REDIS_KEY_PREFIX + _hash_email_for_throttle(email)
+    try:
+        ttl = await redis.ttl(key)
+    except Exception:
+        return None
+    # redis-py returns -2 (key missing) or -1 (no TTL set) — both mean
+    # "no throttle in flight". Otherwise the value IS the wait time.
+    if ttl is None or ttl < 0:
+        return 0
+    return int(ttl)
+
+
+async def record_magic_link_resend(email: str) -> None:
+    """Stamp the resend throttle so the next request within 60s short-circuits.
+
+    Best-effort: Redis failures degrade silently. The DB-backed fallback
+    in ``magic_link_resend_db_fallback_wait_seconds`` covers the missing
+    Redis case via the token row's expiry timestamp.
+    """
+    from app.sessions.events import get_redis
+
+    try:
+        redis = await get_redis()
+    except Exception:
+        return
+    if redis is None:
+        return
+    key = _RESEND_REDIS_KEY_PREFIX + _hash_email_for_throttle(email)
+    try:
+        await redis.set(key, "1", ex=MAGIC_LINK_RESEND_WINDOW_SECONDS)
+    except Exception:
+        # Throttle storage is advisory — the DB fallback still rejects
+        # within the same window via the token row.
+        return
+
 
 def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -76,22 +215,30 @@ async def _pending_email_owner(db: AsyncSession, email: str) -> uuid.UUID | None
     through to the standard upsert path.
     """
     row = (
-        await db.execute(
-            select(User.id).where(
-                sa_func.lower(User.pending_email) == email.lower()
-            )
-        )
+        await db.execute(select(User.id).where(sa_func.lower(User.pending_email) == email.lower()))
     ).scalar_one_or_none()
     return row
 
 
-async def create_magic_link(db: AsyncSession, email: str, base_url: str) -> str | None:
+async def create_magic_link(
+    db: AsyncSession,
+    email: str,
+    base_url: str,
+    *,
+    next_path: str | None = None,
+) -> str | None:
     """Upsert the user by email, store a hashed token, return the magic link URL.
 
     The link is valid for ``settings.magic_link_ttl_minutes`` minutes (default 30).
     Before issuing a new token we revoke all prior unconsumed tokens for the
     user — this means an attacker who steals an old (but still unexpired)
     email cannot replay it once the user has requested a fresh link.
+
+    ``next_path`` (Phase 4.A.13) — optional same-origin relative path the
+    callback redirects to after minting the session cookie. Persisted on
+    the token row; re-validated against the FE-route allowlist on read
+    (so a stale path minted under an older allowlist gets sanitised).
+    NULL means "use the default ``/missions``".
 
     Returns ``None`` when the requested email is currently reserved as
     ``pending_email`` on another account (a P0-6 in-flight email change).
@@ -104,6 +251,13 @@ async def create_magic_link(db: AsyncSession, email: str, base_url: str) -> str 
     """
     settings = get_settings()
     now = datetime.now(UTC)
+
+    # Phase 4.A.12 — normalize at the boundary so the SQLite test path
+    # (which stores raw strings) and the Postgres CITEXT prod path land
+    # the same canonical value. The route already lower-cases before
+    # calling this, but we re-normalize defensively for direct callers
+    # (e.g. test fixtures).
+    email = email.strip().lower()
 
     # Upsert user by email.
     existing_user: User | None = (
@@ -120,22 +274,17 @@ async def create_magic_link(db: AsyncSession, email: str, base_url: str) -> str 
         # treated as reserved. Callers up-stack convert this into the
         # privacy-preserving 204 (no information leak about whether the
         # address is in-flight or simply unsent).
-        pending_owner_id: uuid.UUID | None = await _pending_email_owner(
-            db, email
-        )
+        pending_owner_id: uuid.UUID | None = await _pending_email_owner(db, email)
         if pending_owner_id is not None:
             from loguru import logger as _logger
 
             from app.observability import magic_link_suppressed_total
 
             _logger.info(
-                "magic_link.suppressed reason=pending_email_in_flight "
-                "owner_user_id={}",
+                "magic_link.suppressed reason=pending_email_in_flight owner_user_id={}",
                 pending_owner_id,
             )
-            magic_link_suppressed_total.labels(
-                reason="pending_email_in_flight"
-            ).inc()
+            magic_link_suppressed_total.labels(reason="pending_email_in_flight").inc()
             return None
 
         base_handle = _slugify_handle(email)
@@ -184,6 +333,11 @@ async def create_magic_link(db: AsyncSession, email: str, base_url: str) -> str 
         token_hash=token_hash,
         expires_at=expires_at,
         purpose=PURPOSE_SIGN_IN,
+        # Phase 4.A.13 — persist the validated next_path so the callback
+        # can read it back without round-tripping the value through the
+        # URL (a query param would be tamper-able by anyone who steals
+        # the link).
+        next_path=next_path,
     )
     db.add(magic)
     await db.flush()
@@ -252,9 +406,7 @@ async def create_email_change_link(
     return f"{base_url.rstrip('/')}/auth/email-confirm?token={raw_token}"
 
 
-async def consume_email_change_token(
-    db: AsyncSession, raw_token: str
-) -> MagicLinkToken | None:
+async def consume_email_change_token(db: AsyncSession, raw_token: str) -> MagicLinkToken | None:
     """Consume a purpose=``email_change`` token. Returns the row or None.
 
     Returns ``None`` for unknown, already-used, expired, or wrong-purpose
@@ -280,9 +432,7 @@ async def consume_email_change_token(
     token_prefix = hash_token_for_log(raw_token)
 
     row: MagicLinkToken | None = (
-        await db.execute(
-            select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash)
-        )
+        await db.execute(select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash))
     ).scalar_one_or_none()
 
     if row is None:
@@ -295,8 +445,7 @@ async def consume_email_change_token(
 
     if row.used_at is not None:
         _logger.warning(
-            "email_change_token.rejected reason=already_used "
-            "user_id={} token_prefix={} used_at={}",
+            "email_change_token.rejected reason=already_used user_id={} token_prefix={} used_at={}",
             row.user_id,
             token_prefix,
             row.used_at.isoformat(),
@@ -327,8 +476,7 @@ async def consume_email_change_token(
     ).scalar_one_or_none()
     if eligible is None:
         _logger.warning(
-            "email_change_token.rejected reason=expired "
-            "user_id={} token_prefix={} expires_at={}",
+            "email_change_token.rejected reason=expired user_id={} token_prefix={} expires_at={}",
             row.user_id,
             token_prefix,
             row.expires_at.isoformat() if row.expires_at else "<unknown>",
@@ -342,8 +490,17 @@ async def consume_email_change_token(
     return row
 
 
-async def consume_magic_token(db: AsyncSession, raw_token: str) -> User | None:
-    """Find a non-expired, unused ``sign_in`` token by hash; mark it used; return its user.
+async def consume_magic_token(
+    db: AsyncSession, raw_token: str
+) -> tuple[User, str | None] | User | None:
+    """Find a non-expired, unused ``sign_in`` token by hash; mark it used; return ``(user, next_path)``.
+
+    Phase 4.A.13 — the return type widened from ``User | None`` to
+    ``tuple[User, str | None] | None`` so the callback can read the
+    persisted ``next_path`` without a second SELECT. Callers that only
+    care about the user can unpack the tuple. The legacy ``User`` return
+    form is preserved in the type union for back-compat with any test
+    that monkeypatches this function with a User-returning stub.
 
     Returns ``None`` if the token is unknown, already used, expired, or
     minted for the wrong purpose (e.g. an ``email_change`` token presented
@@ -420,4 +577,6 @@ async def consume_magic_token(db: AsyncSession, raw_token: str) -> User | None:
         db.add(user)
 
     await db.flush()
-    return user
+    if user is None:
+        return None
+    return user, row.next_path

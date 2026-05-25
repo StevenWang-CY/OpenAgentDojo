@@ -107,6 +107,18 @@ _RULES: tuple[_Rule, ...] = (
         limit=5,
         key_by="ip",
     ),
+    # P0-10 — the resend endpoint shares the same per-IP envelope as
+    # the primary magic-link route. The application-level 60-second
+    # per-email throttle is the precise gate; this is defence-in-depth
+    # against a botnet that rotates source IPs but pounds the same
+    # endpoint.
+    _Rule(
+        name="auth_magic_link_resend",
+        method="POST",
+        pattern=re.compile(r"^/api/v1/auth/magic-link/resend/?$"),
+        limit=5,
+        key_by="ip",
+    ),
     _Rule(
         name="auth_callback",
         method="GET",
@@ -160,6 +172,19 @@ _RULES: tuple[_Rule, ...] = (
         name="reset",
         method="POST",
         pattern=re.compile(r"^/api/v1/sessions/[^/]+/reset/?$"),
+        limit=10,
+        key_by="user",
+    ),
+    # P0-9 — Find-in-files. Ripgrep across the workspace is cheap but the
+    # subprocess churn adds up under abuse. 10/min/session covers the most
+    # frantic real-user pattern (a few queries per minute) without giving a
+    # scraping client free reign. Keyed by user so two sessions in different
+    # tabs share the bucket, which matches the per-user rate-limit semantics
+    # of every other workspace-mutating rule above.
+    _Rule(
+        name="files_search",
+        method="POST",
+        pattern=re.compile(r"^/api/v1/sessions/[^/]+/files/search/?$"),
         limit=10,
         key_by="user",
     ),
@@ -325,8 +350,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Defence-in-depth: cap magic-link sends per email address so a single
         # account can't be spammed from a rotating pool of source IPs. The
         # check is best-effort — we skip silently if the body can't be parsed
-        # (the route handler will then surface its own 422).
-        if rule.name == "auth_magic_link":
+        # (the route handler will then surface its own 422). Applies to both
+        # the original ``/auth/magic-link`` route and the P0-10 resend route
+        # so a caller cannot route around the cap by flipping endpoints.
+        if rule.name in ("auth_magic_link", "auth_magic_link_resend"):
             email = await self._peek_magic_link_email(request)
             if email is not None:
                 email_hash = hashlib.sha256(email.encode("utf-8")).hexdigest()

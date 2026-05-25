@@ -1324,23 +1324,28 @@ Total budget: ~26–42 dev-days. Sequence assumes single-track agent; multiple w
 
 ### Post-MVP — P0 batch (post-launch hardening)
 
+> **Note:** this table is stale; trails the codebase. The "Status" /
+> "Evidence" columns are hand-maintained and may lag the actual ship
+> state by a commit or two — when in doubt the file paths in the
+> Evidence column are the load-bearing source of truth.
+
 Milestones M0–M8 land the MVP product. The follow-up work is tracked in [FEATURE_GAPS.md](FEATURE_GAPS.md) and broken into batches under [P0_DESIGN.md](P0_DESIGN.md) (items 1–6) and [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md) (items 11–13). Shipped status as of 2026-05-25:
 
-| Item | Title | Status |
-|---|---|---|
-| P0-1 | In-product onboarding (Mission 00) | ✅ shipped (commit `916d660`) |
-| P0-2 | Mission post-mortem walkthrough | ✅ shipped (commit `916d660`) |
-| P0-3 | Replay/retry mechanic + multi-attempt policy | ✅ shipped (commit `7aac383`, [ADR 0009](docs/adr/0009-multi-attempt-policy.md)) |
-| P0-4 | Give-up affordance with capped reveal | ✅ shipped (commit `7aac383`, [ADR 0010](docs/adr/0010-give-up-policy.md)) |
-| P0-5 | Legal pages + cookie consent | ✅ shipped (commit `ff161e2`) |
-| P0-6 | Account self-service (change email, export, delete) | ✅ shipped (commit `ff161e2`) |
-| P0-7 | Identity verification via GitHub OAuth | ⏳ pending |
-| P0-8 | Anti-cheating posture (proctored mode) | ⏳ pending |
-| P0-9 | Find-in-files / repo-wide search | ⏳ pending |
-| P0-10 | Email deliverability fallback | ⏳ pending |
-| P0-11 | Verifiable report artifact (PDF + signed permalink) | 🚧 backend landed (`apps/api/app/reports/verification.py`, `/verify/{id}`, migration 0019); FE verify page + dropdown PR still open |
-| P0-12 | Reset-to-initial workspace | ⏳ pending |
-| P0-13 | LICENSE + CONTRIBUTING + rubric reconciliation | ✅ shipped (this batch — LICENSE Apache 2.0, CONTRIBUTING/SECURITY/CODE_OF_CONDUCT, [ADR 0011](docs/adr/0011-rubric-rebalance.md), invariant test) |
+| Item | Title | Status | Evidence |
+|---|---|---|---|
+| P0-1 | In-product onboarding (Mission 00) | ✅ shipped | commit `916d660` |
+| P0-2 | Mission post-mortem walkthrough | ✅ shipped | commit `916d660` |
+| P0-3 | Replay/retry mechanic + multi-attempt policy | ✅ shipped | commit `7aac383`, [ADR 0009](docs/adr/0009-multi-attempt-policy.md) |
+| P0-4 | Give-up affordance with capped reveal | ✅ shipped | commit `7aac383`, [ADR 0010](docs/adr/0010-give-up-policy.md) |
+| P0-5 | Legal pages + cookie consent | ✅ shipped | commit `ff161e2` |
+| P0-6 | Account self-service (change email, export, delete) | ✅ shipped | commit `ff161e2` |
+| P0-7 | Identity verification via GitHub OAuth | ✅ shipped | `apps/api/app/auth/github_oauth.py`, migration `0021_github_oauth.py` |
+| P0-8 | Anti-cheating posture (proctored mode) | ✅ shipped | `apps/api/app/sessions/integrity.py`, `apps/api/app/sessions/service.py` (`session.mode`), migration `0022_session_mode.py` |
+| P0-9 | Find-in-files / repo-wide search | ✅ shipped | `apps/api/app/sessions/router.py` (`POST /sessions/{id}/files/search`), `apps/api/app/schemas/workspace.py` |
+| P0-10 | Email deliverability fallback | ✅ shipped | `apps/api/app/auth/email.py`, `apps/api/app/observability.py` (`magic_link_email_total`) |
+| P0-11 | Verifiable report artifact (PDF + signed permalink) | ✅ shipped | `apps/api/app/reports/verification.py`, `apps/web/app/verify/[submissionId]`, migration `0019_report_verification.py` |
+| P0-12 | Reset-to-initial workspace | ✅ shipped | `apps/api/app/sessions/router.py` (`POST /sessions/{id}/reset`), migration `0020_session_reset_event.py` |
+| P0-13 | LICENSE + CONTRIBUTING + rubric reconciliation | ✅ shipped | LICENSE Apache 2.0, CONTRIBUTING/SECURITY/CODE_OF_CONDUCT, [ADR 0011](docs/adr/0011-rubric-rebalance.md) |
 
 P1 / P2 work is tracked in the same docs but not milestoned here.
 

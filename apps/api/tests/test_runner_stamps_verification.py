@@ -99,6 +99,7 @@ async def test_runner_persists_verification_columns(session_factory) -> None:
         )
         h = compute_hash(envelope)
         from app.reports.verification import compute_signature
+
         sig = compute_signature(h, verify_secret(settings))
 
         sub = Submission(
@@ -120,9 +121,7 @@ async def test_runner_persists_verification_columns(session_factory) -> None:
         from sqlalchemy import select
 
         row = (
-            await db.execute(
-                select(Submission).where(Submission.id == envelope_inputs["id"])
-            )
+            await db.execute(select(Submission).where(Submission.id == envelope_inputs["id"]))
         ).scalar_one()
         assert row.verification_hash == h
         assert row.verification_signature == sig

@@ -119,9 +119,7 @@ class AccountEvent(Base):
     __tablename__ = "account_events"
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ("
-            + ",".join(f"'{v}'" for v in ALLOWED_ACCOUNT_EVENT_TYPES)
-            + ")",
+            "event_type IN (" + ",".join(f"'{v}'" for v in ALLOWED_ACCOUNT_EVENT_TYPES) + ")",
             name="account_events_type_check",
         ),
         Index("idx_account_events_user_time", "user_id", "occurred_at"),

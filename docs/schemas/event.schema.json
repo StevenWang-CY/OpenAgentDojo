@@ -46,7 +46,12 @@
         "tutorial.dismissed",
         "tutorial.completed",
         "consent.granted",
-        "consent.revoked"
+        "consent.revoked",
+        "tab.blurred",
+        "tab.focused",
+        "paste.large",
+        "focus.lost",
+        "proctored.violation"
       ]
     },
     "occurred_at": {
@@ -379,6 +384,79 @@
           "required": ["stage", "detail"],
           "properties": {
             "stage": { "type": "string" },
+            "detail": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "tab.blurred" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seconds_visible_before"],
+          "properties": {
+            "seconds_visible_before": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "tab.focused" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seconds_blurred"],
+          "properties": {
+            "seconds_blurred": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "paste.large" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chars", "target"],
+          "properties": {
+            "chars": { "type": "integer", "minimum": 0 },
+            "target": {
+              "type": "string",
+              "enum": ["agent_chat", "editor", "terminal", "other"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "focus.lost" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["element_id"],
+          "properties": {
+            "element_id": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "proctored.violation" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "detail"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["right_click", "devtools_open", "copy_blocked", "context_menu"]
+            },
             "detail": { "type": "string" }
           }
         }

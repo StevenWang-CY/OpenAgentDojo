@@ -126,6 +126,43 @@ def _manifest_banned_tokens(manifest: Any) -> tuple[str, ...]:
         return ()
 
 
+def _build_patch_failed_payload(
+    *,
+    turn_index: int,
+    turn_id: uuid.UUID | str,
+    error: str,
+    file_count: int = 0,
+    added: int = 0,
+    removed: int = 0,
+) -> dict[str, Any]:
+    """Canonical ``patch.failed`` event payload (Phase 4.A.4).
+
+    All three failure branches (timeout, generic exception, driver-reported
+    ``result.applied=False``) MUST emit the same shape so subscribers
+    (timeline renderer, scoring engine, post-mortem walkthrough) can read
+    fields unconditionally. The contract is:
+
+      * ``turn_index``  — int turn the patch belonged to
+      * ``error``       — generic message safe to surface to the client
+      * ``file_count``  — number of files the patch attempted to touch
+                          (0 when unknown — timeout / exception paths)
+      * ``added``       — added line count (0 when unknown)
+      * ``removed``     — removed line count (0 when unknown)
+      * ``turn_id``     — stringified turn UUID for direct DB join
+
+    Mirrored in ``packages/shared-types/src/events.ts`` — keep that file
+    in sync when touching this shape (Agent 4.B owns shared-types).
+    """
+    return {
+        "turn_index": int(turn_index),
+        "error": error,
+        "file_count": int(file_count),
+        "added": int(added),
+        "removed": int(removed),
+        "turn_id": str(turn_id),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Per-mission caches
 # ---------------------------------------------------------------------------
@@ -439,11 +476,11 @@ class AgentService:
                 await emitter.emit(
                     session_id=session.id,
                     event_type="patch.failed",
-                    payload={
-                        "turn_index": turn_index,
-                        "error": "apply_diff timed out after 60s",
-                        "turn_id": str(turn_id),
-                    },
+                    payload=_build_patch_failed_payload(
+                        turn_index=turn_index,
+                        turn_id=turn_id,
+                        error="apply_diff timed out after 60s",
+                    ),
                 )
             return PatchResult(applied=False, error="apply_diff timed out after 60s")
         except Exception as exc:
@@ -457,33 +494,33 @@ class AgentService:
                 await emitter.emit(
                     session_id=session.id,
                     event_type="patch.failed",
-                    payload={
-                        "turn_index": turn_index,
-                        "error": generic_error,
-                        "turn_id": str(turn_id),
-                    },
+                    payload=_build_patch_failed_payload(
+                        turn_index=turn_index,
+                        turn_id=turn_id,
+                        error=generic_error,
+                    ),
                 )
             return PatchResult(applied=False, error=generic_error)
 
         if not result.applied:
             files_list = list(result.files_changed)
             async with _safe_begin(db):
+                # ``file_count`` (was: ``files_changed``) — P1-B10. The
+                # legacy name collided with the
+                # :class:`PatchResult.files_changed` list field, confusing
+                # readers about whether the payload value was a count or
+                # the list itself.
                 await emitter.emit(
                     session_id=session.id,
                     event_type="patch.failed",
-                    payload={
-                        "turn_index": turn_index,
-                        "error": result.error or "git apply returned non-zero",
-                        # ``file_count`` (was: ``files_changed``) — P1-B10.
-                        # The legacy name collided with the
-                        # :class:`PatchResult.files_changed` list field,
-                        # confusing readers about whether the payload value
-                        # was a count or the list itself.
-                        "file_count": len(files_list),
-                        "added": result.added_lines,
-                        "removed": result.removed_lines,
-                        "turn_id": str(turn_id),
-                    },
+                    payload=_build_patch_failed_payload(
+                        turn_index=turn_index,
+                        turn_id=turn_id,
+                        error=result.error or "git apply returned non-zero",
+                        file_count=len(files_list),
+                        added=result.added_lines,
+                        removed=result.removed_lines,
+                    ),
                 )
             return PatchResult(
                 applied=False,
@@ -516,6 +553,20 @@ class AgentService:
                     "turn_id": str(turn_id),
                 },
             )
+
+        # Phase 4.A.22 — patch.applied changed the workspace, so the
+        # cached ``git ls-files`` listing for this sandbox is now stale.
+        # Drop the entry so the next ``GET /sessions/{id}/files/list``
+        # re-shells out and picks up the newly-created files. Without
+        # this, a successful apply_patch leaves the quick-open palette
+        # pinned at the pre-patch file set for up to 30s. Defensive
+        # ``getattr`` because test stubs sometimes pass a bare ``object()``
+        # as the handle.
+        from app.sandbox.file_cache import invalidate_for_sandbox
+
+        sandbox_id_attr = getattr(sandbox_handle, "id", None)
+        if isinstance(sandbox_id_attr, str):
+            invalidate_for_sandbox(sandbox_id_attr)
 
         return PatchResult(
             applied=True,

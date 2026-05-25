@@ -80,11 +80,42 @@ class PublicProfile(BaseModel):
     handle: str
     display_name: str | None = None
     joined_at: datetime
+    # P0-7 — GitHub OAuth identity verification fields on the PUBLIC
+    # profile. ``github_verified_at`` is the FE's authoritative signal for
+    # the verified-via-GitHub chip; ``github_html_url`` is the link target
+    # so consumers can independently sanity-check the identity. All four
+    # are nullable: legacy / email-only profiles render the FE's
+    # "self-attested" chip when ``github_verified_at`` is null.
+    github_login: str | None = None
+    github_avatar_url: str | None = None
+    github_html_url: str | None = None
+    github_verified_at: datetime | None = None
     badges: list[EarnedBadgeRead] = Field(default_factory=list)
     history: list[MissionHistoryItemRead] = Field(default_factory=list)
     # Only dimensions that appeared in at least one of the user's submissions
     # are populated; absent keys mean the dimension was never scored.
+    # P0-8 — when ``verified_attempts_only`` is true (default whenever any
+    # verified attempt exists), this map carries the verified bucket; when
+    # false (no verified attempts on file) it carries every graded
+    # attempt — honest fallback, paired with the
+    # ``has_verified_attempts: false`` flag so the FE renders the
+    # honor-mode notice.
     radar_averages: dict[str, float] = Field(default_factory=dict)
+    # P0-8 — separate radar built from verified (proctored) attempts only.
+    # Populated only when ``has_verified_attempts`` is true; the FE flips
+    # the radar to this set when the viewer toggles "Verified only" off.
+    # ``None`` is the explicit "no verified attempts to render" signal.
+    dimension_history_verified: dict[str, float] | None = None
+    # P0-8 — true iff at least one verified (proctored) submission exists
+    # for this profile. Drives the FE's default toggle position (verified
+    # only when this is true; show-all otherwise) and the honor-mode
+    # notice.
+    has_verified_attempts: bool = False
+    # P0-8 — the partition policy actually applied to ``radar_averages``.
+    # ``True`` means the radar excludes honor-mode attempts; ``False``
+    # means it includes every graded attempt (the honest path when no
+    # verified attempt exists on file).
+    verified_attempts_only: bool = False
     # Per-dimension chronological score trail for the longitudinal sparklines
     # (P2-2). Each dimension maps to a list of ``(completed_at, score)``
     # points, oldest first. Pending dimension scores (``null``) are skipped

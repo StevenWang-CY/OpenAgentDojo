@@ -33,9 +33,15 @@ const KNOWN_BE_EVENT_TYPES = [
   "diff.opened",
   "file.edited",
   "file.reverted",
+  // P0-8 — anti-cheating posture / proctored mode. Emitted by the FE's
+  // IntegritySignaller and persisted through
+  // ``POST /sessions/{id}/events/integrity`` only on proctored sessions.
+  "focus.lost",
+  "paste.large",
   "patch.applied",
   "patch.failed",
   "patch.proposed",
+  "proctored.violation",
   "prompt.submitted",
   "session.abandoned",
   "session.errored",
@@ -47,6 +53,8 @@ const KNOWN_BE_EVENT_TYPES = [
   "submission.failed",
   "submission.graded",
   "submission.requested",
+  "tab.blurred",
+  "tab.focused",
   "test.run",
   "tutorial.completed",
   "tutorial.dismissed",

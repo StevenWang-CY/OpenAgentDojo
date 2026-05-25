@@ -41,9 +41,7 @@ async def _seed_user(session_local) -> uuid.UUID:
 
 
 @pytest.mark.asyncio
-async def test_second_export_returns_409(
-    client_with_db, db_engine, monkeypatch
-) -> None:
+async def test_second_export_returns_409(client_with_db, db_engine, monkeypatch) -> None:
     session_local = await _bound(db_engine)
     user_id = await _seed_user(session_local)
 
@@ -105,9 +103,7 @@ async def test_second_export_after_completion_succeeds(
     def _no_op(_export_id):
         return None
 
-    monkeypatch.setattr(
-        "app.workers.account_export.build_user_export", _no_op, raising=False
-    )
+    monkeypatch.setattr("app.workers.account_export.build_user_export", _no_op, raising=False)
 
     from app.auth.deps import require_auth
 

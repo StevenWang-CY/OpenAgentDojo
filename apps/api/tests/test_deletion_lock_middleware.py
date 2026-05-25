@@ -111,9 +111,7 @@ async def test_cancel_is_exempt_from_lockout(client_with_db, db_engine) -> None:
 
     # Confirm the row is no longer scheduled.
     async with session_local() as db:
-        row = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        row = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
     assert row.deletion_scheduled_at is None
 
 
@@ -133,9 +131,7 @@ async def test_get_requests_pass_through_lockout(client_with_db, db_engine) -> N
 
 
 @pytest.mark.asyncio
-async def test_lockout_does_not_block_unauthenticated_requests(
-    client_with_db, db_engine
-) -> None:
+async def test_lockout_does_not_block_unauthenticated_requests(client_with_db, db_engine) -> None:
     """No cookie → middleware short-circuits and the auth layer handles it."""
     session_local = await _bound(db_engine)
     await _seed_scheduled_user(session_local)

@@ -81,32 +81,30 @@ def _clear_auth(client_with_db) -> None:
     client_with_db._transport.app.dependency_overrides.clear()  # type: ignore[attr-defined]
 
 
-async def _count_events(
-    session_local, *, user_id: uuid.UUID, event_type: str | None = None
-) -> int:
+async def _count_events(session_local, *, user_id: uuid.UUID, event_type: str | None = None) -> int:
     async with session_local() as db:
-        stmt = select(func.count()).select_from(AccountEvent).where(
-            AccountEvent.user_id == user_id
-        )
+        stmt = select(func.count()).select_from(AccountEvent).where(AccountEvent.user_id == user_id)
         if event_type is not None:
             stmt = stmt.where(AccountEvent.event_type == event_type)
         return (await db.execute(stmt)).scalar_one()
 
 
-async def _fetch_event(
-    session_local, *, user_id: uuid.UUID, event_type: str
-) -> AccountEvent:
+async def _fetch_event(session_local, *, user_id: uuid.UUID, event_type: str) -> AccountEvent:
     async with session_local() as db:
         row = (
-            await db.execute(
-                select(AccountEvent)
-                .where(
-                    AccountEvent.user_id == user_id,
-                    AccountEvent.event_type == event_type,
+            (
+                await db.execute(
+                    select(AccountEvent)
+                    .where(
+                        AccountEvent.user_id == user_id,
+                        AccountEvent.event_type == event_type,
+                    )
+                    .order_by(AccountEvent.id.desc())
                 )
-                .order_by(AccountEvent.id.desc())
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
     assert row is not None, f"expected {event_type} event for {user_id}"
     return row
 
@@ -117,9 +115,7 @@ async def _fetch_event(
 
 
 @pytest.mark.asyncio
-async def test_email_change_requested_emits_event(
-    client_with_db, db_engine, monkeypatch
-) -> None:
+async def test_email_change_requested_emits_event(client_with_db, db_engine, monkeypatch) -> None:
     session_local = await _bound(db_engine)
     user_id = await _seed_user(session_local, email="me@example.com")
     await _auth_as(client_with_db, session_local, user_id)
@@ -151,9 +147,7 @@ async def test_email_change_requested_emits_event(
 
 
 @pytest.mark.asyncio
-async def test_email_confirm_emits_event(
-    client_with_db, db_engine, monkeypatch
-) -> None:
+async def test_email_confirm_emits_event(client_with_db, db_engine, monkeypatch) -> None:
     session_local = await _bound(db_engine)
     user_id = await _seed_user(session_local, email="me@example.com")
     await _auth_as(client_with_db, session_local, user_id)
@@ -330,10 +324,10 @@ async def test_hard_delete_emits_account_deleted_event(db_engine, monkeypatch) -
     # for this user — historical rows were wiped by the worker.
     async with session_local() as db:
         rows = (
-            await db.execute(
-                select(AccountEvent).where(AccountEvent.user_id == user_id)
-            )
-        ).scalars().all()
+            (await db.execute(select(AccountEvent).where(AccountEvent.user_id == user_id)))
+            .scalars()
+            .all()
+        )
     assert len(rows) == 1, (
         f"expected exactly one terminal account.deleted event; saw {[r.event_type for r in rows]}"
     )
@@ -365,9 +359,7 @@ async def test_event_rolls_back_when_request_transaction_aborts(
     from app.auth.routes import _build_account_event
 
     async with session_local() as db:
-        user = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        user = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
         user.email = "would-be-new@example.com"
         db.add(user)
         db.add(
@@ -390,9 +382,7 @@ async def test_event_rolls_back_when_request_transaction_aborts(
     )
 
     async with session_local() as db:
-        row = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        row = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
     assert row.email != "would-be-new@example.com", (
         "the user write must roll back alongside the event row"
     )

@@ -160,9 +160,7 @@ async def _seed_world(session_local) -> tuple[uuid.UUID, uuid.UUID]:
 
 
 @pytest.mark.asyncio
-async def test_export_bundle_contains_only_owners_data(
-    db_engine, monkeypatch
-) -> None:
+async def test_export_bundle_contains_only_owners_data(db_engine, monkeypatch) -> None:
     session_local = await _bound(db_engine)
     me_id, other_id = await _seed_world(session_local)
 
@@ -207,9 +205,7 @@ async def test_export_bundle_contains_only_owners_data(
 
     # The worker must have transitioned the row to ``ready``.
     async with session_local() as db:
-        row = (
-            await db.execute(select(DataExport).where(DataExport.id == export_id))
-        ).scalar_one()
+        row = (await db.execute(select(DataExport).where(DataExport.id == export_id))).scalar_one()
     assert row.status == EXPORT_STATUS_READY
     assert row.s3_key is not None
     assert row.s3_key.startswith(f"data-exports/{me_id}/")
@@ -252,12 +248,8 @@ async def test_export_bundle_contains_only_owners_data(
         turns_lines = [
             ln for ln in zf.read("agent_turns.jsonl").decode().splitlines() if ln.strip()
         ]
-        subs_lines = [
-            ln for ln in zf.read("submissions.jsonl").decode().splitlines() if ln.strip()
-        ]
-        badges_lines = [
-            ln for ln in zf.read("badges.jsonl").decode().splitlines() if ln.strip()
-        ]
+        subs_lines = [ln for ln in zf.read("submissions.jsonl").decode().splitlines() if ln.strip()]
+        badges_lines = [ln for ln in zf.read("badges.jsonl").decode().splitlines() if ln.strip()]
 
     # README mentions the expiry policy + cites every file.
     assert "expires" in readme.lower()
@@ -275,9 +267,5 @@ async def test_export_bundle_contains_only_owners_data(
 
     # No leakage: the other user's marker submission must NOT appear.
     raw_blob = data
-    assert b"other-only" not in raw_blob, (
-        "another user's data leaked into the export bundle"
-    )
-    assert str(other_id).encode() not in raw_blob, (
-        "another user's id leaked into the export bundle"
-    )
+    assert b"other-only" not in raw_blob, "another user's data leaked into the export bundle"
+    assert str(other_id).encode() not in raw_blob, "another user's id leaked into the export bundle"

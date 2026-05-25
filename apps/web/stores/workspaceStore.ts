@@ -29,6 +29,21 @@ export interface WorkspaceState {
   /** Sandbox driver reported by the API — drives the local-driver banner. */
   sandboxDriver: "docker" | "local" | "unknown";
 
+  // ── P0-9 — Quick-open / find-in-files / help overlay ─────────────────────
+  /** True when the Cmd/Ctrl+P file palette is mounted. */
+  commandPaletteOpen: boolean;
+  /** True when the Cmd/Ctrl+Shift+F find-in-files panel is mounted. */
+  searchPanelOpen: boolean;
+  /** True when the ``?`` help overlay is mounted. */
+  helpOverlayOpen: boolean;
+  /**
+   * Editor line to scroll/focus when the active file mounts. Drives the
+   * "jump to match" handoff from the find-in-files panel to Monaco. Cleared
+   * by the editor once the focus has been honoured so a later open of the
+   * same file doesn't keep stealing focus.
+   */
+  activeLineFocus: number | null;
+
   // ── Mutators ──────────────────────────────────────────────────────────────
   setSelectedContext(paths: string[]): void;
   toggleContextPath(path: string): void;
@@ -39,6 +54,16 @@ export interface WorkspaceState {
   pushAgentTurn(turn: AgentTurn): void;
   pushEvent(event: SupervisionEvent): void;
   setSandboxDriver(driver: "docker" | "local" | "unknown"): void;
+  setCommandPaletteOpen(open: boolean): void;
+  setSearchPanelOpen(open: boolean): void;
+  setHelpOverlayOpen(open: boolean): void;
+  setActiveLineFocus(line: number | null): void;
+  /**
+   * Combined: set the active file AND the line focus in a single render.
+   * Used by the find-in-files panel's "jump to match" affordance — splitting
+   * into two store writes would race the editor's mount.
+   */
+  setActivePath(path: string, line?: number | null): void;
   reset(): void;
   /**
    * P0-12 — surgical clear used by the "Reset workspace" dialog. Drops
@@ -77,6 +102,10 @@ function makeWorkspaceStore(sessionId: string) {
         events: [],
         lastEventId: 0,
         sandboxDriver: "unknown",
+        commandPaletteOpen: false,
+        searchPanelOpen: false,
+        helpOverlayOpen: false,
+        activeLineFocus: null,
 
         setSelectedContext(paths) {
           set({ selectedContext: dedupe(paths) });
@@ -146,6 +175,27 @@ function makeWorkspaceStore(sessionId: string) {
         setSandboxDriver(driver) {
           set({ sandboxDriver: driver });
         },
+        setCommandPaletteOpen(open) {
+          set({ commandPaletteOpen: open });
+        },
+        setSearchPanelOpen(open) {
+          set({ searchPanelOpen: open });
+        },
+        setHelpOverlayOpen(open) {
+          set({ helpOverlayOpen: open });
+        },
+        setActiveLineFocus(line) {
+          set({ activeLineFocus: line });
+        },
+        setActivePath(path, line = null) {
+          set((state) => ({
+            openTabs: state.openTabs.includes(path)
+              ? state.openTabs
+              : [...state.openTabs, path],
+            activeFile: path,
+            activeLineFocus: line,
+          }));
+        },
         reset() {
           set({
             selectedContext: [],
@@ -155,6 +205,10 @@ function makeWorkspaceStore(sessionId: string) {
             agentTurns: [],
             events: [],
             lastEventId: 0,
+            commandPaletteOpen: false,
+            searchPanelOpen: false,
+            helpOverlayOpen: false,
+            activeLineFocus: null,
           });
         },
         resetForWorkspaceReset() {

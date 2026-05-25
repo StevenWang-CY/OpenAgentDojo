@@ -31,9 +31,7 @@ async def _seed_with_render_row(db_engine) -> uuid.UUID:
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -163,9 +161,7 @@ async def test_worker_marks_failed_on_render_exception(db_engine, monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_worker_degrades_gracefully_when_playwright_missing(
-    db_engine, monkeypatch
-) -> None:
+async def test_worker_degrades_gracefully_when_playwright_missing(db_engine, monkeypatch) -> None:
     render_id = await _seed_with_render_row(db_engine)
     from app.db import session as session_module
     from app.workers import report_render as worker_module

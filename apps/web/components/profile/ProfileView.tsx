@@ -120,9 +120,7 @@ export function ProfileView({ handle }: ProfileViewProps) {
             count={`across ${profile.total_missions} graded session${profile.total_missions === 1 ? "" : "s"}`}
             id="radar-heading"
           />
-          <div className="mt-4">
-            <ProfileRadar averages={profile.radar_averages} />
-          </div>
+          <ProfileRadarSection profile={profile} />
         </>
       ) : null}
 
@@ -163,6 +161,92 @@ export function ProfileView({ handle }: ProfileViewProps) {
       />
       <MissionHistoryTable items={profile.history} />
     </main>
+  );
+}
+
+/**
+ * P0-8 — radar block with verified-only / all-attempts toggle. Default is
+ * "verified only" whenever the profile has at least one verified
+ * attempt; the toggle flips to "all attempts" with a notice that the
+ * radar now includes honor-mode practice scores. When the profile has
+ * no verified attempts, the toggle is hidden entirely and an inline
+ * "honor-mode only" notice clarifies that the radar isn't a credential.
+ */
+function ProfileRadarSection({ profile }: { profile: PublicProfile }) {
+  const hasVerified = profile.has_verified_attempts;
+  const [showVerifiedOnly, setShowVerifiedOnly] = React.useState(hasVerified);
+
+  React.useEffect(() => {
+    // Keep the local toggle in sync with the server policy whenever the
+    // profile re-fetches (e.g. after another mission grades).
+    setShowVerifiedOnly(hasVerified);
+  }, [hasVerified]);
+
+  // Pick the radar bucket. When the server provides
+  // ``dimension_history_verified``, we trust it as the verified bucket;
+  // ``radar_averages`` is the everything bucket. The server pre-applies
+  // its own partition so this is purely a UI affordance.
+  const verifiedRadar = profile.dimension_history_verified ?? null;
+  const radar =
+    showVerifiedOnly && verifiedRadar !== null
+      ? verifiedRadar
+      : profile.radar_averages;
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {hasVerified ? (
+          <div
+            role="radiogroup"
+            aria-label="Radar bucket"
+            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 text-[11px]"
+          >
+            <button
+              type="button"
+              role="radio"
+              aria-checked={showVerifiedOnly}
+              onClick={() => setShowVerifiedOnly(true)}
+              data-testid="radar-bucket-verified"
+              className={
+                showVerifiedOnly
+                  ? "rounded px-2.5 py-1 font-medium bg-[var(--color-muted)] text-[var(--color-foreground)]"
+                  : "rounded px-2.5 py-1 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+              }
+            >
+              Verified only
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!showVerifiedOnly}
+              onClick={() => setShowVerifiedOnly(false)}
+              data-testid="radar-bucket-all"
+              className={
+                !showVerifiedOnly
+                  ? "rounded px-2.5 py-1 font-medium bg-[var(--color-muted)] text-[var(--color-foreground)]"
+                  : "rounded px-2.5 py-1 text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)]"
+              }
+            >
+              Show all attempts
+            </button>
+          </div>
+        ) : (
+          <p
+            data-testid="honor-mode-only-notice"
+            className="text-[11px] text-[var(--color-muted-foreground)]"
+          >
+            <span aria-hidden className="font-mono">{"// "}</span>
+            honor mode only — no verified attempts on file yet.
+          </p>
+        )}
+      </div>
+      {!showVerifiedOnly && hasVerified ? (
+        <p className="text-[11px] text-[var(--color-muted-foreground)]">
+          <span aria-hidden className="font-mono">{"// "}</span>
+          Includes honor-mode practice scores.
+        </p>
+      ) : null}
+      <ProfileRadar averages={radar} />
+    </div>
   );
 }
 

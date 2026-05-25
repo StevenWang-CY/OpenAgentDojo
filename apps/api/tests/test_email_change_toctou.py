@@ -133,9 +133,7 @@ async def test_sign_up_suppressed_when_address_is_pending_on_other_account(
     # No new user row was created for the contested address.
     async with session_local() as db:
         row = (
-            await db.execute(
-                select(User).where(User.email == "contested@example.com")
-            )
+            await db.execute(select(User).where(User.email == "contested@example.com"))
         ).scalar_one_or_none()
     assert row is None, "no users row should be created for a contested address"
 
@@ -168,9 +166,7 @@ async def test_confirm_returns_409_email_taken_in_flight_when_race_slipped(
     # can present it on the confirm endpoint without going through the
     # ``create_email_change_link`` helper (which would log/send email).
     raw_token = "tk-" + "a" * 60
-    await _seed_email_change_token(
-        session_local, user_id=user_a_id, raw_token=raw_token
-    )
+    await _seed_email_change_token(session_local, user_id=user_a_id, raw_token=raw_token)
 
     # Bypass Part 1: insert user B with the contested address directly
     # (simulates the race window that the Part 1 guard cannot fully close).
@@ -192,9 +188,7 @@ async def test_confirm_returns_409_email_taken_in_flight_when_race_slipped(
 
         # User A's email is unchanged; pending_email is cleared.
         async with session_local() as db:
-            row = (
-                await db.execute(select(User).where(User.id == user_a_id))
-            ).scalar_one()
+            row = (await db.execute(select(User).where(User.id == user_a_id))).scalar_one()
         assert row.email == "user-a@example.com"
         assert row.pending_email is None, (
             "pending_email must be cleared so the FE can prompt for a retry"
@@ -223,9 +217,5 @@ async def test_sign_up_for_unreserved_address_still_works(db_engine) -> None:
     assert url is not None and url.startswith("https://app.example/auth/callback?token=")
 
     async with session_local() as db:
-        row = (
-            await db.execute(
-                select(User).where(User.email == "fresh@example.com")
-            )
-        ).scalar_one()
+        row = (await db.execute(select(User).where(User.email == "fresh@example.com"))).scalar_one()
     assert row.email == "fresh@example.com"

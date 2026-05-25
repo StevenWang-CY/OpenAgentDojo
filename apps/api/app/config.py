@@ -159,6 +159,25 @@ class Settings(BaseSettings):
     # power users hit the limit legitimately.
     report_render_force_daily_cap: int = Field(default=5, ge=1, le=100)
 
+    # --- P0-7 GitHub OAuth identity verification ---
+    # Client credentials for the github.com/login/oauth/* flow. When BOTH
+    # are set, ``/auth/github/start`` returns a 302 to GitHub; when either
+    # is missing, the FE button is hidden and ``/auth/github/start`` returns
+    # 503 ``oauth_unavailable`` so the magic-link flow remains the only
+    # path. Empty-string is treated as unset (a stray ``GITHUB_OAUTH_CLIENT_ID=``
+    # in .env should NOT enable the flow). Configured in GitHub at
+    # https://github.com/settings/applications/new — the redirect URI
+    # registered there MUST match ``github_oauth_redirect_uri`` below.
+    github_oauth_client_id: str | None = None
+    github_oauth_client_secret: str | None = None
+    # Explicit redirect URI sent to GitHub. When None, the OAuth start
+    # handler computes it from ``web_origin`` (i.e. the same browser the
+    # user is already on). Operators only need to set this when the API
+    # lives on a different host than the web app AND they want GitHub to
+    # call the API directly — the more common deployment is web →
+    # callback → API and uses the default.
+    github_oauth_redirect_uri: str | None = None
+
     # --- features ---
     feature_llm_narration: bool = False
 
@@ -269,6 +288,21 @@ class Settings(BaseSettings):
         return "disabled"
 
     @property
+    def github_oauth_enabled(self) -> bool:
+        """True when both GitHub OAuth credentials are configured.
+
+        The FE polls this via ``GET /auth/github/available`` and hides the
+        "Continue with GitHub" button when False so the user is never shown
+        an OAuth path that would 503 the moment they click it. Empty-string
+        env values are treated as unset — operators rotating credentials by
+        commenting out the line in .env should not accidentally enable the
+        button against a broken backend.
+        """
+        client_id = (self.github_oauth_client_id or "").strip()
+        client_secret = (self.github_oauth_client_secret or "").strip()
+        return bool(client_id) and bool(client_secret)
+
+    @property
     def cookie_secure(self) -> bool:
         """Whether session/CSRF cookies should set the ``Secure`` flag.
 
@@ -309,9 +343,7 @@ class Settings(BaseSettings):
         _validate_share_token_secret(self.share_token_secret, secret)
 
         # ---- verify_secret: explicit + distinct from session + share ----
-        _validate_verify_secret(
-            self.verify_secret, secret, self.share_token_secret or ""
-        )
+        _validate_verify_secret(self.verify_secret, secret, self.share_token_secret or "")
 
         # ---- required externals ----
         missing: list[str] = []
@@ -364,9 +396,7 @@ class Settings(BaseSettings):
                 "or dev-prefixed value defeats the hash)"
             )
         if len(salt) < 32:
-            raise ValueError(
-                "IP_HASH_SALT must be >=32 chars in staging/production"
-            )
+            raise ValueError("IP_HASH_SALT must be >=32 chars in staging/production")
 
         # ---- SMTP TLS verification must be on ----
         if self.smtp_host and self.smtp_host != "localhost" and not self.smtp_verify_certs:
@@ -375,12 +405,25 @@ class Settings(BaseSettings):
                 "(otherwise STARTTLS is open to passive MITM)"
             )
 
+        # ---- GitHub OAuth: half-configured is worse than off ----
+        # If the operator set EITHER GITHUB_OAUTH_CLIENT_ID or
+        # GITHUB_OAUTH_CLIENT_SECRET, both must be set. A half-configured
+        # OAuth surface would render the FE button (the property check is
+        # permissive on dev) but 503 on click. Treat it as a hard misconfig
+        # in staging/production so the "either off, or fully on" invariant
+        # is enforced exactly where it matters.
+        client_id = (self.github_oauth_client_id or "").strip()
+        client_secret = (self.github_oauth_client_secret or "").strip()
+        if bool(client_id) ^ bool(client_secret):
+            raise ValueError(
+                "GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET must "
+                "be set together (or both left unset to disable GitHub OAuth)"
+            )
+
         return self
 
 
-def _validate_verify_secret(
-    raw: str | None, session_secret: str, share_secret: str
-) -> None:
+def _validate_verify_secret(raw: str | None, session_secret: str, share_secret: str) -> None:
     """Enforce the staging/production verify-secret invariants (P0-11).
 
     Apart from the usual length / dev-prefix bounds, the verify secret
@@ -405,13 +448,9 @@ def _validate_verify_secret(
     if len(raw_secret) < 32:
         raise ValueError("VERIFY_SECRET must be >=32 chars in staging/production")
     if raw_secret == session_secret:
-        raise ValueError(
-            "VERIFY_SECRET must differ from SESSION_SECRET in staging/production"
-        )
+        raise ValueError("VERIFY_SECRET must differ from SESSION_SECRET in staging/production")
     if share_secret and raw_secret == share_secret:
-        raise ValueError(
-            "VERIFY_SECRET must differ from SHARE_TOKEN_SECRET in staging/production"
-        )
+        raise ValueError("VERIFY_SECRET must differ from SHARE_TOKEN_SECRET in staging/production")
 
 
 def _validate_share_token_secret(raw: str | None, session_secret: str) -> None:

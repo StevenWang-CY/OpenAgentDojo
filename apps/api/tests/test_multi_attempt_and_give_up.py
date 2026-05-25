@@ -39,7 +39,9 @@ async def _bound_session(db_engine):
 
 
 async def _seed_user_and_mission(
-    SessionLocal, *, mission_id: str = "auth-cookie-expiration"
+    SessionLocal,  # noqa: N803 — SQLAlchemy session_factory naming convention
+    *,
+    mission_id: str = "auth-cookie-expiration",
 ) -> tuple[uuid.UUID, str]:
     user_id = uuid.uuid4()
     async with SessionLocal() as db:
@@ -71,7 +73,7 @@ async def _seed_user_and_mission(
 
 
 async def _persist_attempt(
-    SessionLocal,
+    SessionLocal,  # noqa: N803 — SQLAlchemy session_factory naming convention
     *,
     user_id: uuid.UUID,
     mission_id: str,
@@ -338,7 +340,14 @@ async def test_fetch_stats_uses_best_per_mission(db_engine) -> None:
         )
 
     async with SessionLocal() as db:
-        total_missions, best_score, _radar = await _fetch_stats(db, user_id)
+        (
+            total_missions,
+            best_score,
+            _radar,
+            _verified_radar,
+            _has_verified,
+            _verified_only,
+        ) = await _fetch_stats(db, user_id)
     assert total_missions == 1
     assert best_score == 78
 
@@ -808,14 +817,10 @@ async def test_give_up_stamps_gave_up_at_when_window_open(db_engine) -> None:
 
     # Direct mutation mimicking the give-up endpoint's column write.
     async with SessionLocal() as db:
-        row = (
-            await db.execute(select(SessionRow).where(SessionRow.id == session_id))
-        ).scalar_one()
+        row = (await db.execute(select(SessionRow).where(SessionRow.id == session_id))).scalar_one()
         row.gave_up_at = datetime.now(UTC)
         await db.commit()
 
     async with SessionLocal() as db:
-        row = (
-            await db.execute(select(SessionRow).where(SessionRow.id == session_id))
-        ).scalar_one()
+        row = (await db.execute(select(SessionRow).where(SessionRow.id == session_id))).scalar_one()
     assert row.gave_up_at is not None

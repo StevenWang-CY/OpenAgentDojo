@@ -10,7 +10,11 @@ import {
   MoreHorizontal,
   Undo2,
 } from "lucide-react";
-import type { Difficulty, SupervisionEvent } from "@arena/shared-types";
+import type {
+  Difficulty,
+  SessionMode,
+  SupervisionEvent,
+} from "@arena/shared-types";
 import { Badge } from "@/components/ui/Badge";
 import { DifficultyBadge } from "@/components/catalog/DifficultyBadge";
 import { GiveUpDialog } from "./GiveUpDialog";
@@ -53,6 +57,12 @@ interface WorkspaceTopBarProps {
   /** P0-4 — when true, render the give-up affordance beside Submit. Set
    *  to false for tutorial missions (which short-circuit grading). */
   showGiveUp?: boolean;
+  /** P0-8 — session posture. ``self_study`` renders the honor banner;
+   *  ``proctored`` renders the verified chip with the live signal count. */
+  sessionMode?: SessionMode;
+  /** P0-8 — rolling count of integrity signals on this session. Surfaced
+   *  on the proctored chip. */
+  integritySignalsCount?: number;
   onSubmitted?(submissionId: string): void;
 }
 
@@ -73,6 +83,8 @@ export function WorkspaceTopBar({
   diffChangedFiles,
   sessionStartedAt,
   showGiveUp = true,
+  sessionMode = "self_study",
+  integritySignalsCount = 0,
   onSubmitted,
 }: WorkspaceTopBarProps) {
   const [open, setOpen] = React.useState(false);
@@ -179,6 +191,44 @@ export function WorkspaceTopBar({
           </div>
         </div>
       </div>
+
+      {sessionMode === "self_study" ? (
+        <div
+          role="note"
+          aria-label="Honor mode banner"
+          data-testid="honor-mode-banner"
+          className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[11px] text-[var(--color-muted-foreground)]"
+        >
+          <span aria-hidden className="font-mono text-[var(--color-muted-foreground)]">
+            {"//"}
+          </span>
+          <span>
+            honor mode <span aria-hidden>·</span> practice only, not a verified score
+          </span>
+          <Link
+            href="/help/honor-mode"
+            className="ml-auto font-mono text-[10.5px] text-[var(--color-primary)] underline-offset-2 hover:underline"
+          >
+            learn more
+          </Link>
+        </div>
+      ) : (
+        <div
+          role="status"
+          aria-label="Proctored mode chip"
+          data-testid="proctored-mode-chip"
+          className="flex items-center gap-2 rounded-md border border-[oklch(from_var(--color-primary)_l_c_h/0.5)] bg-[oklch(from_var(--color-primary)_l_c_h/0.08)] px-3 py-1.5 text-[11px] text-[var(--color-foreground)]"
+        >
+          <span aria-hidden className="font-mono text-[var(--color-primary)]">
+            {"//"}
+          </span>
+          <span>
+            proctored <span aria-hidden>·</span>{" "}
+            <span className="font-mono tabular-nums">{integritySignalsCount}</span>{" "}
+            integrity signal{integritySignalsCount === 1 ? "" : "s"}
+          </span>
+        </div>
+      )}
 
       {sandboxDriver === "local" ? (
         <div

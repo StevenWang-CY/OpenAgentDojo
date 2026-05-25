@@ -14,6 +14,11 @@ SessionStatus = Literal["provisioning", "active", "submitting", "graded", "aband
 
 SandboxDriver = Literal["docker", "local"]
 
+# P0-8 — anti-cheating posture. ``self_study`` is the default (honor mode,
+# practice only); ``proctored`` is opt-in per attempt and stamps
+# ``submission.verified = True`` at grade time.
+SessionMode = Literal["self_study", "proctored"]
+
 
 class ContextSelection(BaseModel):
     """The set of artifacts the user has selected as relevant for the turn."""
@@ -32,6 +37,12 @@ class SessionCreate(BaseModel):
     # for the catalog "Start mission" CTA. Validated against ownership at
     # the service layer.
     previous_session_id: uuid.UUID | None = None
+    # P0-8 — anti-cheating posture for this attempt. ``self_study`` (default)
+    # ships the honor-mode banner and silently drops integrity events;
+    # ``proctored`` enables browser-side window/document signal collection
+    # and stamps ``submission.verified = True`` at grade time. Frozen at
+    # session-create time — there is no mid-session promotion.
+    mode: SessionMode = "self_study"
 
 
 class SessionRead(BaseModel):
@@ -63,6 +74,12 @@ class SessionRead(BaseModel):
     # Surfacing this on the session read lets the FE render the gave-up
     # chip on the workspace shell before navigating to the report.
     gave_up_at: datetime | None = None
+    # P0-8 — anti-cheating posture. ``self_study`` ships the honor banner
+    # everywhere; ``proctored`` ships the verified chip with the live count.
+    mode: SessionMode = "self_study"
+    # P0-8 — rolling count of integrity signals accepted for this session.
+    # Always 0 on self-study sessions (signals are dropped, not stored).
+    integrity_signals_count: int = 0
 
 
 class SessionDetail(SessionRead):

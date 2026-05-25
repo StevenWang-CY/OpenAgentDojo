@@ -53,9 +53,7 @@ def _find_mission_folder(mission_id: str) -> Path:
     for m in loader.scan():
         if m.manifest.id == mission_id:
             return m.folder
-    raise FileNotFoundError(
-        f"mission {mission_id!r} has a calibration file but no on-disk folder"
-    )
+    raise FileNotFoundError(f"mission {mission_id!r} has a calibration file but no on-disk folder")
 
 
 def _build_inputs(scenario: str, manifest, folder: Path) -> ScoringInputs:
@@ -127,15 +125,9 @@ def test_calibration_scenario_within_tolerance(
     drift_lines: list[str] = []
     for dim_name, expected in expected_dims.items():
         actual_ds = report.dimensions.get(dim_name)
-        actual = (
-            actual_ds.score
-            if actual_ds is not None and not actual_ds.pending
-            else 0
-        )
+        actual = actual_ds.score if actual_ds is not None and not actual_ds.pending else 0
         if abs(actual - expected) > DIMENSION_TOLERANCE:
-            drift_lines.append(
-                f"  {dim_name}: expected {expected}, got {actual}"
-            )
+            drift_lines.append(f"  {dim_name}: expected {expected}, got {actual}")
     assert not drift_lines, (
         f"[{mission_id}::{scenario}] per-dimension drift exceeds "
         f"{DIMENSION_TOLERANCE} point(s):\n" + "\n".join(drift_lines)

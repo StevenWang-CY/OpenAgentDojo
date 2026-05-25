@@ -6,6 +6,7 @@ would be lost forever. The previous ``ORDER BY occurred_at ASC LIMIT N``
 silently returned the *oldest* N and dropped the newest events in the
 gap.
 """
+
 from __future__ import annotations
 
 import uuid

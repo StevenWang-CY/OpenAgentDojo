@@ -50,6 +50,14 @@ class SubmissionRead(BaseModel):
     # best-per-mission when an uncapped attempt exists. ``None`` means
     # "no cap applied".
     score_cap_reason: Literal["gave_up"] | None = None
+    # P0-8 — proctored posture mirrored from ``session.mode`` at grade time.
+    # The grading runner stamps ``True`` iff the producing session was
+    # ``proctored``. Surfaced here so the FE can render the verified badge
+    # on the report page and the owner-facing /sessions/{id}/submission
+    # response carries the same honest signal the public verify envelope
+    # does. Defaults to ``False`` so legacy rows + the failure-stub path
+    # remain unambiguous self-study.
+    verified: bool = False
     # P0-3 — injected at read-time by the reports endpoint (NOT persisted
     # on the submissions row; sourced from the join to ``sessions``). The
     # FE's Retry-mission CTA needs the mission id to call

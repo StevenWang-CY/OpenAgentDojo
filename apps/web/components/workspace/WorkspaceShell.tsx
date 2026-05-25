@@ -33,7 +33,10 @@ import { PanelLayout } from "./PanelLayout";
 import { FileTree } from "./FileTree";
 import { ContextSelector } from "./ContextSelector";
 import { CodeEditor } from "./CodeEditor";
+import { CommandPalette } from "./CommandPalette";
 import { DiffViewer } from "./DiffViewer";
+import { HelpOverlay, shouldAutoOpenHelp } from "./HelpOverlay";
+import { SearchPanel } from "./SearchPanel";
 import { Terminal } from "./Terminal";
 import { TestPanel } from "./TestPanel";
 import { AgentChat } from "./AgentChat";
@@ -44,6 +47,8 @@ import { WorkspaceTopBar } from "./WorkspaceTopBar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { Button } from "@/components/ui/Button";
 import { TutorialController } from "@/components/tutorial/TutorialController";
+import { useWorkspaceShortcuts } from "@/lib/keyboard";
+import { IntegritySignaller } from "@/lib/integrity";
 
 interface WorkspaceShellProps {
   sessionId: string;
@@ -82,10 +87,54 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   const openFile = store((s) => s.openFile);
   const toggleContextPath = store((s) => s.toggleContextPath);
   const setSelectedContext = store((s) => s.setSelectedContext);
+  // P0-9 — quick-open / find-in-files / help overlay surfaces.
+  const commandPaletteOpen = store((s) => s.commandPaletteOpen);
+  const searchPanelOpen = store((s) => s.searchPanelOpen);
+  const helpOverlayOpen = store((s) => s.helpOverlayOpen);
+  const setCommandPaletteOpen = store((s) => s.setCommandPaletteOpen);
+  const setSearchPanelOpen = store((s) => s.setSearchPanelOpen);
+  const setHelpOverlayOpen = store((s) => s.setHelpOverlayOpen);
+  const setActivePath = store((s) => s.setActivePath);
 
   // Controlled tab state — `openFile` flips us to the editor tab so the
   // user lands on the file they just clicked instead of an old surface.
   const [tab, setTab] = React.useState<WorkspaceTab>("editor");
+
+  // P0-9 — global workspace shortcuts (quick-open, find-in-files, help,
+  // close). The hook itself is mounted unconditionally (React rules of
+  // hooks) but only fires while the workspace is active. Callbacks below
+  // toggle the relevant store flags; the actual overlay components live
+  // further down the tree and bind to those flags.
+  useWorkspaceShortcuts({
+    on: {
+      "quick-open": () => {
+        setCommandPaletteOpen(true);
+      },
+      "find-in-files": () => {
+        setSearchPanelOpen(true);
+      },
+      "help-overlay": () => {
+        setHelpOverlayOpen(!helpOverlayOpen);
+      },
+      escape: () => {
+        // Close the topmost overlay in z-order. The CommandPalette + help
+        // overlay use Radix Dialog so Escape already closes them via the
+        // overlay's own handler; we only need to handle the side-panel
+        // explicitly because it doesn't use Dialog.
+        if (searchPanelOpen) setSearchPanelOpen(false);
+      },
+    },
+  });
+
+  // First-time visitors auto-open the help overlay once. The check happens
+  // on mount only — subsequent renders never re-open it. ``setHelpOverlayOpen``
+  // is a Zustand setter (stable across renders) so listing it in the deps
+  // doesn't re-fire the effect.
+  React.useEffect(() => {
+    if (shouldAutoOpenHelp()) {
+      setHelpOverlayOpen(true);
+    }
+  }, [setHelpOverlayOpen]);
 
   // Live WS connection state for the events stream — drives the unobtrusive
   // banner that tells the user "reconnecting…" so transient drops don't look
@@ -439,6 +488,25 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
     }
   }, [status, missionKind, submissionQuery.data, router]);
 
+  // P0-8 — proctored mode integrity signaller. Attached only when the
+  // session's posture says ``proctored`` AND the session is in an
+  // interactive state (no point collecting signals on a graded or
+  // abandoned session). The signaller's listeners are window/document
+  // scoped, so even if the workspace re-renders the listeners are
+  // attached exactly once.
+  const sessionMode = sessionQuery.data?.mode;
+  React.useEffect(() => {
+    if (sessionMode !== "proctored") return;
+    if (status !== "active" && status !== "submitting") return;
+    const signaller = new IntegritySignaller({
+      sessionId,
+      mode: sessionMode,
+    }).start();
+    return () => {
+      signaller.dispose();
+    };
+  }, [sessionId, sessionMode, status]);
+
   // ── Top-level loading / error gates ──────────────────────────────────────
 
   if (sessionQuery.isLoading) {
@@ -631,6 +699,8 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
         diffChangedFiles={diff ? extractChangedFiles(diff) : []}
         sessionStartedAt={session.started_at}
         showGiveUp={mission.kind !== "tutorial"}
+        sessionMode={session.mode}
+        integritySignalsCount={session.integrity_signals_count}
         onSubmitted={(submissionId) => router.push(`/report/${submissionId}`)}
       />
 
@@ -687,7 +757,11 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
                 {activeFile ?? "no file open"}
               </p>
             </div>
-            <TabsContent value="editor" className="mt-0 flex-1 min-h-0">
+            <TabsContent
+              value="editor"
+              className="mt-0 flex-1 min-h-0"
+              data-paste-target="editor"
+            >
               <CodeEditor sessionId={sessionId} path={activeFile} />
             </TabsContent>
             <TabsContent value="diff" className="mt-0 flex-1 min-h-0">
@@ -729,7 +803,11 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
             id: "chat",
             label: "Agent",
             content: (
-              <div data-tutorial-anchor="agent-chat" className="contents">
+              <div
+                data-tutorial-anchor="agent-chat"
+                data-paste-target="agent_chat"
+                className="contents"
+              >
                 <AgentChat
                   turns={agentTurns}
                   contextPaths={selectedContext}
@@ -753,7 +831,11 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
           {
             id: "terminal",
             label: "Terminal",
-            content: <Terminal sessionId={sessionId} token={wsToken} />,
+            content: (
+              <div data-paste-target="terminal" className="contents">
+                <Terminal sessionId={sessionId} token={wsToken} />
+              </div>
+            ),
           },
           {
             id: "tests",
@@ -776,6 +858,33 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
         events={events}
         enabled={mission.kind === "tutorial"}
       />
+      <CommandPalette
+        sessionId={sessionId}
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        onSelect={(p) => {
+          setActivePath(p);
+          setTab("editor");
+        }}
+      />
+      {searchPanelOpen ? (
+        <div
+          role="complementary"
+          aria-label="Find in files"
+          className="fixed right-4 top-20 z-40 h-[60vh] w-[min(28rem,90vw)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-elevated"
+        >
+          <SearchPanel
+            sessionId={sessionId}
+            open={searchPanelOpen}
+            onClose={() => setSearchPanelOpen(false)}
+            onSelect={(p, line) => {
+              setActivePath(p, line);
+              setTab("editor");
+            }}
+          />
+        </div>
+      ) : null}
+      <HelpOverlay open={helpOverlayOpen} onOpenChange={setHelpOverlayOpen} />
     </div>
   );
 }

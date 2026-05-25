@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Integer, String
+from sqlalchemy import BigInteger, CheckConstraint, Integer, String, Text
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,12 +15,41 @@ from app.models._helpers import created_at, nullable_ts, uuid_pk
 
 class User(Base):
     __tablename__ = "users"
+    # Phase 4.A.18 — mirror migration 0021's CHECK on the ORM so an
+    # ``alembic revision --autogenerate`` against a freshly-baselined
+    # schema doesn't try to drop the (still legitimately-present)
+    # constraint. The CHECK enforces the invariant that the two
+    # GitHub-verified indicators move together: a row with a
+    # ``github_id`` MUST also carry a ``github_verified_at``, and vice
+    # versa. Without this, a code path could leave one column populated
+    # and the other not, silently confusing the FE verified-badge
+    # rendering.
+    __table_args__ = (
+        CheckConstraint(
+            "(github_id IS NULL) = (github_verified_at IS NULL)",
+            name="users_github_verified_check",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     email: Mapped[str] = mapped_column(CITEXT(), unique=True, nullable=False)
     handle: Mapped[str | None] = mapped_column(CITEXT(), unique=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # P0-7 — GitHub OAuth verification columns.
+    #
+    # ``github_login`` is the user's current GitHub handle (free-form,
+    # NULLable, NOT unique — github recycles abandoned handles). It is a
+    # display hint; do NOT use it as the join key. ``github_id`` is the
+    # authoritative identity (numeric, immutable, unique) and the only
+    # column the OAuth callback upserts on. The pair
+    # (``github_id``, ``github_verified_at``) is constrained by migration
+    # 0021's CHECK to move together: a verified badge can never render
+    # without an underlying GitHub identity, and vice versa.
     github_login: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    github_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True)
+    github_avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    github_html_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    github_verified_at: Mapped[datetime | None] = nullable_ts()
     created_at: Mapped[datetime] = created_at()
     last_login_at: Mapped[datetime | None] = nullable_ts()
     # P0-1 — tutorial progress. ``tutorial_completed_at`` is NULL for a

@@ -68,7 +68,7 @@ export function ReportPrintView({
           marginBottom: 28,
         }}
       >
-        <span>// verified report</span>
+        <span>{"// verified report"}</span>
         <span>openagentdojo.app</span>
       </header>
 

@@ -21,15 +21,11 @@ from app.models.submission import Submission
 from app.models.user import User
 
 
-async def _seed(
-    db_engine, *, status: str = "graded"
-) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+async def _seed(db_engine, *, status: str = "graded") -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -113,9 +109,7 @@ def _csrf_kwargs() -> dict[str, object]:
 def _stub_render(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the in-process worker fallback a no-op so the test stays
     deterministic and never tries to spawn Chromium."""
-    monkeypatch.setattr(
-        "app.reports.router._enqueue_render", lambda render_id: None
-    )
+    monkeypatch.setattr("app.reports.router._enqueue_render", lambda render_id: None)
 
 
 @pytest.mark.asyncio
@@ -209,9 +203,7 @@ async def test_post_render_idempotent_during_inflight(client, db_engine) -> None
 
 
 @pytest.mark.asyncio
-async def test_post_render_rate_limited_after_cap(
-    client, db_engine, monkeypatch
-) -> None:
+async def test_post_render_rate_limited_after_cap(client, db_engine, monkeypatch) -> None:
     owner_id, _, submission_id = await _seed(db_engine)
     from app.config import get_settings
 
@@ -237,9 +229,7 @@ async def test_post_render_rate_limited_after_cap(
 
 
 @pytest.mark.asyncio
-async def test_get_render_returns_202_when_queue_absent(
-    client, db_engine, monkeypatch
-) -> None:
+async def test_get_render_returns_202_when_queue_absent(client, db_engine, monkeypatch) -> None:
     """When ``get_queue()`` returns None (no Redis), the in-process
     fallback used to call ``asyncio.run`` inside FastAPI's running loop
     and 500. The fix schedules the underlying coroutine via
@@ -255,9 +245,7 @@ async def test_get_render_returns_202_when_queue_absent(
     # against a stubbed queue + a no-op _async_render.
     monkeypatch.setattr(
         "app.reports.router._enqueue_render",
-        __import__(
-            "app.reports.router", fromlist=["_enqueue_render"]
-        )._enqueue_render,
+        __import__("app.reports.router", fromlist=["_enqueue_render"])._enqueue_render,
     )
     monkeypatch.setattr("app.workers.queue.get_queue", lambda: None)
 
@@ -274,9 +262,7 @@ async def test_get_render_returns_202_when_queue_absent(
 
 
 @pytest.mark.asyncio
-async def test_render_endpoints_409_when_not_graded(
-    client, db_engine
-) -> None:
+async def test_render_endpoints_409_when_not_graded(client, db_engine) -> None:
     """GET + POST /render must mirror /verify's graded-state gate.
 
     A submission whose session is still 'submitting' (or 'error', etc.)
@@ -290,9 +276,7 @@ async def test_render_endpoints_409_when_not_graded(
     client.cookies.set(settings.session_cookie_name, _cookie(owner_id))
     client.cookies.set("arena_csrf", _CSRF)
 
-    get_resp = await client.get(
-        f"/api/v1/reports/{submission_id}/render?kind=pdf"
-    )
+    get_resp = await client.get(f"/api/v1/reports/{submission_id}/render?kind=pdf")
     assert get_resp.status_code == 409, get_resp.text
     assert get_resp.json()["detail"]["code"] == "not_graded"
 

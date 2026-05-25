@@ -109,9 +109,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        flipped = asyncio.run(
-            sweep_stale_exports(cutoff_minutes=args.cutoff_minutes)
-        )
+        flipped = asyncio.run(sweep_stale_exports(cutoff_minutes=args.cutoff_minutes))
     except Exception as exc:  # pragma: no cover — surfaces to CI / Sentry
         logger.exception("sweep_stale_exports failed: {}", exc)
         return 1

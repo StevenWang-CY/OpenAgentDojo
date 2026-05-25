@@ -111,9 +111,7 @@ async def test_complete_tutorial_persists_user_completion(
 
     # User row now has tutorial_completed_at set.
     user = (
-        await db_session.execute(
-            select(User).where(User.id == tutorial_session.user_id)
-        )
+        await db_session.execute(select(User).where(User.id == tutorial_session.user_id))
     ).scalar_one()
     assert user.tutorial_completed_at is not None
     # SQLite serialises TIMESTAMPTZ as naive UTC strings, so the readback
@@ -126,10 +124,14 @@ async def test_complete_tutorial_persists_user_completion(
 
     # No Submission row exists — tutorials don't grade.
     rows = (
-        await db_session.execute(
-            select(Submission).where(Submission.session_id == tutorial_session.id)
+        (
+            await db_session.execute(
+                select(Submission).where(Submission.session_id == tutorial_session.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows == []
 
 

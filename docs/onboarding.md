@@ -108,6 +108,21 @@ If you have an hour, read in this order:
 - LLM access **only** via `civitas_core.llm.anthropic_client.build_anthropic_sdk_client()`. Never hard-code Bedrock profile ids.
 - Never commit a file mentioning the `ABSK` token prefix.
 
+## Workspace keyboard shortcuts (P0-9)
+
+The workspace registers a small global keymap at the document level (capture phase so Monaco's bindings don't swallow them). Press `?` inside the workspace at any time for the full table.
+
+| Shortcut | Action |
+|---|---|
+| `Cmd/Ctrl+P` | Quick open file — fuzzy-filter the workspace tree from anywhere |
+| `Cmd/Ctrl+Shift+F` | Find in files — ripgrep across the sandbox; results stream into a side panel |
+| `Cmd/Ctrl+Enter` | Submit the current prompt to the agent |
+| `Cmd/Ctrl+S` | Save the active file (debounced auto-save also runs in the background) |
+| `Esc` | Close the topmost overlay |
+| `?` | Toggle the help overlay |
+
+Both search surfaces are server-backed (`GET /sessions/{id}/files/list`, `POST /sessions/{id}/files/search`). The search endpoint emits a `command.run` supervision event with `category=manual` so the grader can credit careful context-scoping in the `context_selection` dimension.
+
 ## How to add a mission
 
 1. Copy [docs/scenarios/template.md](./scenarios/template.md) into `docs/scenarios/<NN>-<id>.md` and draft the design note. Get sign-off before authoring the manifest.

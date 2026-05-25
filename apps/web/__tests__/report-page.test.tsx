@@ -73,6 +73,7 @@ function buildSubmission(partial?: Partial<Submission>): Submission {
     ideal_solution_diff: null,
     agent_patch_diff: null,
     critical_moments: [],
+    verified: false,
     score_report: {
       total: 78,
       missed_failure_mode: false,

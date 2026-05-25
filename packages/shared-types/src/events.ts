@@ -58,6 +58,15 @@ export const SupervisionEventType = {
   // the enum so the cross-language event-type contract stays exhaustive.
   ConsentGranted: "consent.granted",
   ConsentRevoked: "consent.revoked",
+  // P0-8 — anti-cheating posture / proctored mode. Only persisted for
+  // sessions whose ``mode == 'proctored'`` (the integrity endpoint drops
+  // self-study events). The FE's IntegritySignaller emits these against
+  // ``POST /sessions/{id}/events/integrity``.
+  TabBlurred: "tab.blurred",
+  TabFocused: "tab.focused",
+  PasteLarge: "paste.large",
+  FocusLost: "focus.lost",
+  ProctoredViolation: "proctored.violation",
 } as const;
 
 export type SupervisionEventType =
@@ -323,6 +332,44 @@ export interface ConsentRevokedPayload {
   version: number;
 }
 
+// ── P0-8 integrity / proctored-mode payloads ────────────────────────────────
+
+export interface TabBlurredPayload {
+  /** Seconds the tab was visible before the blur fired. */
+  seconds_visible_before: number;
+}
+
+export interface TabFocusedPayload {
+  /** Seconds the tab was blurred before the focus fired. */
+  seconds_blurred: number;
+}
+
+export type PasteTarget = "agent_chat" | "editor" | "terminal" | "other";
+
+export interface PasteLargePayload {
+  /** Character count of the pasted content. */
+  chars: number;
+  /** Which workspace surface received the paste (inferred from the DOM
+   *  ``data-paste-target`` ancestor of the event target). */
+  target: PasteTarget;
+}
+
+export interface FocusLostPayload {
+  /** DOM id of the element that lost focus (empty string if not exposed). */
+  element_id: string;
+}
+
+export type ProctoredViolationKind =
+  | "right_click"
+  | "devtools_open"
+  | "copy_blocked"
+  | "context_menu";
+
+export interface ProctoredViolationPayload {
+  kind: ProctoredViolationKind;
+  detail: string;
+}
+
 // ── Discriminated union ──────────────────────────────────────────────────────
 
 export type SupervisionEvent =
@@ -352,7 +399,12 @@ export type SupervisionEvent =
   | SupervisionEventOf<"session.gave_up", SessionGaveUpPayload>
   | SupervisionEventOf<"session.reset", SessionResetPayload>
   | SupervisionEventOf<"consent.granted", ConsentGrantedPayload>
-  | SupervisionEventOf<"consent.revoked", ConsentRevokedPayload>;
+  | SupervisionEventOf<"consent.revoked", ConsentRevokedPayload>
+  | SupervisionEventOf<"tab.blurred", TabBlurredPayload>
+  | SupervisionEventOf<"tab.focused", TabFocusedPayload>
+  | SupervisionEventOf<"paste.large", PasteLargePayload>
+  | SupervisionEventOf<"focus.lost", FocusLostPayload>
+  | SupervisionEventOf<"proctored.violation", ProctoredViolationPayload>;
 
 export interface SupervisionEventOf<
   T extends SupervisionEventType,

@@ -85,9 +85,7 @@ async def test_email_change_happy_path(client_with_db, db_engine, monkeypatch) -
 
         # pending_email landed on the user row.
         async with session_local() as db:
-            row = (
-                await db.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            row = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
         assert row.pending_email == "new@example.com"
         assert row.email == "old@example.com"
 
@@ -107,9 +105,7 @@ async def test_email_change_happy_path(client_with_db, db_engine, monkeypatch) -
         assert body["pending_email"] is None
 
         async with session_local() as db:
-            row = (
-                await db.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            row = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
         assert row.email == "new@example.com"
         assert row.pending_email is None
         # The epoch must have rotated as part of the confirm.

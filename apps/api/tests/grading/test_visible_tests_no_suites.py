@@ -74,9 +74,7 @@ def test_visible_suites_configured_but_none_passed_does_not_award_credit() -> No
     correctness = report.dimensions["final_correctness"]
     # Visible failed → no +8 visible credit, no +6 regression credit.
     assert not any("N/A" in s for s in correctness.signals), correctness.signals
-    assert any("visible tests did not pass" in s for s in correctness.signals), (
-        correctness.signals
-    )
+    assert any("visible tests did not pass" in s for s in correctness.signals), correctness.signals
 
 
 def test_full_hidden_only_correctness_can_hit_30() -> None:
@@ -87,11 +85,7 @@ def test_full_hidden_only_correctness_can_hit_30() -> None:
     )
     # A diff that touches src/auth.ts so the root-cause heuristic fires.
     diff_text = (
-        "--- a/src/auth.ts\n"
-        "+++ b/src/auth.ts\n"
-        "@@ -1,1 +1,2 @@\n"
-        " const x = 1;\n"
-        "+const y = 2;\n"
+        "--- a/src/auth.ts\n+++ b/src/auth.ts\n@@ -1,1 +1,2 @@\n const x = 1;\n+const y = 2;\n"
     )
     report = compute_score(
         diff=ParsedDiff(diff_text),

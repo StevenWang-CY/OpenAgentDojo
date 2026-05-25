@@ -46,6 +46,8 @@ const sessionRow: Session = {
   score: null,
   agent_turns: 0,
   attempt_index: 1,
+  mode: "self_study",
+  integrity_signals_count: 0,
 };
 
 const sessionDetail: SessionDetail = {

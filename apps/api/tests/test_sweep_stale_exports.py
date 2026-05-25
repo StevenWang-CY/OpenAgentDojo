@@ -85,11 +85,7 @@ async def _seed_export(
 
 async def _read_status(session_local, export_id: uuid.UUID) -> tuple[str, str | None]:
     async with session_local() as db:
-        row = (
-            await db.execute(
-                select(DataExport).where(DataExport.id == export_id)
-            )
-        ).scalar_one()
+        row = (await db.execute(select(DataExport).where(DataExport.id == export_id))).scalar_one()
         return row.status, row.error
 
 

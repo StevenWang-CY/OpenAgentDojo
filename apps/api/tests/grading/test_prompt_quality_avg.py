@@ -63,8 +63,7 @@ def test_window_limited_to_3_even_with_more_turns() -> None:
     score = _score_prompt_quality(turns, _Manifest())
     # Trailing 3 prompts ("fix it") all score 0 → avg 0.
     assert score.score == 0, (
-        f"trailing weak prompts must score 0; got {score.score} "
-        f"signals={score.signals}"
+        f"trailing weak prompts must score 0; got {score.score} signals={score.signals}"
     )
 
 
@@ -84,6 +83,5 @@ def test_fewer_than_three_turns_averages_what_exists() -> None:
     score = _score_prompt_quality(turns, _Manifest())
     # Both turns score the same → avg equals that score.
     assert score.score >= 6, (
-        f"two strong turns should average high, got {score.score}; "
-        f"signals={score.signals}"
+        f"two strong turns should average high, got {score.score}; signals={score.signals}"
     )

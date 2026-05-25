@@ -5,6 +5,7 @@ bug had ``verification: 20 / diff_minimality: 5`` on the manifest side
 and ``verification: 15 / diff_minimality: 10`` on the grader side, so
 every author-declared weight was a lie.
 """
+
 from __future__ import annotations
 
 from app.grading.dimensions import DIMENSION_MAX, RUBRIC_TOTAL

@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
@@ -428,9 +428,7 @@ async def get_verify(
     Google the URL.
     """
     settings = get_settings()
-    submission, session, user, mission_row = await _load_envelope_inputs(
-        db, submission_id
-    )
+    submission, session, user, mission_row = await _load_envelope_inputs(db, submission_id)
 
     if session.status != "graded":
         raise HTTPException(status_code=404, detail="submission not verifiable")
@@ -466,9 +464,7 @@ async def get_verify(
     canonical_url = f"{base}/verify/{submission_id}"
 
     # Long-lived cache: graded submissions are immutable.
-    response.headers["Cache-Control"] = (
-        "public, max-age=31536000, s-maxage=31536000, immutable"
-    )
+    response.headers["Cache-Control"] = "public, max-age=31536000, s-maxage=31536000, immutable"
     response.headers["X-Robots-Tag"] = "index, follow"
 
     return VerifyEnvelopeRead(
@@ -580,6 +576,14 @@ async def _auth_render_view(
     return submission, session
 
 
+# Phase 4.A.21 — module-level anchor for fire-and-forget render tasks.
+# Without a strong reference, Python's garbage collector can finalise an
+# ``asyncio.create_task`` whose return value is unused; the task gets
+# silently cancelled mid-render and the row is stuck at ``queued``
+# forever. Mirrors the pattern in ``app/workers/provision.py``.
+_BACKGROUND_TASKS: set[Any] = set()
+
+
 def _enqueue_render(render_id: uuid.UUID) -> None:
     """Hand the render to RQ, with an in-process fallback when Redis is
     not available (mirrors the account_export pattern).
@@ -594,6 +598,10 @@ def _enqueue_render(render_id: uuid.UUID) -> None:
     worker's own ``inline=True`` branch already swallows exceptions, so
     a failed render lands the row at ``failed`` instead of leaking back
     into the route as a 500.
+
+    Phase 4.A.21 — the create_task return value is now added to a
+    module-level set and removed via ``add_done_callback`` so the GC
+    cannot finalise the task prematurely.
     """
     import asyncio
 
@@ -606,28 +614,39 @@ def _enqueue_render(render_id: uuid.UUID) -> None:
         # Fire-and-forget — the route has already committed the queued
         # row, so the FE polls the row state and the task updates it
         # out-of-band. No nested asyncio.run, no event-loop reentry.
-        asyncio.create_task(_async_render(render_id, inline=True))
+        task = asyncio.create_task(_async_render(render_id, inline=True))
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
         return
-    queue.enqueue(
-        "app.workers.report_render.render_report", str(render_id), job_timeout=300
-    )
+    queue.enqueue("app.workers.report_render.render_report", str(render_id), job_timeout=300)
 
 
-async def _force_renders_today(
-    db: AsyncSession, submission_id: uuid.UUID
-) -> int:
-    """Count force re-renders (created_at within the trailing 24h)."""
+async def _force_renders_today(db: AsyncSession, submission_id: uuid.UUID) -> int:
+    """Count user-initiated force re-renders (trailing 24h, Phase 4.A.20).
+
+    Filters on ``force=True`` so a freshly-graded report's automatic
+    first render (fired by ``GET /reports/{id}/render`` on a missing
+    row) doesn't burn the user's force-rerender budget. The column
+    landed in migration 0024; legacy rows default to ``False`` so the
+    historical mis-accounting silently corrects itself on the next
+    user-initiated force.
+    """
     from datetime import UTC, datetime, timedelta
 
     horizon = datetime.now(UTC) - timedelta(days=1)
     rows = (
-        await db.execute(
-            select(ReportRender).where(
-                ReportRender.submission_id == submission_id,
-                ReportRender.created_at >= horizon,
+        (
+            await db.execute(
+                select(ReportRender).where(
+                    ReportRender.submission_id == submission_id,
+                    ReportRender.created_at >= horizon,
+                    ReportRender.force.is_(True),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return len(rows)
 
 
@@ -671,9 +690,7 @@ async def get_render(
         # No render exists yet — enqueue the job and return 202. We
         # insert the row inside this request so a concurrent GET sees
         # the queued state instead of double-enqueuing.
-        row = ReportRender(
-            submission_id=submission_id, kind=kind, status=RENDER_STATUS_QUEUED
-        )
+        row = ReportRender(submission_id=submission_id, kind=kind, status=RENDER_STATUS_QUEUED)
         db.add(row)
         await db.flush()
         _enqueue_render(row.id)
@@ -681,9 +698,7 @@ async def get_render(
         await db.refresh(row)
 
     if row.status == RENDER_STATUS_READY and row.s3_key:
-        signed = generate_download_url(
-            row.s3_key, expires_in=_RENDER_SIGNED_URL_TTL_SECONDS
-        )
+        signed = generate_download_url(row.s3_key, expires_in=_RENDER_SIGNED_URL_TTL_SECONDS)
         return RedirectResponse(url=signed, status_code=302)
     if row.status == RENDER_STATUS_FAILED:
         return Response(
@@ -702,8 +717,16 @@ async def get_render(
     )
 
 
-class _ForceRenderBody(BaseModel):
-    kind: str
+class ForceRenderBody(BaseModel):
+    """Body for ``POST /reports/{id}/render`` (Phase 4.A.24 rename + tighten).
+
+    ``kind`` is now a ``Literal["pdf", "png"]`` so OpenAPI publishes
+    the legal enumeration; an invalid value 422s at validation time
+    instead of falling through to ``_validate_kind`` (which still
+    runs as a belt-and-braces double-check).
+    """
+
+    kind: Literal["pdf", "png"]
 
 
 @router.post(
@@ -714,7 +737,7 @@ class _ForceRenderBody(BaseModel):
 )
 async def post_render(
     submission_id: uuid.UUID,
-    body: _ForceRenderBody,
+    body: ForceRenderBody,
     user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> ReportRenderRead:
@@ -790,6 +813,9 @@ async def post_render(
             submission_id=submission_id,
             kind=kind,
             status=RENDER_STATUS_QUEUED,
+            # Phase 4.A.20 — stamp ``force=True`` so the daily cap
+            # counter trips ONLY against user-initiated re-renders.
+            force=True,
         )
         db.add(row)
     else:
@@ -799,6 +825,9 @@ async def post_render(
         existing.bytes = None
         existing.error = None
         existing.ready_at = None
+        # Phase 4.A.20 — even on the recycle path this is a user-
+        # initiated force, so stamp the column.
+        existing.force = True
         row = existing
 
     await db.flush()

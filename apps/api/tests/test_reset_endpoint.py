@@ -67,9 +67,7 @@ async def _seed(db_engine, *, status: str = "active") -> tuple[uuid.UUID, uuid.U
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -177,13 +175,17 @@ async def test_reset_happy_path_emits_event_and_filechange(client, db_engine) ->
 
     async with session_module.AsyncSessionLocal() as db:
         rows = (
-            await db.execute(
-                select(SupervisionEvent).where(
-                    SupervisionEvent.session_id == session_id,
-                    SupervisionEvent.event_type == "session.reset",
+            (
+                await db.execute(
+                    select(SupervisionEvent).where(
+                        SupervisionEvent.session_id == session_id,
+                        SupervisionEvent.event_type == "session.reset",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(rows) == 1
         payload = rows[0].payload
         assert payload["files_discarded"] == 3
@@ -192,10 +194,10 @@ async def test_reset_happy_path_emits_event_and_filechange(client, db_engine) ->
 
         # A FileChange row with source='revert' was inserted.
         fc = (
-            await db.execute(
-                select(FileChange).where(FileChange.session_id == session_id)
-            )
-        ).scalars().all()
+            (await db.execute(select(FileChange).where(FileChange.session_id == session_id)))
+            .scalars()
+            .all()
+        )
         assert len(fc) == 1
         assert fc[0].source == "revert"
         assert fc[0].path == "*"
@@ -239,12 +241,8 @@ async def test_reset_returns_500_on_git_reset_failure(client, db_engine) -> None
         session_id=session_id,
     )
     # status succeeds, but reset --hard fails (e.g. unreachable commit).
-    driver.responses[("git", "status", "--porcelain")] = _RunResult(
-        0, stdout=" M x\n"
-    )
-    driver.responses[("git", "reset", "--hard")] = _RunResult(
-        1, stderr="fatal: bad object"
-    )
+    driver.responses[("git", "status", "--porcelain")] = _RunResult(0, stdout=" M x\n")
+    driver.responses[("git", "reset", "--hard")] = _RunResult(1, stderr="fatal: bad object")
 
     from app.config import get_settings
 
@@ -297,9 +295,7 @@ async def test_reset_count_increments_across_calls(client, db_engine) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reset_payload_sets_had_agent_patch_when_present(
-    client, db_engine
-) -> None:
+async def test_reset_payload_sets_had_agent_patch_when_present(client, db_engine) -> None:
     owner_id, session_id, driver = await _seed(db_engine)
     handle = SandboxHandle(
         id="h1",
@@ -369,9 +365,7 @@ async def test_reset_returns_500_on_git_clean_failure(client, db_engine) -> None
     # status + reset succeed; clean fails (permission denied on a
     # write-protected node_modules tree is the canonical real-world
     # cause).
-    driver.responses[("git", "status", "--porcelain")] = _RunResult(
-        0, stdout=" M x\n"
-    )
+    driver.responses[("git", "status", "--porcelain")] = _RunResult(0, stdout=" M x\n")
     driver.responses[("git", "clean", "-fd")] = _RunResult(
         128, stderr="warning: failed to remove node_modules/.cache: Permission denied"
     )
@@ -451,9 +445,7 @@ async def test_reset_returns_403_for_stranger(client, db_engine) -> None:
     from app.db import session as session_module
 
     async with session_module.AsyncSessionLocal() as db:
-        db.add(
-            User(id=other_id, email="other@a.local", display_name="Other", handle="other")
-        )
+        db.add(User(id=other_id, email="other@a.local", display_name="Other", handle="other"))
         await db.commit()
 
     from app.config import get_settings

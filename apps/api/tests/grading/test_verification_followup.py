@@ -50,9 +50,7 @@ def _cmd(command: str, exit_code: int) -> dict:
 
 def test_passing_test_awards_full_credit() -> None:
     manifest = _Manifest(
-        reward_signals=_RewardSignals(
-            verification=_Verification(require_targeted_test="auth")
-        )
+        reward_signals=_RewardSignals(verification=_Verification(require_targeted_test="auth"))
     )
     events = [_cmd("pnpm test auth", exit_code=0)]
     ds = _score_verification(events, [], manifest)
@@ -64,9 +62,7 @@ def test_passing_test_awards_full_credit() -> None:
 
 def test_failing_test_with_followup_edit_awards_full_credit() -> None:
     manifest = _Manifest(
-        reward_signals=_RewardSignals(
-            verification=_Verification(require_targeted_test="auth")
-        )
+        reward_signals=_RewardSignals(verification=_Verification(require_targeted_test="auth"))
     )
     events = [
         _cmd("pnpm test auth", exit_code=1),
@@ -79,9 +75,7 @@ def test_failing_test_with_followup_edit_awards_full_credit() -> None:
 
 def test_failing_test_with_followup_prompt_awards_full_credit() -> None:
     manifest = _Manifest(
-        reward_signals=_RewardSignals(
-            verification=_Verification(require_targeted_test="auth")
-        )
+        reward_signals=_RewardSignals(verification=_Verification(require_targeted_test="auth"))
     )
     events = [
         _cmd("pnpm test auth", exit_code=2),
@@ -96,9 +90,7 @@ def test_failing_test_without_followup_awards_partial_credit() -> None:
     """The headline P1-1 case: running a test and ignoring its output is
     not the same as running a test and acting on the result."""
     manifest = _Manifest(
-        reward_signals=_RewardSignals(
-            verification=_Verification(require_targeted_test="auth")
-        )
+        reward_signals=_RewardSignals(verification=_Verification(require_targeted_test="auth"))
     )
     events = [_cmd("pnpm test auth", exit_code=1)]
     ds = _score_verification(events, [], manifest)
@@ -108,9 +100,7 @@ def test_failing_test_without_followup_awards_partial_credit() -> None:
 
 def test_no_targeted_test_awards_zero_credit() -> None:
     manifest = _Manifest(
-        reward_signals=_RewardSignals(
-            verification=_Verification(require_targeted_test="auth")
-        )
+        reward_signals=_RewardSignals(verification=_Verification(require_targeted_test="auth"))
     )
     # A test ran but doesn't match the targeted pattern.
     events = [_cmd("pnpm test unrelated", exit_code=0)]
@@ -124,9 +114,7 @@ def test_no_targeted_test_awards_zero_credit() -> None:
 def test_mixed_runs_with_eventual_pass_awards_full_credit() -> None:
     """Realistic flow: run → see failure → edit → re-run → pass."""
     manifest = _Manifest(
-        reward_signals=_RewardSignals(
-            verification=_Verification(require_targeted_test="auth")
-        )
+        reward_signals=_RewardSignals(verification=_Verification(require_targeted_test="auth"))
     )
     events = [
         _cmd("pnpm test auth", exit_code=1),

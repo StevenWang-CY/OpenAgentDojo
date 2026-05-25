@@ -66,9 +66,7 @@ def test_score_hidden_pass_credits_named_hidden_suite() -> None:
     assert _hidden_tests_passed(passing, manifest) is True
 
     failing = [
-        TestRunResult(
-            suite="e2e-canary", exit_code=1, stdout="", stderr="", failed=2
-        ),
+        TestRunResult(suite="e2e-canary", exit_code=1, stdout="", stderr="", failed=2),
     ]
     assert _hidden_tests_passed(failing, manifest) is False
 
@@ -80,21 +78,13 @@ def test_full_pipeline_credits_named_hidden_suite() -> None:
         repo=_Repo(test_commands={}),
         expected_files=["src/foo.ts"],
     )
-    diff = (
-        "--- a/src/foo.ts\n"
-        "+++ b/src/foo.ts\n"
-        "@@ -1,1 +1,2 @@\n"
-        " const x = 1;\n"
-        "+const y = 2;\n"
-    )
+    diff = "--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1,1 +1,2 @@\n const x = 1;\n+const y = 2;\n"
     report = compute_score(
         diff=ParsedDiff(diff),
         events=[],
         validator_results=[],
         test_results=[
-            TestRunResult(
-                suite="e2e-canary", exit_code=0, stdout="", stderr="", passed=4
-            )
+            TestRunResult(suite="e2e-canary", exit_code=0, stdout="", stderr="", passed=4)
         ],
         manifest=manifest,
         agent_turns=[],

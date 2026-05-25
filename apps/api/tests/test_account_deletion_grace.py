@@ -88,9 +88,7 @@ async def test_schedule_then_cancel(client_with_db, db_engine, monkeypatch) -> N
         assert scheduled_for
 
         async with session_local() as db:
-            row = (
-                await db.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            row = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
         assert row.deletion_scheduled_at is not None
         # Epoch must have rotated alongside the schedule.
         assert row.session_epoch == 2
@@ -103,18 +101,14 @@ async def test_schedule_then_cancel(client_with_db, db_engine, monkeypatch) -> N
         assert resp.status_code == 204, resp.text
 
         async with session_local() as db:
-            row = (
-                await db.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            row = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
         assert row.deletion_scheduled_at is None
     finally:
         _clear_auth(client_with_db)
 
 
 @pytest.mark.asyncio
-async def test_delete_rejects_wrong_confirm_email(
-    client_with_db, db_engine, monkeypatch
-) -> None:
+async def test_delete_rejects_wrong_confirm_email(client_with_db, db_engine, monkeypatch) -> None:
     session_local = await _bound(db_engine)
     user_id = await _seed_user(session_local, email="me@example.com")
     await _auth_as(client_with_db, session_local, user_id)
@@ -138,9 +132,7 @@ async def test_delete_rejects_wrong_confirm_email(
 
 
 @pytest.mark.asyncio
-async def test_cancel_returns_410_after_grace_expired(
-    client_with_db, db_engine
-) -> None:
+async def test_cancel_returns_410_after_grace_expired(client_with_db, db_engine) -> None:
     session_local = await _bound(db_engine)
     user_id = await _seed_user(session_local)
     # Manually set the deletion to a past timestamp — simulates the
@@ -228,9 +220,7 @@ async def test_process_deletion_grace_tombstones_account(db_engine) -> None:
     assert processed == 1
 
     async with session_local() as db:
-        row = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one()
+        row = (await db.execute(select(User).where(User.id == user_id))).scalar_one()
     # Tombstone shape: deleted-{8hex}@deleted.openagentdojo.app
     assert row.email.startswith("deleted-")
     assert row.email.endswith("@deleted.openagentdojo.app")
@@ -242,15 +232,15 @@ async def test_process_deletion_grace_tombstones_account(db_engine) -> None:
     # The session row must be gone (per-user cascade).
     async with session_local() as db:
         sessions = (
-            await db.execute(select(SessionRow).where(SessionRow.user_id == user_id))
-        ).scalars().all()
+            (await db.execute(select(SessionRow).where(SessionRow.user_id == user_id)))
+            .scalars()
+            .all()
+        )
     assert sessions == []
 
 
 @pytest.mark.asyncio
-async def test_cancel_when_nothing_scheduled_is_idempotent(
-    client_with_db, db_engine
-) -> None:
+async def test_cancel_when_nothing_scheduled_is_idempotent(client_with_db, db_engine) -> None:
     session_local = await _bound(db_engine)
     user_id = await _seed_user(session_local)
     await _auth_as(client_with_db, session_local, user_id)

@@ -122,6 +122,25 @@ async def _async_render(render_id: uuid.UUID, *, inline: bool) -> None:
             logger.warning("report_render: row {} disappeared before render", render_id)
             return
 
+        # Phase 4.A.9 — idempotent skip on terminal states. RQ can
+        # re-deliver a job whose acknowledgement got lost, and the
+        # in-process fallback path can fire a stale task if the route
+        # re-enqueued after a worker crashed mid-flight. Re-running
+        # against a row that's already ``ready`` (or ``failed``) would
+        # either overwrite a known-good artefact OR flip a failed row
+        # back to ``running`` and bury the original error. The SETNX
+        # window between ``queued`` and ``running`` still allows a
+        # transient collision between two workers; that's accepted
+        # (both upload the same bytes against the same S3 key — the
+        # second upload is a no-op overwrite).
+        if row.status in (RENDER_STATUS_READY, RENDER_STATUS_FAILED):
+            logger.info(
+                "report_render: idempotent skip for render={} status={} (already terminal)",
+                render_id,
+                row.status,
+            )
+            return
+
         row.status = RENDER_STATUS_RUNNING
         await db.commit()
 
@@ -129,9 +148,7 @@ async def _async_render(render_id: uuid.UUID, *, inline: bool) -> None:
         token = make_render_token(row.submission_id, row.id, secret)
 
         web_origin = (settings.web_origin or "http://localhost:3000").rstrip("/")
-        target_url = (
-            f"{web_origin}/report-print/{row.submission_id}?token={token}&kind={row.kind}"
-        )
+        target_url = f"{web_origin}/report-print/{row.submission_id}?token={token}&kind={row.kind}"
         # Derive the host shown in the PDF footer from the same origin
         # the worker visits so a deployment on (say) ``arena.acme.io``
         # produces "verified via arena.acme.io" rather than the

@@ -115,6 +115,8 @@ function buildSession(): SessionDetail {
     agent_turns: 0,
   attempt_index: 1,
     score: null,
+    mode: "self_study",
+    integrity_signals_count: 0,
     ws_token: "ws-token",
     mission: {
       id: "auth-cookie-expiration",

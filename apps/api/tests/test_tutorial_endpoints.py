@@ -88,9 +88,7 @@ def _csrf_kwargs() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_tutorial_step_event_persists(
-    tutorial_setup, db_session: AsyncSession
-) -> None:
+async def test_tutorial_step_event_persists(tutorial_setup, db_session: AsyncSession) -> None:
     user = tutorial_setup["user"]
     session = tutorial_setup["session"]
     app = _make_app(db_session, user)
@@ -104,15 +102,17 @@ async def test_tutorial_step_event_persists(
     assert resp.status_code == 204
 
     events = (
-        await db_session.execute(
-            select(SupervisionEvent).where(SupervisionEvent.session_id == session.id)
+        (
+            await db_session.execute(
+                select(SupervisionEvent).where(SupervisionEvent.session_id == session.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     types = [e.event_type for e in events]
     assert "tutorial.step_completed" in types
-    payload = next(
-        e.payload for e in events if e.event_type == "tutorial.step_completed"
-    )
+    payload = next(e.payload for e in events if e.event_type == "tutorial.step_completed")
     assert payload["step_id"] == "select-context"
     assert payload["mission_id"] == "orientation"
 
@@ -133,10 +133,14 @@ async def test_tutorial_step_dismissed_emits_dismissed_event(
         )
     assert resp.status_code == 204
     events = (
-        await db_session.execute(
-            select(SupervisionEvent).where(SupervisionEvent.session_id == session.id)
+        (
+            await db_session.execute(
+                select(SupervisionEvent).where(SupervisionEvent.session_id == session.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert any(e.event_type == "tutorial.dismissed" for e in events)
 
 
@@ -157,9 +161,7 @@ async def test_tutorial_replay_clears_completion_and_bumps_count(
     assert body["tutorial_completed_at"] is None
     assert body["tutorial_replay_count"] == 3
 
-    refreshed = (
-        await db_session.execute(select(User).where(User.id == user.id))
-    ).scalar_one()
+    refreshed = (await db_session.execute(select(User).where(User.id == user.id))).scalar_one()
     assert refreshed.tutorial_completed_at is None
     assert refreshed.tutorial_replay_count == 3
 
@@ -187,8 +189,6 @@ async def test_tutorial_replay_increment_is_atomic(
                 **_csrf_kwargs(),
             )
             assert resp.status_code == 200
-    refreshed = (
-        await db_session.execute(select(User).where(User.id == user.id))
-    ).scalar_one()
+    refreshed = (await db_session.execute(select(User).where(User.id == user.id))).scalar_one()
     assert refreshed.tutorial_replay_count == initial + 3
     assert refreshed.tutorial_completed_at is None

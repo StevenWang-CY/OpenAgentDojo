@@ -124,7 +124,7 @@ async def _fetch_history(db: AsyncSession, user_id: uuid.UUID) -> list[MissionHi
         )
         .order_by(SessionRow.completed_at.desc().nulls_last(), SessionRow.started_at.desc())
         # Over-fetch so we still return _HISTORY_LIMIT rows after stubs are
-        # filtered out; cap at 3× to keep the query cheap.
+        # filtered out; cap at 3x to keep the query cheap.
         .limit(_HISTORY_LIMIT * 3)
     )
     raw = (await db.execute(stmt)).all()
@@ -151,8 +151,15 @@ async def _fetch_history(db: AsyncSession, user_id: uuid.UUID) -> list[MissionHi
 
 async def _fetch_stats(
     db: AsyncSession, user_id: uuid.UUID
-) -> tuple[int, int | None, dict[str, float]]:
-    """Return (total_missions, best_score, radar_averages).
+) -> tuple[
+    int,
+    int | None,
+    dict[str, float],
+    dict[str, float] | None,
+    bool,
+    bool,
+]:
+    """Return (total_missions, best_score, radar_averages, dimension_history_verified, has_verified_attempts, verified_attempts_only).
 
     P0-3 — public aggregates use **best-per-mission**, not "average across
     every submission". The per-mission best is selected with the policy
@@ -161,14 +168,18 @@ async def _fetch_stats(
       * Tier 1: best uncapped attempt (score_cap_reason IS NULL).
       * Tier 2: best gave-up attempt — only when no uncapped attempt exists.
 
-    ``total_missions`` is the count of DISTINCT missions the user has at
-    least one graded attempt on (not the count of attempts).
-    ``best_score`` is ``MAX(per-mission-best)`` — same as before in single-
-    attempt cases, but now stable when the user replays a mission with a
-    worse score.
-    ``radar_averages`` is built from the per-mission-best submissions
-    only, so a strong real attempt isn't shadowed by the average of every
-    grind submission.
+    P0-8 — the public radar partitions on ``submission.verified``. When
+    at least one verified (proctored) best-per-mission attempt exists,
+    ``radar_averages`` is built from the verified bucket only and
+    ``verified_attempts_only`` is True; the FE renders the "verified"
+    chip and offers a toggle. When no verified attempts exist, the
+    radar falls back to the every-attempt bucket so the page isn't
+    empty — paired with ``has_verified_attempts: false`` so the FE can
+    show the honor-mode notice.
+    ``dimension_history_verified`` always carries the verified-only
+    aggregate when ``has_verified_attempts`` is true, regardless of
+    which bucket ``radar_averages`` ends up holding. This lets the FE
+    flip between buckets without a refetch.
 
     Observability: ``_aggregate_radar`` reports malformed payloads on
     every (submission, session) tuple it sees. We pre-walk every graded
@@ -181,11 +192,26 @@ async def _fetch_stats(
     total_missions = len(bests)
     best_score = max((b.score for b in bests if b.score is not None), default=None)
 
-    # Aggregate radar from best-per-mission only (ADR 0009 policy).
-    radar_inputs: list[tuple[Any, uuid.UUID | None]] = [
-        (b.score_report, b.session_id) for b in bests
-    ]
-    radar = _aggregate_radar(radar_inputs)
+    # P0-8 — partition the best-per-mission set on ``verified``. The
+    # verified subset drives the canonical credentialing radar; the
+    # full set is the honest fallback when no verified attempts exist.
+    verified_bests = [b for b in bests if b.verified]
+    has_verified_attempts = len(verified_bests) > 0
+
+    if has_verified_attempts:
+        primary_inputs: list[tuple[Any, uuid.UUID | None]] = [
+            (b.score_report, b.session_id) for b in verified_bests
+        ]
+        radar = _aggregate_radar(primary_inputs)
+        verified_radar: dict[str, float] | None = radar
+        verified_attempts_only = True
+    else:
+        all_inputs: list[tuple[Any, uuid.UUID | None]] = [
+            (b.score_report, b.session_id) for b in bests
+        ]
+        radar = _aggregate_radar(all_inputs)
+        verified_radar = None
+        verified_attempts_only = False
 
     # Independent malformed-report sweep: walk EVERY graded submission so
     # the observability counter doesn't silently lose signal when a
@@ -194,7 +220,14 @@ async def _fetch_stats(
     # the metric only.
     await _observe_malformed_across_all_submissions(db, user_id, skip=bests)
 
-    return int(total_missions or 0), best_score, radar
+    return (
+        int(total_missions or 0),
+        best_score,
+        radar,
+        verified_radar,
+        has_verified_attempts,
+        verified_attempts_only,
+    )
 
 
 async def _observe_malformed_across_all_submissions(
@@ -247,6 +280,11 @@ class _BestAttempt:
     score_report: Any
     completed_at: Any
     score_cap_reason: str | None
+    # P0-8 — true iff this submission's producing session was proctored at
+    # grade time. Lets the public profile partition the radar without a
+    # second query. Defaults False so legacy fixtures that don't construct
+    # the field keep working.
+    verified: bool = False
 
 
 async def _best_per_mission(db: AsyncSession, user_id: uuid.UUID) -> list[_BestAttempt]:
@@ -275,6 +313,9 @@ async def _best_per_mission(db: AsyncSession, user_id: uuid.UUID) -> list[_BestA
             Submission.id.label("submission_id"),
             Submission.score_report.label("score_report"),
             Submission.score_cap_reason.label("score_cap_reason"),
+            # P0-8 — pull the verified bool so the radar partition is
+            # built from one query, not two.
+            Submission.verified.label("verified"),
         )
         .join(Submission, Submission.session_id == SessionRow.id)
         .where(
@@ -299,6 +340,7 @@ async def _best_per_mission(db: AsyncSession, user_id: uuid.UUID) -> list[_BestA
             score_report=report,
             completed_at=row.completed_at,
             score_cap_reason=row.score_cap_reason,
+            verified=bool(getattr(row, "verified", False)),
         )
         current = by_mission.get(candidate.mission_id)
         if current is None or candidate_beats(candidate, current):
@@ -452,7 +494,14 @@ async def get_profile(
     user = await _fetch_user_by_handle(db, handle)
     badges = await _fetch_badges(db, user.id)
     history = await _fetch_history(db, user.id)
-    total_missions, best_score, radar = await _fetch_stats(db, user.id)
+    (
+        total_missions,
+        best_score,
+        radar,
+        verified_radar,
+        has_verified_attempts,
+        verified_attempts_only,
+    ) = await _fetch_stats(db, user.id)
     # Self-view only: per-session score trail can be combined with the
     # mission history to reconstruct a complete supervision profile, so
     # we gate it behind authenticated self-access.
@@ -465,9 +514,26 @@ async def get_profile(
         handle=user.handle or handle,
         display_name=user.display_name,
         joined_at=user.created_at,
+        # P0-7 — surface the GitHub OAuth verification state on the public
+        # profile. The FE renders the verified chip when ``github_verified_at``
+        # is non-null, and the "self-attested" chip otherwise. Nothing here
+        # leaks PII — ``github_login`` and ``github_html_url`` are
+        # already-public data on github.com.
+        github_login=user.github_login,
+        github_avatar_url=user.github_avatar_url,
+        github_html_url=user.github_html_url,
+        github_verified_at=user.github_verified_at,
         badges=badges,
         history=history,
         radar_averages=radar,
+        # P0-8 — verified bucket + partition flags. The FE renders the
+        # default "Verified only" radar when ``has_verified_attempts`` is
+        # true and offers the user a toggle into the "all attempts"
+        # bucket (which surfaces a "Includes honor-mode practice scores"
+        # notice).
+        dimension_history_verified=verified_radar,
+        has_verified_attempts=has_verified_attempts,
+        verified_attempts_only=verified_attempts_only,
         dimension_trends=dimension_trends,
         total_missions=total_missions,
         best_score=best_score,

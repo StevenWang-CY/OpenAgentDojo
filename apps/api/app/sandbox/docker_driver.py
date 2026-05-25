@@ -22,7 +22,12 @@ from typing import Any
 from loguru import logger
 
 from app.config import get_settings
-from app.sandbox.driver import SandboxDriver
+from app.sandbox.driver import (
+    InvalidRegexError,
+    SandboxDriver,
+    SearchMatchDict,
+    SearchTimeoutError,
+)
 from app.sandbox.types import (
     ApplyResult,
     FileTreeNode,
@@ -30,6 +35,11 @@ from app.sandbox.types import (
     RunResult,
     SandboxHandle,
 )
+
+# Mirrors LocalSandboxDriver — see local_driver.py for the rationale.
+_SEARCH_TIMEOUT_S = 10
+_SEARCH_LINE_TEXT_CAP = 500
+_SEARCH_GLOB_EXCLUDES: tuple[str, ...] = ("!.git/**", "!node_modules/**")
 
 # `docker` is imported lazily — keep this module importable even when Docker
 # isn't running on the host. The SDK is still listed as a hard dependency in
@@ -306,6 +316,127 @@ class DockerSandboxDriver(SandboxDriver):
     async def diff_from_initial(self, handle: SandboxHandle) -> str:
         result = await self.run(handle, ["git", "--no-pager", "diff", "HEAD"], timeout_s=30)
         return result.stdout
+
+    # ----------------------------------------------------------- find / search
+    async def list_files(
+        self,
+        handle: SandboxHandle,
+        *,
+        max_files: int = 5000,
+    ) -> list[str]:
+        """Return repo-relative paths from ``git ls-files`` inside the container.
+
+        Mirrors :meth:`LocalSandboxDriver.list_files`; the docker driver just
+        wraps the same ``git ls-files`` invocation through ``exec``.
+        """
+        result = await self.run(
+            handle,
+            cmd=[
+                "git",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+            timeout_s=15,
+            cwd=str(handle.workdir),
+        )
+        if result.exit_code != 0:
+            logger.warning(
+                "[list_files] git ls-files failed in container (exit={}): stderr={!r}",
+                result.exit_code,
+                (result.stderr or "")[:300],
+            )
+            return []
+
+        raw_paths = [p for p in result.stdout.split("\x00") if p]
+        capped = raw_paths[:max_files]
+        capped.sort(key=lambda p: (p.count("/"), p))
+        return capped
+
+    async def search(  # noqa: PLR0912 — branch count dominated by input-flag handling
+        self,
+        handle: SandboxHandle,
+        query: str,
+        *,
+        glob: str | None,
+        case_sensitive: bool,
+        regex: bool,
+        max_results: int,
+    ) -> tuple[list[SearchMatchDict], bool, int, int]:
+        """Execute ``rg --json`` inside the container and parse results.
+
+        The container image ships ripgrep so we just shell out via the
+        existing ``run`` plumbing — it already handles timeout-kill of a
+        single exec without touching siblings (terminal PTY, grading suites).
+        """
+        argv: list[str] = [
+            "rg",
+            "--no-config",
+            "--json",
+            "--line-number",
+            "--with-filename",
+            "--hidden",
+            "--max-columns",
+            "500",
+            "--max-count",
+            str(max_results),
+        ]
+        for excl in _SEARCH_GLOB_EXCLUDES:
+            argv.extend(["--glob", excl])
+        if glob:
+            argv.extend(["--glob", glob])
+        if case_sensitive:
+            argv.append("--case-sensitive")
+        else:
+            argv.append("--ignore-case")
+        if regex:
+            argv.append("--pcre2")
+        else:
+            argv.append("--fixed-strings")
+        argv.extend(["--", query])
+
+        result = await self.run(
+            handle,
+            cmd=argv,
+            timeout_s=_SEARCH_TIMEOUT_S,
+            cwd=str(handle.workdir),
+        )
+
+        if result.timed_out:
+            raise SearchTimeoutError(
+                f"search exceeded {_SEARCH_TIMEOUT_S}s budget",
+            )
+
+        if result.exit_code == 2:
+            if regex and (
+                "regex parse error" in result.stderr
+                or "PCRE2" in result.stderr
+                or "error parsing regex" in result.stderr
+            ):
+                raise InvalidRegexError(result.stderr.strip()[:300])
+            logger.warning(
+                "[search] ripgrep returned 2 in container: stderr={!r}",
+                result.stderr[:300],
+            )
+            # Phase 4.A.19 — return the real exit code so the router can
+            # surface it via ``command.run`` + ``validator.flag``.
+            return [], False, 0, int(result.exit_code)
+
+        matches: list[SearchMatchDict] = []
+        truncated = False
+        for line in result.stdout.splitlines():
+            if not line:
+                continue
+            if len(matches) >= max_results:
+                truncated = True
+                break
+            parsed = _parse_rg_json_match_str(line)
+            if parsed is None:
+                continue
+            matches.append(parsed)
+        return matches, truncated, len(matches), int(result.exit_code)
 
     # ------------------------------------------------------------------- run
     async def run(
@@ -688,6 +819,72 @@ def _docker_parse_counts(stdout: str, stderr: str) -> tuple[int, int, int]:
             int(ps.group(1)) if ps else 0,
         )
     return (0, 0, 0)
+
+
+def _parse_rg_json_match_str(line: str) -> SearchMatchDict | None:  # noqa: PLR0912 — defensive parser
+    """Parse one ``rg --json`` line (string form) into a :data:`SearchMatchDict`.
+
+    Identical contract to ``local_driver._parse_rg_json_match`` but takes a
+    decoded ``str`` because :meth:`DockerSandboxDriver.run` already decodes
+    its stdout. We re-implement rather than import to keep the docker driver
+    a leaf in the module graph (no inter-driver dependencies).
+    """
+    try:
+        obj = _json.loads(line)
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict) or obj.get("type") != "match":
+        return None
+    data = obj.get("data")
+    if not isinstance(data, dict):
+        return None
+
+    path_obj = data.get("path")
+    if not isinstance(path_obj, dict):
+        return None
+    path_text = path_obj.get("text")
+    if not isinstance(path_text, str) or not path_text:
+        return None
+    if path_text.startswith("./"):
+        path_text = path_text[2:]
+
+    line_number = data.get("line_number")
+    if not isinstance(line_number, int) or line_number < 1:
+        return None
+
+    lines = data.get("lines")
+    if not isinstance(lines, dict):
+        return None
+    line_text = lines.get("text")
+    if not isinstance(line_text, str):
+        return None
+    if line_text.endswith("\n"):
+        line_text = line_text[:-1]
+    if len(line_text) > _SEARCH_LINE_TEXT_CAP:
+        return None
+
+    submatches = data.get("submatches")
+    if not isinstance(submatches, list) or not submatches:
+        match_start = 0
+        match_end = len(line_text)
+    else:
+        first = submatches[0]
+        if not isinstance(first, dict):
+            return None
+        match_start = first.get("start", 0)
+        match_end = first.get("end", 0)
+        if not isinstance(match_start, int) or not isinstance(match_end, int):
+            return None
+        match_start = max(0, min(match_start, len(line_text)))
+        match_end = max(match_start, min(match_end, len(line_text)))
+
+    return SearchMatchDict(
+        path=path_text,
+        line_number=line_number,
+        line_text=line_text,
+        match_start=match_start,
+        match_end=match_end,
+    )
 
 
 # Backwards-compatible short alias — some callers / docs reference ``DockerDriver``.

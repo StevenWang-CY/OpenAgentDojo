@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Copy, Flag, Loader2, RotateCcw, Share2 } from "lucide-react";
+import { AlertCircle, Flag, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, createSession, getReport, getTimeline, shareReport } from "@/lib/api";
 import type { ScoreReport } from "@arena/shared-types";
@@ -165,6 +165,30 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
         scoreCapReason={submission.score_cap_reason ?? report.score_cap_reason ?? null}
         uncappedTotal={report.uncapped_total ?? null}
       />
+
+      {/* P0-8 — verified vs honor-mode chip pinned beside the score so a
+           viewer immediately knows whether this attempt is a credential
+           or practice. The chip mirrors ``submission.verified`` (stamped
+           from ``session.mode == 'proctored'`` at grade time). */}
+      <div className="mt-2 flex items-center gap-2">
+        {submission.verified ? (
+          <span
+            data-testid="verified-badge"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[oklch(from_var(--color-primary)_l_c_h/0.5)] bg-[oklch(from_var(--color-primary)_l_c_h/0.08)] px-2.5 py-0.5 text-[10.5px] font-medium text-[var(--color-primary)]"
+          >
+            <span aria-hidden className="font-mono">{"//"}</span>
+            verified · proctored
+          </span>
+        ) : (
+          <span
+            data-testid="honor-mode-chip"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-0.5 text-[10.5px] text-[var(--color-muted-foreground)]"
+          >
+            <span aria-hidden className="font-mono">{"//"}</span>
+            honor mode · practice score
+          </span>
+        )}
+      </div>
 
       {/* P0-2 — post-mortem walkthrough leads the report: critical
           moment + three-way diff. This is the training surface, not

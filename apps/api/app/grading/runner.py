@@ -148,6 +148,11 @@ class GradingResult:
     # from best-per-mission when an uncapped attempt exists. ``None``
     # means no cap applied (the common path).
     score_cap_reason: str | None = None
+    # P0-8 — true iff the producing session was ``proctored`` at grade time.
+    # Stamped from ``session.mode`` inside ``_pipeline`` and persisted into
+    # ``submissions.verified`` by ``run_and_persist``. Drives the verify
+    # envelope, the report-page badge, and the public profile partition.
+    verified: bool = False
 
     def as_submission_data(self) -> dict[str, Any]:
         """Plain dict shape used by ``sessions.submit.submit_session``."""
@@ -421,6 +426,13 @@ class GradingRunner:
             apply_score_cap(report, reason="gave_up", cap=GAVE_UP_SCORE_CAP)
             cap_reason = "gave_up"
 
+        # P0-8 — capture the proctored posture as a plain bool so downstream
+        # ``run_and_persist`` (and the verify envelope it stamps) sees the
+        # exact state of ``session.mode`` at grade time. A future code path
+        # that wants to promote a self-study attempt to verified MUST run
+        # through this point; the column is otherwise immutable.
+        verified = getattr(session, "mode", "self_study") == "proctored"
+
         # Step 5: award badges (persisted by award()).
         mission_id = getattr(manifest, "id", None) or session.mission_id
         badge_ids = await award_badges(
@@ -453,6 +465,7 @@ class GradingRunner:
             total_score=report.total,
             badges_earned=list(badge_ids),
             score_cap_reason=cap_reason,
+            verified=verified,
         )
 
     # ------------------------------------------------------------------
@@ -539,6 +552,7 @@ class GradingRunner:
             score_cap_reason=result.score_cap_reason,
             score_report=result.score_report,
             created_at=graded_at,
+            verified=result.verified,
         )
         envelope = build_envelope(
             submission=envelope_submission,
@@ -554,8 +568,7 @@ class GradingRunner:
             # the report continues to work and a misconfig is visible in
             # the logs without crashing the grade.
             logger.error(
-                "[grader] verification secret resolution failed for "
-                "session={}: {}",
+                "[grader] verification secret resolution failed for session={}: {}",
                 result.session_id,
                 exc,
             )
@@ -585,6 +598,11 @@ class GradingRunner:
             # P0-11 — verification envelope hash + HMAC signature.
             verification_hash=v_hash,
             verification_signature=v_sig,
+            # P0-8 — mirror the session's posture at grade time. The
+            # envelope above ALSO carries this (via the new
+            # ``submission.verified`` read in build_envelope), so both the
+            # persisted bool and the canonical hash see the same value.
+            verified=result.verified,
             # P0 determinism — explicit ``created_at`` overrides the column's
             # ``server_default=func.now()`` so the row stores the same
             # tz-aware UTC second the envelope hashed against. The verify
@@ -795,6 +813,11 @@ class _EnvelopeSubmission:
     score_cap_reason: str | None
     score_report: dict[str, Any]
     created_at: Any
+    # P0-8 — proctored posture mirrored from ``session.mode`` at grade time.
+    # ``build_envelope`` reads this and stamps the canonical hash with it
+    # so the verify endpoint can re-derive the same hash from the persisted
+    # row without a second lookup.
+    verified: bool = False
 
 
 def _hidden_suite_names(manifest: Any) -> set[str]:

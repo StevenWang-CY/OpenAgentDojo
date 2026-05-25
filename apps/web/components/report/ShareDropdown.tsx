@@ -36,7 +36,6 @@ import {
   getReportRenderStatus,
   type ReportRender,
 } from "@/lib/api";
-import { Button } from "@/components/ui/Button";
 import { track } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 

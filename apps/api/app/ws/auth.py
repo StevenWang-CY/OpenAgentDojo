@@ -131,9 +131,7 @@ def issue_ws_token(
     return f"{_b64encode(payload)}.{_sign(payload, settings_secret)}"
 
 
-def _verify_signature_and_parse(
-    token: str, secret: str
-) -> tuple[str, str, int, int]:
+def _verify_signature_and_parse(token: str, secret: str) -> tuple[str, str, int, int]:
     """Verify HMAC + return the parsed v1 claim or raise."""
     if not token or "." not in token:
         raise WsTokenError("malformed token")
@@ -169,8 +167,8 @@ def verify_ws_token(token: str, session_id: str, secret: str | None = None) -> b
     """
     settings_secret = secret or get_settings().session_secret
     try:
-        sid_in_token, user_id, claim_epoch, expires_at = (
-            _verify_signature_and_parse(token, settings_secret)
+        sid_in_token, user_id, claim_epoch, expires_at = _verify_signature_and_parse(
+            token, settings_secret
         )
     except WsTokenError:
         return False
@@ -223,8 +221,8 @@ def refresh_ws_token(
     in the REST layer can keep a single dependency-injection shape.
     """
     settings_secret = secret or get_settings().session_secret
-    sid_in_token, user_id, claim_epoch, expires_at = (
-        _verify_signature_and_parse(old_token, settings_secret)
+    sid_in_token, user_id, claim_epoch, expires_at = _verify_signature_and_parse(
+        old_token, settings_secret
     )
 
     if sid_in_token != session_id:
@@ -265,10 +263,10 @@ def _load_current_epoch(user_id: str) -> int | None:
         # Stale — drop and re-fetch below.
         _EPOCH_CACHE.pop(user_id, None)
 
-    epoch = _fetch_epoch_from_db(user_id)
-    if epoch is not None:
-        _EPOCH_CACHE[user_id] = (int(epoch), time.monotonic())
-    return epoch
+    fresh = _fetch_epoch_from_db(user_id)
+    if fresh is not None:
+        _EPOCH_CACHE[user_id] = (int(fresh), time.monotonic())
+    return fresh
 
 
 def _fetch_epoch_from_db(user_id: str) -> int | None:
@@ -308,9 +306,7 @@ async def _load_epoch_async(user_id: str) -> int | None:
         except (TypeError, ValueError):
             return None
         async with AsyncSessionLocal() as db:
-            row = (
-                await db.execute(select(User.session_epoch).where(User.id == uid))
-            ).first()
+            row = (await db.execute(select(User.session_epoch).where(User.id == uid))).first()
             if row is None:
                 return None
             value = row[0]

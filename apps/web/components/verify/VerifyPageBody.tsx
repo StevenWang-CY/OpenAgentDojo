@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { CheckCircle2, Copy, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Copy, ShieldAlert, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import type { VerifyEnvelope } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
@@ -14,8 +14,20 @@ import { track } from "@/lib/telemetry";
  * Intentionally minimal — the page is a credential, not a marketing
  * surface. No images, no external requests, no JS-driven hydration
  * except the "copy hash" affordance and the telemetry ping.
+ *
+ * Two visual modes:
+ *
+ *   * ``envelope.proctored === true`` — full "verified credential"
+ *     chrome: the green "// verified report" eyebrow, the ShieldCheck
+ *     icon, and the "Identity verified" subtitle.
+ *   * ``envelope.proctored === false`` — honor-mode attestation:
+ *     amber/grey "// honor mode attestation" eyebrow, the ShieldAlert
+ *     icon, and an explicit "Self-study attempt — not a verified
+ *     credential" subtitle so the page can never be misread as a
+ *     proctored credential.
  */
 export function VerifyPageBody({ envelope }: { envelope: VerifyEnvelope }) {
+  const proctored = envelope.proctored === true;
   // Telemetry — fired exactly once on first mount. The referer host
   // (when present) is the key acquisition signal: did the URL come from
   // a LinkedIn profile, a personal site, or a paste in Slack?
@@ -37,9 +49,39 @@ export function VerifyPageBody({ envelope }: { envelope: VerifyEnvelope }) {
   return (
     <main className="mx-auto flex min-h-dvh max-w-3xl flex-col gap-6 px-6 py-12 font-mono text-sm text-[var(--color-foreground)]">
       <header className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
-        <span aria-hidden>// verified report</span>
+        <span aria-hidden>
+          {proctored ? "// verified report" : "// honor mode attestation"}
+        </span>
         <span aria-hidden>openagentdojo.app</span>
       </header>
+
+      <section
+        aria-label={proctored ? "Verified credential" : "Honor mode attestation"}
+        data-testid="verify-mode-banner"
+        data-proctored={proctored ? "true" : "false"}
+        className={
+          proctored
+            ? "flex items-center gap-2 rounded-md border border-[oklch(from_var(--color-primary)_l_c_h/0.5)] bg-[oklch(from_var(--color-primary)_l_c_h/0.08)] px-3 py-2 text-[11px] text-[var(--color-foreground)]"
+            : "flex items-center gap-2 rounded-md border border-[oklch(from_var(--color-warning)_l_c_h/0.45)] bg-[oklch(from_var(--color-warning)_l_c_h/0.10)] px-3 py-2 text-[11px] text-[var(--color-foreground)]"
+        }
+      >
+        {proctored ? (
+          <ShieldCheck
+            className="size-4 text-[var(--color-primary)]"
+            aria-hidden
+          />
+        ) : (
+          <ShieldAlert
+            className="size-4 text-[var(--color-warning)]"
+            aria-hidden
+          />
+        )}
+        <span>
+          {proctored
+            ? "Identity verified"
+            : "Self-study attempt — not a verified credential."}
+        </span>
+      </section>
 
       <section
         aria-labelledby="verify-score"

@@ -47,6 +47,14 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
     typeof submission.score_report.effective_max === "number"
       ? submission.score_report.effective_max
       : 100;
+  // P0-11/P0-8 — verified flag drives the eyebrow + accent. Honor-mode
+  // shares stay honest: amber accent, "// honor mode attestation"
+  // eyebrow, no "verified" framing. Verified attempts retain the
+  // existing indigo / "// verified report" treatment so the same
+  // social card never under- or over-represents a credential.
+  const verified = submission.verified === true;
+  const eyebrow = verified ? "// VERIFIED REPORT" : "// HONOR MODE ATTESTATION";
+  const accent = verified ? "#7c8dff" : "#d9a14a";
 
   return new ImageResponse(
     (
@@ -68,6 +76,7 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
           style={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
             gap: 12,
             fontSize: 22,
             letterSpacing: 4,
@@ -75,16 +84,35 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
             color: "#a4b0c4",
           }}
         >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <span
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: accent,
+                display: "inline-block",
+              }}
+            />
+            OpenAgentDojo
+          </div>
           <span
             style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              background: "#7c8dff",
-              display: "inline-block",
+              display: "flex",
+              fontFamily: "monospace",
+              fontSize: 16,
+              letterSpacing: 2,
+              color: accent,
             }}
-          />
-          OpenAgentDojo
+          >
+            {eyebrow}
+          </span>
         </div>
 
         <div
@@ -173,9 +201,9 @@ export default async function OpenGraphImage({ params, searchParams }: OgProps) 
               {radar ? (
                 <polygon
                   points={radar}
-                  fill="#7c8dff"
+                  fill={accent}
                   fillOpacity={0.35}
-                  stroke="#7c8dff"
+                  stroke={accent}
                   strokeWidth={2}
                 />
               ) : null}

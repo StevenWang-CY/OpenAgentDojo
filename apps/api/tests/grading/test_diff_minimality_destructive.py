@@ -47,8 +47,7 @@ def test_destructive_minimisation_does_not_score_full_credit() -> None:
     score = _score_diff_minimality(diff, _Manifest(expected_diff_lines_p50=20))
     # churn = max(5, 200) = 200; ratio = 200/20 = 10 → 0/10.
     assert score.score == 0, (
-        f"churn=200 over p50=20 should be 0/10, got "
-        f"{score.score}; signals={score.signals}"
+        f"churn=200 over p50=20 should be 0/10, got {score.score}; signals={score.signals}"
     )
 
 
@@ -58,8 +57,7 @@ def test_added_only_still_scored_the_same() -> None:
     score = _score_diff_minimality(diff, _Manifest(expected_diff_lines_p50=20))
     # ratio = 18/20 = 0.9 → full credit 10/10.
     assert score.score == 10, (
-        f"add-only ratio<1 should be 10/10, got "
-        f"{score.score}; signals={score.signals}"
+        f"add-only ratio<1 should be 10/10, got {score.score}; signals={score.signals}"
     )
 
 

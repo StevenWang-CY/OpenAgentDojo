@@ -67,9 +67,7 @@ def test_loguru_filter_strips_email_from_positional_message() -> None:
     )
     try:
         logger.info("MAGIC LINK for {}: {}", "carol@example.net", "click me")
-        logger.warning(
-            "callback hit https://app.test/auth/callback?token=secret-abc&kind=signup"
-        )
+        logger.warning("callback hit https://app.test/auth/callback?token=secret-abc&kind=signup")
     finally:
         logger.remove(handler_id)
 

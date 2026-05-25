@@ -41,6 +41,11 @@ class SessionRow(Base):
             "score IS NULL OR (score BETWEEN 0 AND 100)",
             name="sessions_score_range",
         ),
+        # P0-8 — anti-cheating posture. Mirrors migration 0022.
+        CheckConstraint(
+            "mode IN ('self_study', 'proctored')",
+            name="sessions_mode_check",
+        ),
         # Plan §6.1: index on (user_id, started_at DESC) for "latest sessions" lookups.
         Index("idx_sessions_user", "user_id", desc("started_at")),
         # Mirror migration 0006 — keeps alembic --autogenerate clean.
@@ -104,6 +109,33 @@ class SessionRow(Base):
     # (recorded in ``submissions.score_cap_reason``). NULL means "submitted
     # normally"; the timestamp is the wall-clock moment the user clicked.
     gave_up_at: Mapped[datetime | None] = nullable_ts()
+    # P0-8 — anti-cheating posture. ``'self_study'`` (default) shows the
+    # honor-mode banner and silently drops integrity events; ``'proctored'``
+    # enables browser-side window/document signal collection, increments
+    # ``integrity_signals_count`` on every accepted event, and stamps
+    # ``submissions.verified = True`` at grade time. Set once at session
+    # create — there is no mid-session promotion path because flipping the
+    # toggle after work has begun would make the verified flag meaningless.
+    mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="self_study",
+        server_default=sa.text("'self_study'"),
+    )
+    # P0-8 — rolling counter incremented every time the integrity endpoint
+    # persists a signal on this session. Self-study sessions never
+    # increment this. Surfaces on the proctored chip in WorkspaceTopBar and
+    # on the post-mortem walkthrough so a recruiter (or the user) can see
+    # "the proctored attempt was clean — 0 integrity signals" at a glance.
+    integrity_signals_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=sa.text("0"),
+    )
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<SessionRow {self.id} mission={self.mission_id} status={self.status}>"
+        return (
+            f"<SessionRow {self.id} mission={self.mission_id} "
+            f"status={self.status} mode={self.mode}>"
+        )

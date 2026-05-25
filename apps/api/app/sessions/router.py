@@ -33,6 +33,7 @@ from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
 from app.models.user import User
 from app.observability import give_up_blocked_total, give_ups_total, mission_retries_total
+from app.sandbox.driver import InvalidRegexError, SearchTimeoutError
 from app.schemas.auth import WsTokenRead
 from app.schemas.mission import MissionDetail
 from app.schemas.session import (
@@ -49,9 +50,13 @@ from app.schemas.workspace import (
     CommandBody,
     CommandRunResponse,
     FileContent,
+    FileListResponse,
     FileRevertBody,
     FileTreeNodeSchema,
     FileWriteBody,
+    SearchMatch,
+    SearchRequest,
+    SearchResponse,
     SupervisionEventRead,
     UnifiedDiff,
     _validate_workspace_path,
@@ -164,6 +169,7 @@ async def post_session(
             user_id=user.id,
             mission_id=body.mission_id,
             previous_session_id=body.previous_session_id,
+            mode=body.mode,
         )
     except MissionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"mission not found: {exc}") from exc
@@ -414,6 +420,10 @@ async def post_file(
     removed_lines = max(0, old_lines - new_lines)
 
     await pool.driver.write_file(handle, body.path, new_content.encode("utf-8"))
+    # The quick-open palette caches the file listing per sandbox; a new file
+    # (or a delete-then-rewrite) must invalidate the cached paths so the FE
+    # next quick-open immediately sees it.
+    _FILES_LIST_CACHE.pop(handle.id, None)
 
     # Insert FileChange row.
     change = FileChange(
@@ -473,6 +483,10 @@ async def post_revert(
             result.stderr[:300],
         )
         raise HTTPException(status_code=500, detail="git checkout failed")
+    # A revert removes a file from the working tree (if it was new) or
+    # restores its prior content — either way the quick-open listing may
+    # change. Drop the cache so the next palette open re-scans.
+    _FILES_LIST_CACHE.pop(handle.id, None)
 
     redis = await get_redis()
     emitter = EventEmitter(db=db, redis_client=redis)
@@ -494,9 +508,7 @@ def _count_porcelain_lines(porcelain: str) -> int:
     return sum(1 for line in porcelain.splitlines() if line.strip())
 
 
-async def _had_agent_patch_for_session(
-    db: AsyncSession, session_id: uuid.UUID
-) -> bool:
+async def _had_agent_patch_for_session(db: AsyncSession, session_id: uuid.UUID) -> bool:
     """True when at least one ``patch.applied`` event exists for this session.
 
     The reset payload uses this to populate ``had_agent_patch`` — a useful
@@ -516,9 +528,7 @@ async def _had_agent_patch_for_session(
     return row is not None
 
 
-async def _count_session_resets(
-    db: AsyncSession, session_id: uuid.UUID
-) -> int:
+async def _count_session_resets(db: AsyncSession, session_id: uuid.UUID) -> int:
     """Count ``session.reset`` events on the session (post-emit total)."""
     rows = (
         await db.execute(
@@ -579,9 +589,7 @@ async def post_reset(
     # cache for any path that loaded the mission inline.
     mission_row = await get_mission_row(db, row.mission_id)
     initial_commit = (
-        getattr(mission_row, "initial_commit", None)
-        if mission_row is not None
-        else None
+        getattr(mission_row, "initial_commit", None) if mission_row is not None else None
     )
     if not initial_commit:
         loaded = cached_manifests().get(row.mission_id)
@@ -673,6 +681,11 @@ async def post_reset(
                 "message": (clean_result.stderr or "git clean failed").strip()[:300],
             },
         )
+
+    # The reset wipes untracked files and reverts modifications. Drop any
+    # cached quick-open listing so the next palette open reflects the
+    # post-reset state.
+    _FILES_LIST_CACHE.pop(handle.id, None)
 
     # 4) emit the typed event.
     now = datetime.now(UTC)
@@ -931,6 +944,251 @@ async def post_tutorial_step(
         },
     )
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# P0-9: Find-in-files / repo-wide search
+# ---------------------------------------------------------------------------
+
+# Hard upper bound on a single ``GET /files/list`` call. The default is 2000
+# (more than enough for any mission repo pack today) and clients pass an
+# explicit ``max`` parameter when they want fewer. The cap is enforced even
+# when the client requests more so a misconfigured FE can't trigger a 5MB
+# JSON payload.
+_FILES_LIST_HARD_CAP = 5000
+
+# Cache TTL for the file listing. ``git ls-files`` against a 5k-file workspace
+# is ~50ms; the FE's quick-open palette debounces at 120ms so a 30s window
+# lets the listing-pop on every keystroke without re-shelling on every char.
+# The cache is sandbox-keyed, so a write/revert in one session invalidates
+# only that session's entry.
+_FILES_LIST_CACHE_TTL_S = 30.0
+
+
+# Per-process listing cache: ``{sandbox_id: (expires_at_monotonic, paths)}``.
+# Module-level so it survives across requests; cleared opportunistically when
+# entries expire. The cache is a soft optimization — a stale entry is
+# acceptable because the next listing call refreshes it.
+_FILES_LIST_CACHE: dict[str, tuple[float, list[str]]] = {}
+
+
+def _cache_get_paths(sandbox_id: str) -> list[str] | None:
+    """Return cached path listing or ``None`` if missing/expired."""
+    import time
+
+    entry = _FILES_LIST_CACHE.get(sandbox_id)
+    if entry is None:
+        return None
+    expires_at, paths = entry
+    if expires_at < time.monotonic():
+        _FILES_LIST_CACHE.pop(sandbox_id, None)
+        return None
+    return paths
+
+
+def _cache_put_paths(sandbox_id: str, paths: list[str]) -> None:
+    """Store a listing in the per-process cache with a TTL."""
+    import time
+
+    _FILES_LIST_CACHE[sandbox_id] = (
+        time.monotonic() + _FILES_LIST_CACHE_TTL_S,
+        paths,
+    )
+
+
+@router.get(
+    "/{session_id}/files/list",
+    response_model=FileListResponse,
+    summary="List workspace files (gitignore-aware, fuzzy-filtered server-side)",
+)
+async def get_files_list(
+    session_id: uuid.UUID,
+    request: Request,
+    query: str | None = Query(
+        default=None,
+        description="Optional substring filter (case-insensitive). Applied AFTER the listing fetch.",
+        max_length=200,
+    ),
+    max: int = Query(
+        default=2000,
+        ge=1,
+        le=_FILES_LIST_HARD_CAP,
+        alias="max",
+        description="Maximum number of paths to return (hard cap 5000).",
+    ),
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FileListResponse:
+    """Return workspace paths for the quick-open file palette.
+
+    The listing comes from ``git ls-files --cached --others
+    --exclude-standard`` so ``.gitignore`` is honoured and untracked-but-not-
+    ignored files surface immediately. Results are deduplicated and sorted by
+    depth-then-name (top-level entrypoints first), then filtered by ``query``
+    if supplied. The substring match is intentionally simple — the full fuzzy
+    score lives on the client where it can re-rank without a roundtrip.
+
+    Cached per sandbox for 30 seconds so a fast-typing user doesn't shell out
+    to ``git`` on every keystroke. The cache is bypassed transparently when
+    the sandbox is destroyed (the handle id changes).
+    """
+    await _require_owned_session(db, session_id, user)
+    handle = _get_sandbox_handle(request, session_id)
+    pool = request.app.state.sandbox_pool
+
+    cached = _cache_get_paths(handle.id)
+    if cached is None:
+        cached = await pool.driver.list_files(handle, max_files=_FILES_LIST_HARD_CAP)
+        _cache_put_paths(handle.id, cached)
+
+    paths = cached
+    total = len(paths)
+    if query:
+        needle = query.lower()
+        paths = [p for p in paths if needle in p.lower()]
+
+    truncated = len(paths) > max
+    if truncated:
+        paths = paths[:max]
+
+    return FileListResponse(paths=paths, truncated=truncated, total=total)
+
+
+@router.post(
+    "/{session_id}/files/search",
+    response_model=SearchResponse,
+    summary="Find-in-files across the workspace (ripgrep-backed)",
+)
+async def post_files_search(
+    session_id: uuid.UUID,
+    body: SearchRequest,
+    request: Request,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> SearchResponse:
+    """Run a ripgrep-backed search across the sandbox workspace.
+
+    The search itself is read-only — but we DO emit a ``command.run``
+    supervision event with ``category='manual'`` so the grader's
+    context_selection dimension can credit the supervisor for actually
+    poking around the workspace before prompting. The event payload
+    carries the query (truncated) and the result count; the literal
+    ripgrep argv is never logged because it could contain sensitive
+    user-supplied substrings.
+
+    Errors:
+        400 ``invalid_regex`` — the user enabled regex mode and the pattern
+            failed to compile.
+        504 ``search_timeout`` — the ripgrep subprocess exceeded the 10s
+            wall-clock budget.
+    """
+    request.state.user = user
+    row = await _require_owned_session(db, session_id, user)
+    # Search is read-only on the workspace, but we still gate on ``active``:
+    # an in-flight submit means the diff is being frozen, and a stray search
+    # event mid-grade would muddy the supervision log without buying anything.
+    _require_mutable_session(row)
+
+    import time as _time
+
+    handle = _get_sandbox_handle(request, session_id)
+    pool = request.app.state.sandbox_pool
+
+    from app.observability import workspace_search_total
+
+    started_ms = _time.monotonic()
+    try:
+        raw_matches, truncated, total, exit_code = await pool.driver.search(
+            handle,
+            body.query,
+            glob=body.glob,
+            case_sensitive=body.case_sensitive,
+            regex=body.regex,
+            max_results=body.max_results,
+        )
+    except InvalidRegexError as exc:
+        workspace_search_total.labels(outcome="invalid_regex").inc()
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_regex",
+                "message": str(exc) or "regex failed to compile",
+            },
+        ) from exc
+    except SearchTimeoutError as exc:
+        workspace_search_total.labels(outcome="timeout").inc()
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "code": "search_timeout",
+                "message": str(exc) or "search timed out",
+            },
+        ) from exc
+    duration_ms = int((_time.monotonic() - started_ms) * 1000)
+
+    matches: list[SearchMatch] = [SearchMatch.model_validate(m) for m in raw_matches]
+
+    # Persist a ``command.run`` event so the grader's "supervisor used
+    # find-in-files" signal lands in the timeline. The event keeps the same
+    # shape as a real shell-invoked search so downstream readers don't have
+    # to special-case the surface.
+    #
+    # Phase 4.A.19 — surface the real ripgrep exit code (was hardcoded to
+    # 0) AND emit a ``validator.flag{kind="search_error"}`` when the
+    # exit code is non-zero non-empty. ripgrep's rc=1 legitimately means
+    # "no matches" so we only flag on rc=2 (pattern/IO/glob error).
+    cmd_label = f"search:{body.query[:120]}"
+    cmd_row = CommandRun(
+        session_id=session_id,
+        command=cmd_label,
+        exit_code=int(exit_code),
+        duration_ms=duration_ms,
+        category="manual",
+    )
+    db.add(cmd_row)
+    await db.flush()
+
+    redis = await get_redis()
+    emitter = EventEmitter(db=db, redis_client=redis)
+    await emitter.emit(
+        session_id=session_id,
+        event_type="command.run",
+        payload={
+            "command": cmd_label,
+            "category": "manual",
+            "exit_code": int(exit_code),
+            "duration_ms": duration_ms,
+            "surface": "find_in_files",
+            "result_count": total,
+        },
+    )
+
+    if exit_code not in (0, 1):
+        # rc=2 is the only non-empty non-zero ripgrep code today — emit
+        # a search_error validator flag so the timeline surfaces the
+        # underlying failure (otherwise the user sees "no results" and
+        # has no signal that ripgrep itself broke).
+        await emitter.emit(
+            session_id=session_id,
+            event_type="validator.flag",
+            payload={
+                "kind": "search_error",
+                "message": f"workspace search exited rc={int(exit_code)}",
+                "penalty": 0,
+            },
+        )
+
+    if truncated:
+        workspace_search_total.labels(outcome="truncated").inc()
+    else:
+        workspace_search_total.labels(outcome="ok").inc()
+
+    return SearchResponse(
+        matches=matches,
+        truncated=truncated,
+        total=total,
+        duration_ms=duration_ms,
+    )
 
 
 @router.get(

@@ -233,8 +233,18 @@ async def submit_session(  # noqa: PLR0915
         # Without this, a timeout AFTER give-up silently drops the cap
         # signal and the user sees a 0/100 stub instead of "capped at 50".
         cap_reason = "gave_up" if session.gave_up_at is not None else None
+        # P0-8 / Phase 4.A.3 — keep ``verified`` honest on the stub path
+        # too: the runner stamps ``submissions.verified=True`` for the
+        # happy proctored path (see runner.py:434), and the timeout /
+        # exception branches MUST not silently drop that posture or the
+        # FE will render a verified attempt as honor-mode.
+        verified_flag = getattr(session, "mode", "self_study") == "proctored"
         await _ensure_failed_stub(
-            db, session_id, reason=f"timeout: {exc}", score_cap_reason=cap_reason
+            db,
+            session_id,
+            reason=f"timeout: {exc}",
+            score_cap_reason=cap_reason,
+            verified=verified_flag,
         )
         # ``outcome="timeout"`` is split out from the generic ``failed`` bucket
         # so the SLO dashboard can distinguish wall-clock-budget hits (an
@@ -249,8 +259,15 @@ async def submit_session(  # noqa: PLR0915
         await _mark_session_errored(db, session, session_id)
         # P0-4 audit fix — same rationale as the timeout branch above.
         cap_reason = "gave_up" if session.gave_up_at is not None else None
+        # P0-8 / Phase 4.A.3 — preserve the proctored posture on the
+        # pipeline-error stub too.
+        verified_flag = getattr(session, "mode", "self_study") == "proctored"
         await _ensure_failed_stub(
-            db, session_id, reason=f"pipeline_error: {exc}", score_cap_reason=cap_reason
+            db,
+            session_id,
+            reason=f"pipeline_error: {exc}",
+            score_cap_reason=cap_reason,
+            verified=verified_flag,
         )
         submissions_total.labels(mission_id=mission_id, outcome="failed").inc()
         raise HTTPException(
@@ -311,6 +328,7 @@ async def _ensure_failed_stub(
     *,
     reason: str,
     score_cap_reason: str | None = None,
+    verified: bool = False,
 ) -> Submission | None:
     """Persist a placeholder ``submissions`` row so GET returns 200.
 
@@ -324,6 +342,12 @@ async def _ensure_failed_stub(
     the stub when the grader timed out / crashed AFTER the user invoked
     give-up. Without this, the FE chip + profile aggregator would silently
     lose the forfeit signal on every timeout-after-give-up.
+
+    ``verified`` (Phase 4.A.3) mirrors ``session.mode == 'proctored'`` so the
+    stub matches the contract the happy path stamps at runner.py:434. The
+    caller looks up ``session.mode`` and passes the boolean in — the stub
+    writer here doesn't re-load the row to avoid one extra SELECT on a
+    failure path that's already paying for a rollback.
     """
     from sqlalchemy import select
 
@@ -379,6 +403,10 @@ async def _ensure_failed_stub(
             # the profile aggregator's tier policy excludes this stub
             # exactly the way it would a real graded gave-up submission.
             score_cap_reason=score_cap_reason,
+            # Phase 4.A.3 — mirror the proctored posture so a timeout /
+            # pipeline-error stub matches the happy path's ``verified``
+            # stamp. The FE branches on this flag for chrome differences.
+            verified=verified,
         )
         db.add(stub)
         await db.commit()

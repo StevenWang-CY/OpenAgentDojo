@@ -70,7 +70,24 @@ export type TelemetryEvent =
   | "report_render_failed"
   // P0-11 — emitted by the public /verify page on first paint.
   // Properties: ``submission_id``, ``referer_host`` (when available).
-  | "report_verified";
+  | "report_verified"
+  // P0-10 — emitted when the user clicks "Resend link" on the sign-in
+  // post-send card. No properties (the event is intentionally
+  // PII-free; the throttle outcome lives on the API metric, not the
+  // FE telemetry stream).
+  | "magic_link_resend_clicked"
+  // P0-10 — emitted when the user clicks the "Continue with GitHub"
+  // CTA on the sign-in post-send card (the OAuth fallback path).
+  // Distinct from the sign-in start telemetry so the funnel can
+  // distinguish "tried magic link, fell back to GitHub" from
+  // "started with GitHub directly".
+  | "github_oauth_clicked_from_resend"
+  // P0-7 — emitted by the sign-in page when the user clicks the
+  // top-level "Continue with GitHub" CTA (above the magic-link form).
+  // Distinct from ``github_oauth_clicked_from_resend`` so the funnel
+  // can distinguish "started with GitHub" from "fell back to GitHub
+  // after the email didn't arrive".
+  | "sign_in_github_clicked";
 
 /**
  * Canonical event names, exposed as a const enum-like object so call sites
@@ -96,6 +113,9 @@ export const TelemetryEvents = {
   report_render_succeeded: "report_render_succeeded",
   report_render_failed: "report_render_failed",
   report_verified: "report_verified",
+  magic_link_resend_clicked: "magic_link_resend_clicked",
+  github_oauth_clicked_from_resend: "github_oauth_clicked_from_resend",
+  sign_in_github_clicked: "sign_in_github_clicked",
 } as const satisfies Record<TelemetryEvent, TelemetryEvent>;
 
 // ── Ring buffer & internal state ────────────────────────────────────────────

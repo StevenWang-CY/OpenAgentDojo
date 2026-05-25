@@ -60,9 +60,35 @@ export type CommandRun = Omit<GenCommandRunResponse, "category"> & {
   category: CommandCategory;
 };
 
-export type SessionRead = components["schemas"]["SessionRead"];
-export type SessionDetailGen = components["schemas"]["SessionDetail"];
-export type CreateSessionInput = components["schemas"]["SessionCreate"];
+/** P0-8 — anti-cheating posture for a session. ``self_study`` (default,
+ *  honor mode, practice only) vs ``proctored`` (verified credential,
+ *  emits window/document integrity signals). Set once at session create. */
+export type SessionMode = "self_study" | "proctored";
+
+type GenSessionRead = components["schemas"]["SessionRead"];
+type GenSessionDetail = components["schemas"]["SessionDetail"];
+type GenSessionCreate = components["schemas"]["SessionCreate"];
+
+/** Backend ``SessionRead`` augmented with P0-8 fields. The generated
+ *  ``api.gen.ts`` will pick these up on the next regen — until then the
+ *  hand-curated intersection keeps the FE strongly typed against the new
+ *  columns. ``integrity_signals_count`` is always present (server default
+ *  0); ``mode`` defaults to ``self_study`` server-side. */
+export type SessionRead = Omit<GenSessionRead, "mode"> & {
+  mode: SessionMode;
+  integrity_signals_count: number;
+};
+export type SessionDetailGen = Omit<GenSessionDetail, "mode"> & {
+  mode: SessionMode;
+  integrity_signals_count: number;
+};
+/** ``mode`` is server-optional — defaults to ``self_study`` when absent.
+ *  The generated type marks it required because openapi-typescript can't
+ *  tell that the Pydantic field has a default; relax it back to optional
+ *  here so callers don't have to pass it when honor mode is the intent. */
+export type CreateSessionInput = Omit<GenSessionCreate, "mode"> & {
+  mode?: SessionMode;
+};
 
 /** P0-3 — per-mission attempt summary for the signed-in caller. Sourced from
  *  the backend ``YourAttempts`` Pydantic model. The wrapping
@@ -86,13 +112,65 @@ export type CommandInput = components["schemas"]["CommandBody"];
 export type FileContent = components["schemas"]["FileContent"];
 export type FileTreeNode = components["schemas"]["FileTreeNodeSchema"];
 export type UnifiedDiff = components["schemas"]["UnifiedDiff"];
+
+// ── P0-9 — Find-in-files / repo-wide workspace search ──────────────────────
+//
+// ``FileListResponse`` backs the Cmd/Ctrl+P quick-open palette;
+// ``SearchRequest``/``SearchResponse``/``SearchMatch`` back the
+// Cmd/Ctrl+Shift+F find-in-files panel. The optional ``paths`` /
+// ``matches`` arrays from openapi-typescript are re-narrowed to required
+// (Pydantic always serialises an empty list rather than omitting the key)
+// so callers don't have to thread ``?? []`` through every render.
+type GenFileListResponse = components["schemas"]["FileListResponse"];
+type GenSearchResponse = components["schemas"]["SearchResponse"];
+export type FileListResponse = Omit<GenFileListResponse, "paths"> & {
+  paths: string[];
+};
+export type SearchMatch = components["schemas"]["SearchMatch"];
+export type SearchResponse = Omit<GenSearchResponse, "matches"> & {
+  matches: SearchMatch[];
+};
+export type SearchRequest = components["schemas"]["SearchRequest"];
+
 export type SupervisionEventRead =
   components["schemas"]["SupervisionEventRead"];
 export type SubmissionRead = components["schemas"]["SubmissionRead"];
 export type WriteFileInput = components["schemas"]["FileWriteBody"];
 export type RevertFileInput = components["schemas"]["FileRevertBody"];
-export type MagicLinkInput = components["schemas"]["MagicLinkRequest"];
+/** ``POST /auth/magic-link`` and ``POST /auth/magic-link/resend`` body.
+ *
+ *  The generated ``MagicLinkRequest`` (from ``apps/api/openapi.json``) covers
+ *  the ``email`` field; the ``next`` extension is a forward-compatible
+ *  intersection so the FE can already thread the post-sign-in redirect
+ *  target through the request body. Once the backend's Pydantic model
+ *  declares ``next: str | None`` the gen will pick it up and the
+ *  intersection becomes a no-op (TypeScript merges them losslessly).
+ */
+export type MagicLinkInput = components["schemas"]["MagicLinkRequest"] & {
+  /** Optional in-app path to land on after the magic link is redeemed.
+   *  Must be a relative same-origin path (``/missions``, ``/report/abc``);
+   *  the FE sanitises before sending and the backend re-validates. */
+  next?: string | null;
+};
 export type PromptInput = components["schemas"]["PromptBody"];
+
+// ── P0-11 — Verification / share / render payloads ─────────────────────────
+//
+// These are re-exports of the generated component shapes so the FE imports
+// a stable name regardless of any future backend rename. Keeping the
+// aliases on this layer (rather than letting ``lib/api.ts`` reach into
+// ``components['schemas']['…']``) means a Pydantic rename only touches
+// this file, not every call-site.
+export type VerifyEnvelopeRead = components["schemas"]["VerifyEnvelopeRead"];
+export type ReportRenderRead = components["schemas"]["ReportRenderRead"];
+export type ShareTokenRead = components["schemas"]["ShareTokenRead"];
+export type SessionResetResponse =
+  components["schemas"]["SessionResetResponse"];
+/** Envelope for ``POST /auth/magic-link/resend`` (P0-10).
+ *
+ *  Mirrors the backend's ``MagicLinkResendResponse`` Pydantic model. */
+export type MagicLinkResendResponse =
+  components["schemas"]["MagicLinkResendResponse"];
 
 // ── P0-5 — consent (account-scoped) ─────────────────────────────────────────
 //
@@ -157,45 +235,14 @@ export type CommandCategory = CommandInput["category"];
 export type FileEncoding = FileContent["encoding"];
 export type FileKind = FileTreeNode["kind"];
 
-// ── User (hand-authored — backend /me has no Pydantic response model yet) ───
-
-export interface User {
-  id: UUID;
-  email: string;
-  display_name: string | null;
-  github_login: string | null;
-  /** Lowercased mailbox local-part with disambiguating suffix. Backend
-   *  schema (`UserRead.handle: str | None`) is nullable for legacy / not-yet-
-   *  migrated rows — callers must handle the null branch. */
-  handle: string | null;
-  created_at: ISODateString;
-  last_login_at: ISODateString | null;
-  /** CSRF token issued on every /me call (re-uses the existing cookie when
-   *  present — see `_build_me_response` on the backend). Always populated by
-   *  the route; the FE can rely on it being present without a defensive
-   *  branch. */
-  csrf_token: string;
-  /** P0-1 — when set, the user has finished Mission 00 at least once. The
-   *  catalog's "// start here" banner renders ONLY when this is null. The
-   *  "Replay tutorial" entry in the header dropdown re-clears this server-
-   *  side via POST /auth/me/tutorial/replay. */
-  tutorial_completed_at: ISODateString | null;
-  /** P0-1 — incremented every time the user re-runs the tutorial. Surfaced
-   *  so the FE can show "(replayed Nx)" beside the completion timestamp. */
-  tutorial_replay_count: number;
-  /** P0-6 — when set, the user has requested an email change; the new
-   *  address is pending magic-link confirmation. The Profile tab renders a
-   *  "pending: …" banner in place of the change form until the link is
-   *  followed (or until a fresh ``POST /me/email/change`` overwrites the
-   *  pending value). */
-  pending_email: string | null;
-  /** P0-6 — when set, the user has scheduled their account for deletion;
-   *  the value is the timestamp at which the daily worker will hard-delete.
-   *  While set, every mutating endpoint except ``/me/delete/cancel`` returns
-   *  403 ``deletion_scheduled``; the FE renders ``DeletionLockBanner`` to
-   *  explain. */
-  deletion_scheduled_at: ISODateString | null;
-}
+// ── User ────────────────────────────────────────────────────────────────────
+//
+// Sourced directly from the generated ``UserRead`` now that the backend
+// declares a Pydantic response model on ``GET /auth/me``. The previous
+// hand-authored shape was kept in lockstep manually; folding it into the
+// generated layer means a backend column rename surfaces at the FE
+// type-check immediately instead of drifting silently.
+export type User = components["schemas"]["UserRead"];
 
 // ── Mission kind discriminator (P0-1) ──────────────────────────────────────
 
@@ -383,6 +430,10 @@ export type Submission = Omit<
   validator_results: ValidatorResult[];
   score_report: ScoreReport;
   critical_moments: CriticalMoment[];
+  /** P0-8 — true iff the producing session was ``proctored`` at submit
+   *  time. Drives the verified chip on the report header + the public
+   *  profile's verified-only radar partition. */
+  verified: boolean;
 };
 
 // ── Timeline ─────────────────────────────────────────────────────────────────
@@ -442,9 +493,31 @@ export interface PublicProfile {
   handle: string;
   display_name: string | null;
   joined_at: ISODateString;
+  /** P0-7 — verified-via-GitHub identity surface, mirrored from the
+   *  backend ``PublicProfile`` Pydantic model. The FE branches on
+   *  ``github_verified_at`` to render the verified chip (non-null) vs.
+   *  the "self-attested" chip (null). ``github_html_url`` is the link
+   *  target so consumers can independently sanity-check the identity. */
+  github_login: string | null;
+  github_avatar_url: string | null;
+  github_html_url: string | null;
+  github_verified_at: ISODateString | null;
   badges: EarnedBadge[];
   history: MissionHistoryItem[];
   radar_averages: Partial<Record<RubricDimension, number>>;
+  /** P0-8 — separate radar built from verified (proctored) attempts only.
+   *  Populated whenever ``has_verified_attempts`` is true; the FE flips
+   *  ``radar_averages`` to this set when the viewer toggles "Verified
+   *  only" on. ``null`` is the explicit "no verified attempts" signal. */
+  dimension_history_verified?: Partial<Record<RubricDimension, number>> | null;
+  /** P0-8 — true iff at least one verified (proctored) submission exists
+   *  for this profile. Drives the FE's default toggle position. */
+  has_verified_attempts: boolean;
+  /** P0-8 — the partition policy actually applied to ``radar_averages``.
+   *  ``true`` means honor-mode attempts were excluded; ``false`` means
+   *  the radar includes every graded attempt (the honest fallback when
+   *  no verified attempts exist). */
+  verified_attempts_only: boolean;
   /** Per-dimension chronological score trail for the longitudinal
    *  sparklines (P2-2). Oldest first. Pending scores are excluded — the
    *  trail only contains points the grader could actually measure. */

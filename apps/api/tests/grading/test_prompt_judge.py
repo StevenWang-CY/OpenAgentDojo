@@ -174,7 +174,7 @@ def test_judge_returns_pending_when_llm_unavailable() -> None:
     store: dict[str, PromptJudgement] = {}
     judge = PromptJudge(
         client=_BrokenClient(),
-        cache_get=lambda k: store.get(k),
+        cache_get=store.get,
         cache_put=lambda j: store.__setitem__(j.cache_key, j),
     )
     ctx = PromptJudgeContext(mission_id="m")
@@ -208,7 +208,7 @@ def test_precompute_dedupes_repeated_prompts() -> None:
     store: dict[str, PromptJudgement] = {}
     judge = PromptJudge(
         client=client,
-        cache_get=lambda k: store.get(k),
+        cache_get=store.get,
         cache_put=lambda j: store.__setitem__(j.cache_key, j),
     )
     ctx = PromptJudgeContext(mission_id="m")
@@ -287,11 +287,7 @@ def test_score_uses_judge_when_lookup_provided() -> None:
 def test_score_pending_when_no_judgements_resolve() -> None:
     manifest = _Manifest()
     turns = [{"turn_index": 0, "user_prompt": "anything"}]
-    judgements = {
-        "anything": PromptJudgement(
-            cache_key="k", score=None, error="llm_unavailable"
-        )
-    }
+    judgements = {"anything": PromptJudgement(cache_key="k", score=None, error="llm_unavailable")}
     ds = _score_prompt_quality(turns, manifest, judgements)
     assert ds.pending is True
     assert ds.score == -1
@@ -312,11 +308,7 @@ def test_compute_score_excludes_pending_from_total() -> None:
         TestRunResult(suite="hidden", exit_code=0, stdout="", stderr="", passed=4),
     ]
     turns = [{"turn_index": 0, "user_prompt": "p"}]
-    pending = {
-        "p": PromptJudgement(
-            cache_key="k", score=None, error="llm_unavailable"
-        )
-    }
+    pending = {"p": PromptJudgement(cache_key="k", score=None, error="llm_unavailable")}
     report = compute_score(
         diff=diff,
         events=[],
@@ -333,11 +325,15 @@ def test_compute_score_excludes_pending_from_total() -> None:
     assert pq.pending is True
     assert pq.to_dict()["score"] is None
     # Total excludes pq.
-    expected_total = 30 + 10 + sum(
-        ds.score
-        for name, ds in report.dimensions.items()
-        if name not in {"final_correctness", "diff_minimality", "prompt_quality"}
-        and not ds.pending
+    expected_total = (
+        30
+        + 10
+        + sum(
+            ds.score
+            for name, ds in report.dimensions.items()
+            if name not in {"final_correctness", "diff_minimality", "prompt_quality"}
+            and not ds.pending
+        )
     )
     assert report.total == expected_total
 
@@ -356,9 +352,7 @@ def test_fallback_keyword_scorer_runs_when_no_judgements() -> None:
 def test_replay_is_deterministic_with_same_judgements() -> None:
     """The judge cache makes replays byte-identical."""
     manifest = _Manifest(hidden_tests=_HiddenTests(suites=["hidden"]))
-    diff = ParsedDiff(
-        "--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1,2 @@\n x\n+y\n"
-    )
+    diff = ParsedDiff("--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1,2 @@\n x\n+y\n")
     test_results = [
         TestRunResult(suite="hidden", exit_code=0, stdout="", stderr="", passed=1),
     ]
@@ -383,9 +377,7 @@ def test_replay_is_deterministic_with_same_judgements() -> None:
         prompt_judgements=judgements,
     )
     assert r1.total == r2.total
-    assert r1.dimensions["prompt_quality"].score == r2.dimensions[
-        "prompt_quality"
-    ].score
+    assert r1.dimensions["prompt_quality"].score == r2.dimensions["prompt_quality"].score
 
 
 def test_rubric_version_is_pinned() -> None:

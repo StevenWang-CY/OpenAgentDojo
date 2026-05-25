@@ -19,6 +19,11 @@ Single source of truth for the load-bearing nouns and conventions used across co
 - **Supervision Event** — append-only log row in `supervision_events`; drives both the live timeline UI and the post-hoc grader.
 - **Sandbox Driver** — pluggable backend (`docker` for prod, `local` for laptops without Docker).
 - **Repo Pack Image** — Docker image tag derived from a repo pack at a pinned commit (e.g. `agentarena/fullstack-auth-demo:abc123de`).
+- **Quick Open** — `Cmd/Ctrl+P` workspace file picker (P0-9). Calls `GET /sessions/{id}/files/list`; selecting a row pipes through the Zustand `setActivePath(path)` action so the editor opens the file in one render.
+- **Find in Files** — `Cmd/Ctrl+Shift+F` ripgrep-backed search panel (P0-9). Calls `POST /sessions/{id}/files/search`; the backend emits a `command.run` supervision event with `category=manual` so the grader credits supervisors for actually scoping context before prompting.
+- **Help Overlay** — `?` modal listing the workspace keymap + supervision tips (P0-9). Auto-opens once on a fresh device; "don't show on startup" persists to `localStorage["oad.help.suppressOnStart"]`.
+- **Verified Credential** — a graded submission with `submission.verified=True`, issued only for proctored sessions (`session.mode == 'proctored'`) and signed via the verification envelope HMAC (P0-11). Rendered on the public `/verify/{id}` page with distinct chrome — the verified chip, the proctored-mode badge, and the signature footer all light up. Survives session-secret rotation because the envelope is signed with the dedicated `VERIFY_SECRET`.
+- **Honor Mode Attestation** — a graded submission with `submission.verified=False`, from a self-study session (`session.mode == 'self_study'`). Carries the same score report and rubric breakdown as a Verified Credential but is visually distinct on the verify page: no proctored-mode badge, the chip reads "honor mode," and the disclosure copy explains that the result was self-reported. Both formats use the same signed envelope so the public verify page can refuse forgeries either way.
 
 ## Determinism rules
 
@@ -67,6 +72,7 @@ Single source of truth for the load-bearing nouns and conventions used across co
 | Account self-service audit log (P0-6) | `account_events` |
 | Data-export jobs (P0-6) | `data_exports` |
 | Magic-link issuance | `magic_link_tokens` |
+| GitHub OAuth identity (P0-7) | `users.github_id` / `github_login` / `github_avatar_url` / `github_html_url` / `github_verified_at` |
 
 See [IMPLEMENTATION_PLAN.md §6](IMPLEMENTATION_PLAN.md) for the original DDL and [P0_DESIGN.md](P0_DESIGN.md) / [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md) for the migrations 0011–0019 that added the rest.
 

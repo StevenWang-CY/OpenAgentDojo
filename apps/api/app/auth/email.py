@@ -28,6 +28,7 @@ from loguru import logger
 
 from app.auth.hashing import hash_email_for_event
 from app.config import Settings
+from app.observability import magic_link_email_total
 
 
 @dataclass(slots=True, frozen=True)
@@ -97,14 +98,38 @@ async def _dispatch(
     *,
     dev_label: str,
 ) -> bool:
-    """Resend → SMTP → dev-stderr chain. Returns True on first success."""
+    """Resend → SMTP → dev-stderr chain. Returns True on first success.
+
+    P0-10 — every dispatch path also bumps ``magic_link_email_total`` with
+    the chosen ``backend`` label and a terminal ``outcome``. Operators
+    pipe this counter into a deliverability dashboard to monitor sender
+    reputation per provider. The structured log lines (``magic_link.email
+    backend=… outcome=… email_hash=…``) carry the per-event signal a
+    log pipeline can join with the counter for cohort analysis.
+    """
+    email_hash = hash_email_for_event(to_email, settings)
+
     if settings.resend_api_key:
-        sent = await _send_via_resend(to_email, payload, settings)
-        if sent:
+        outcome = await _send_via_resend(to_email, payload, settings)
+        magic_link_email_total.labels(backend="resend", outcome=outcome).inc()
+        logger.info(
+            "magic_link.email backend=resend outcome={} email_hash={} subject={!r}",
+            outcome,
+            email_hash,
+            payload.subject,
+        )
+        if outcome == "delivered":
             return True
 
-    sent = await _send_via_smtp(to_email, payload, settings)
-    if sent:
+    outcome = await _send_via_smtp(to_email, payload, settings)
+    magic_link_email_total.labels(backend="smtp", outcome=outcome).inc()
+    logger.info(
+        "magic_link.email backend=smtp outcome={} email_hash={} subject={!r}",
+        outcome,
+        email_hash,
+        payload.subject,
+    )
+    if outcome == "delivered":
         return True
 
     # Dev fallback — print to terminal so a developer can click the link.
@@ -118,22 +143,36 @@ async def _dispatch(
     # human's terminal, not a log aggregator.
     if settings.arena_env == "development":
         logger.info("{} for {}: {}", dev_label, to_email, payload.text)
+        magic_link_email_total.labels(backend="dev-log", outcome="delivered").inc()
+        logger.info(
+            "magic_link.email backend=dev-log outcome=delivered email_hash={} subject={!r}",
+            email_hash,
+            payload.subject,
+        )
         return True
     logger.error(
         "email delivery failed email_hash={} subject={!r} via all configured providers",
-        hash_email_for_event(to_email, settings),
+        email_hash,
         payload.subject,
     )
+    magic_link_email_total.labels(backend="dev-log", outcome="failed").inc()
     return False
 
 
-async def _send_via_resend(to_email: str, payload: _EmailPayload, settings: Settings) -> bool:
-    """POST to the Resend v1 emails API.  Returns True on success."""
+async def _send_via_resend(to_email: str, payload: _EmailPayload, settings: Settings) -> str:
+    """POST to the Resend v1 emails API.
+
+    Returns one of {"delivered", "timeout", "failed"} so the caller can
+    label the deliverability counter with the precise outcome. The
+    previous boolean return collapsed timeout / hard failure into a
+    single signal, which obscured the on-call view of *why* sender
+    reputation was degrading.
+    """
     try:
         import httpx
     except ImportError:
         logger.warning("httpx not installed — skipping Resend delivery")
-        return False
+        return "failed"
 
     body = {
         "from": settings.email_from,
@@ -155,25 +194,39 @@ async def _send_via_resend(to_email: str, payload: _EmailPayload, settings: Sett
                     hash_email_for_event(to_email, settings),
                     payload.subject,
                 )
-                return True
+                return "delivered"
             logger.warning(
                 "Resend returned {} email_hash={} body={!r}",
                 resp.status_code,
                 hash_email_for_event(to_email, settings),
                 resp.text[:200],
             )
-            return False
+            return "failed"
+    except httpx.TimeoutException as exc:
+        logger.warning(
+            "Resend delivery timed out email_hash={} exc={!r}",
+            hash_email_for_event(to_email, settings),
+            exc,
+        )
+        return "timeout"
     except Exception as exc:
         logger.warning(
             "Resend delivery failed email_hash={} exc={!r}",
             hash_email_for_event(to_email, settings),
             exc,
         )
-        return False
+        return "failed"
 
 
-async def _send_via_smtp(to_email: str, payload: _EmailPayload, settings: Settings) -> bool:
-    """Send via aiosmtplib to ``settings.smtp_host``. Returns True on success.
+async def _send_via_smtp(to_email: str, payload: _EmailPayload, settings: Settings) -> str:
+    """Send via aiosmtplib to ``settings.smtp_host``.
+
+    Returns one of {"delivered", "timeout", "failed"} so the caller can
+    record a structured outcome on the deliverability counter. SMTP
+    timeouts (TimeoutError from the underlying socket layer or the
+    explicit ``aiosmtplib.SMTPTimeoutError``) are distinguished from
+    hard failures because their on-call response is different —
+    timeouts often clear on a single retry; auth errors do not.
 
     ``aiosmtplib`` is a hard dependency (declared in pyproject.toml) — the
     previous ``try/except ImportError: return False`` silently disabled SMTP
@@ -209,7 +262,25 @@ async def _send_via_smtp(to_email: str, payload: _EmailPayload, settings: Settin
             hash_email_for_event(to_email, settings),
             payload.subject,
         )
-        return True
+        return "delivered"
+    except aiosmtplib.SMTPTimeoutError as exc:
+        logger.warning(
+            "SMTP delivery timed out ({}:{}) email_hash={} exc={!r}",
+            settings.smtp_host,
+            settings.smtp_port,
+            hash_email_for_event(to_email, settings),
+            exc,
+        )
+        return "timeout"
+    except TimeoutError as exc:
+        logger.warning(
+            "SMTP delivery timed out ({}:{}) email_hash={} exc={!r}",
+            settings.smtp_host,
+            settings.smtp_port,
+            hash_email_for_event(to_email, settings),
+            exc,
+        )
+        return "timeout"
     except Exception as exc:
         logger.warning(
             "SMTP delivery failed ({}:{}) email_hash={} exc={!r}",
@@ -218,7 +289,7 @@ async def _send_via_smtp(to_email: str, payload: _EmailPayload, settings: Settin
             hash_email_for_event(to_email, settings),
             exc,
         )
-        return False
+        return "failed"
 
 
 def _escape(url: str) -> str:

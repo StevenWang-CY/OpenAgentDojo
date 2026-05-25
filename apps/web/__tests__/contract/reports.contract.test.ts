@@ -82,6 +82,7 @@ const submission: Submission = {
   ideal_solution_diff: "--- a/auth.ts\n+++ b/auth.ts",
   agent_patch_diff: "--- a/auth.ts\n+++ b/auth.ts",
   critical_moments: [],
+  verified: false,
 };
 
 withContractServer([

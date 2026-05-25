@@ -28,6 +28,12 @@ _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # via ``Depends(require_auth)``, so it isn't an unauthenticated escape hatch.
 _EXEMPT_PATHS = (
     "/api/v1/auth/magic-link",
+    # P0-10 — resend endpoint shares the magic-link bootstrap; the user
+    # may not yet have a CSRF cookie when they hit the "didn't get the
+    # link?" button (e.g. they opened the sign-in page from an incognito
+    # window). The per-email throttle in the route handler is the actual
+    # abuse gate.
+    "/api/v1/auth/magic-link/resend",
     "/api/v1/auth/callback",
     "/api/v1/auth/csrf-refresh",
 )

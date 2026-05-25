@@ -6,7 +6,17 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+import sqlalchemy as sa
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -84,4 +94,14 @@ class Submission(Base):
     # credentialing surface honest.
     verification_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     verification_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P0-8 — true iff the producing session was proctored at submit time.
+    # The grading runner copies ``session.mode == 'proctored'`` here, the
+    # verify envelope reads this flag, and the public profile filters its
+    # radar averages on it (honor-mode scores are practice, not credentials).
+    verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=sa.text("false"),
+    )
     created_at: Mapped[datetime] = created_at()

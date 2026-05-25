@@ -57,3 +57,10 @@ class MagicLinkToken(Base):
         default=PURPOSE_SIGN_IN,
         server_default="sign_in",
     )
+    # Phase 4.A.13 — optional same-origin relative path the
+    # ``GET /auth/callback`` redirects to after minting the session
+    # cookie. NULL means "use the default ``/missions``". The route
+    # re-validates against the shared FE-route allowlist on read so a
+    # stale value minted under an older allowlist gets sanitised. Bound
+    # at 200 chars; the allowlist patterns are all shorter than this.
+    next_path: Mapped[str | None] = mapped_column(String(200), nullable=True)

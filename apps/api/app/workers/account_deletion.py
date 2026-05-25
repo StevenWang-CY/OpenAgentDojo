@@ -40,7 +40,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.data_export import DataExport
+from app.models.report_render import ReportRender
 from app.models.session import SessionRow
+from app.models.submission import Submission
 from app.models.user import User
 from app.observability import (
     account_deletion_grace_run_total,
@@ -196,6 +198,43 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:
                     exc,
                 )
 
+    # Phase 4.A.10 — also drop every ``report_renders.s3_key`` owned by
+    # this user. CASCADE on ``ON DELETE`` removes the row, but S3 lives
+    # outside the relational graph; without an explicit ``delete_object``
+    # the PDF/PNG bytes linger in the bucket forever. We walk the chain
+    # ``users → sessions → submissions → report_renders`` so a SQL JOIN
+    # stays linear in user state and doesn't accidentally pick up
+    # another user's renders.
+    render_rows = list(
+        (
+            await db.execute(
+                select(ReportRender)
+                .join(Submission, Submission.id == ReportRender.submission_id)
+                .join(SessionRow, SessionRow.id == Submission.session_id)
+                .where(
+                    SessionRow.user_id == user_id,
+                    ReportRender.s3_key.is_not(None),
+                )
+            )
+        ).scalars()
+    )
+    for render in render_rows:
+        if render.s3_key:
+            try:
+                delete_object(render.s3_key)
+                logger.info(
+                    "account_deletion: deleted report-render s3_key={} render_id={}",
+                    render.s3_key,
+                    render.id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "account_deletion: could not delete report-render {} key={} ({})",
+                    render.id,
+                    render.s3_key,
+                    exc,
+                )
+
     # ----- 3. Cascade-delete per-user rows + 4. tombstone ------------------
     # Use the full 32-char UUID hex (not a prefix) so the tombstone email +
     # handle are mathematically guaranteed unique across the bucket of
@@ -229,16 +268,11 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:
     from app.models.command_run import CommandRun
     from app.models.file_change import FileChange
     from app.models.magic_link_token import MagicLinkToken
-    from app.models.submission import Submission
     from app.models.supervision_event import SupervisionEvent
     from app.models.user_badge import UserBadge
 
     user_session_ids = list(
-        (
-            await db.execute(
-                select(SessionRow.id).where(SessionRow.user_id == user_id)
-            )
-        ).scalars()
+        (await db.execute(select(SessionRow.id).where(SessionRow.user_id == user_id))).scalars()
     )
     if user_session_ids:
         for child_model in (
@@ -250,16 +284,25 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:
             await db.execute(
                 sa_delete(child_model).where(child_model.session_id.in_(user_session_ids))
             )
-        await db.execute(
-            sa_delete(Submission).where(Submission.session_id.in_(user_session_ids))
+        # Phase 4.A.10 — drop report_renders before submissions so the
+        # FK chain stays clean on SQLite (which doesn't honour cascade
+        # at application time). The S3 objects were already removed in
+        # the explicit ``delete_object`` loop above.
+        submission_ids = list(
+            (
+                await db.execute(
+                    select(Submission.id).where(Submission.session_id.in_(user_session_ids))
+                )
+            ).scalars()
         )
-        await db.execute(
-            sa_delete(SessionRow).where(SessionRow.user_id == user_id)
-        )
+        if submission_ids:
+            await db.execute(
+                sa_delete(ReportRender).where(ReportRender.submission_id.in_(submission_ids))
+            )
+        await db.execute(sa_delete(Submission).where(Submission.session_id.in_(user_session_ids)))
+        await db.execute(sa_delete(SessionRow).where(SessionRow.user_id == user_id))
 
-    await db.execute(
-        sa_delete(MagicLinkToken).where(MagicLinkToken.user_id == user_id)
-    )
+    await db.execute(sa_delete(MagicLinkToken).where(MagicLinkToken.user_id == user_id))
     await db.execute(sa_delete(UserBadge).where(UserBadge.user_id == user_id))
     await db.execute(sa_delete(DataExport).where(DataExport.user_id == user_id))
 

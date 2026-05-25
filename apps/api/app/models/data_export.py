@@ -51,9 +51,7 @@ EXPORT_STATUS_EXPIRED: Final = "expired"
 EXPORT_TERMINAL_STATUSES: frozenset[str] = frozenset(
     {EXPORT_STATUS_READY, EXPORT_STATUS_FAILED, EXPORT_STATUS_EXPIRED}
 )
-EXPORT_IN_FLIGHT_STATUSES: frozenset[str] = frozenset(
-    {EXPORT_STATUS_QUEUED, EXPORT_STATUS_RUNNING}
-)
+EXPORT_IN_FLIGHT_STATUSES: frozenset[str] = frozenset({EXPORT_STATUS_QUEUED, EXPORT_STATUS_RUNNING})
 
 
 class DataExport(Base):
@@ -83,12 +81,8 @@ class DataExport(Base):
         nullable=False,
         server_default=func.now(),
     )
-    ready_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<DataExport {self.id} user={self.user_id} status={self.status}>"

@@ -42,12 +42,16 @@ async def test_handle_collision_appends_numeric_suffix(db_session) -> None:
     await create_magic_link(db_session, email="c.o.l.l.i.d.e@c.com", base_url="http://api.local")
     await db_session.commit()
 
+    # Phase 4.A.12 — ``create_magic_link`` normalises ``email`` to
+    # ``email.strip().lower()`` at the route boundary, so the SQLite
+    # test path (which stores TEXT, not CITEXT) sees the lowercased
+    # form regardless of the original casing.
     handles = {
         row.handle
         for row in (
             await db_session.execute(
                 select(User).where(
-                    User.email.in_(["collide@a.com", "Collide@b.com", "c.o.l.l.i.d.e@c.com"])
+                    User.email.in_(["collide@a.com", "collide@b.com", "c.o.l.l.i.d.e@c.com"])
                 )
             )
         )

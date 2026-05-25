@@ -6,6 +6,7 @@ still exists and a stray ``file.edited`` / ``command.run`` /
 ``apply_patch`` would mutate the workspace mid-grade and the submitted
 diff would no longer match the on-disk repo.
 """
+
 from __future__ import annotations
 
 import uuid

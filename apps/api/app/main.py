@@ -36,6 +36,7 @@ from app.profiles.router import router as profiles_router
 from app.reports.router import router as reports_router
 from app.reports.router import verify_router
 from app.sandbox.pool import SandboxPool
+from app.sessions.integrity import router as integrity_router
 from app.sessions.router import router as sessions_router
 from app.status.router import api_v1_router as status_v1_router
 from app.status.router import router as status_router
@@ -221,6 +222,11 @@ def create_app() -> FastAPI:
     app.include_router(status_v1_router, prefix="/api/v1")  # /api/v1/status alias
     app.include_router(missions_router, prefix="/api/v1")
     app.include_router(sessions_router, prefix="/api/v1")
+    # P0-8 — integrity endpoint lives in its own module so the test suite
+    # can import it without dragging the full sessions router graph along.
+    # Both routers share the ``/sessions`` prefix; FastAPI merges them by
+    # path, so this adds the single ``POST /events/integrity`` route.
+    app.include_router(integrity_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
     # ``/api/v1/me`` previously aliased ``/api/v1/auth/me`` via ``me_router``;
     # we dropped the alias because the FE (apps/web/lib/api.ts ``auth.me``)
@@ -243,6 +249,13 @@ def create_app() -> FastAPI:
 
     # ---- prometheus ----
     app.mount("/metrics", metrics_asgi_app())
+
+    # Phase 4.A.14 — stamp the cancel route's effective path on the app
+    # at construction time so middleware always sees a real value
+    # (lifespan is not invoked under ASGITransport-based tests; the
+    # lifespan re-stamps the same value at production boot). Fails loud
+    # if the named route is missing.
+    app.state.deletion_cancel_path = app.url_path_for("post_me_delete_cancel")
 
     return app
 

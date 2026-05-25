@@ -1,12 +1,15 @@
-"""Authentication routes: magic-link flow, logout, and /me.
+"""Authentication routes: magic-link flow, logout, /me, and GitHub OAuth.
 
 Endpoints
 ---------
-POST /auth/magic-link    — request a magic link email
-GET  /auth/callback      — exchange token → session cookie + redirect
-POST /auth/logout        — clear session cookie
-GET  /auth/me            — return current user + fresh CSRF token
-POST /auth/csrf-refresh  — force-rotate the CSRF cookie
+POST /auth/magic-link        — request a magic link email
+GET  /auth/callback          — exchange magic-link token → session cookie
+POST /auth/logout            — clear session cookie
+GET  /auth/me                — return current user + fresh CSRF token
+POST /auth/csrf-refresh      — force-rotate the CSRF cookie
+GET  /auth/github/available  — feature-flag probe for the FE button (P0-7)
+GET  /auth/github/start      — initiate GitHub OAuth (P0-7)
+GET  /auth/github/callback   — finish GitHub OAuth → session cookie (P0-7)
 
 The top-level ``/me`` alias was retired (see main.py) because the FE only
 calls ``/auth/me`` and the duplicate path doubled the OpenAPI surface.
@@ -17,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import secrets
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -33,12 +37,24 @@ from app.auth.email import (
     send_email_change_link,
     send_magic_link_email,
 )
+from app.auth.github_oauth import (
+    OAUTH_STATE_COOKIE_NAME,
+    GithubOAuthError,
+    OAuthStateReplayError,
+    build_authorize_url,
+    consume_oauth_state,
+    exchange_code_for_token,
+    fetch_user_profile,
+)
 from app.auth.hashing import hash_email_for_event
 from app.auth.magic_link import (
     consume_email_change_token,
     consume_magic_token,
     create_email_change_link,
     create_magic_link,
+    magic_link_resend_db_fallback_wait_seconds,
+    magic_link_resend_wait_seconds,
+    record_magic_link_resend,
 )
 from app.auth.session_cookie import (
     mint_session_cookie_for_user,
@@ -49,6 +65,7 @@ from app.config import get_settings
 from app.db.session import get_db
 from app.models.user import User
 from app.models.user_consent import AccountEvent, UserConsent
+from app.schemas.auth import GithubOAuthAvailability
 from app.schemas.consent import ConsentRecord, ConsentState, ConsentUpdate
 from app.schemas.user import (
     DataExportRead,
@@ -64,7 +81,7 @@ from app.schemas.user import (
 # Shared OpenAPI 403 declaration for every mutating P0-6 endpoint the
 # DeletionLockMiddleware can intercept. Spelled out once so adding a new
 # mutating route is a one-liner instead of a copy-paste hazard.
-_DELETION_LOCK_RESPONSE = {
+_DELETION_LOCK_RESPONSE: dict[int | str, dict[str, Any]] = {
     403: {
         "model": DeletionLockError,
         "description": (
@@ -81,11 +98,161 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 class MagicLinkRequest(BaseModel):
     email: EmailStr
+    # Phase 4.A.13 — optional same-origin relative path the callback
+    # redirects to after minting the session cookie. Validated against the
+    # same allowlist the GitHub OAuth callback uses (A.7); anything
+    # outside the allowlist is silently dropped and the callback falls
+    # back to ``/missions``. Storing the value on the token row means a
+    # user clicking a deep-link from email lands on the page they came
+    # from (e.g. ``/report/{uuid}``) instead of always bouncing to the
+    # catalog.
+    next: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # POST /auth/magic-link
 # ---------------------------------------------------------------------------
+
+
+async def _send_magic_link_with_throttle(
+    *,
+    email: str,
+    db: AsyncSession,
+    request: Request,
+    next_path: str | None = None,
+) -> int:
+    """Shared body for ``POST /auth/magic-link`` and ``/magic-link/resend``.
+
+    Returns the number of seconds the caller must wait before another
+    send will be honoured. ``0`` means "we just sent a link" (or
+    suppressed it because the address is reserved as
+    ``pending_email``); a positive value means we short-circuited and
+    the caller should reuse the previously-sent link.
+
+    Privacy invariants:
+
+    * No distinction between "user exists" and "user does not exist" is
+      surfaced — both paths return the same shape.
+    * The throttled branch bumps
+      ``magic_link_email_total{outcome="throttled"}`` so operators can
+      monitor abuse rates — callers cannot tell from the response that
+      they got throttled vs. that the send proceeded.
+    """
+    from loguru import logger as _logger
+
+    from app.observability import magic_link_email_total, magic_link_throttled_total
+
+    settings = get_settings()
+    # P0-10 / Phase 4.A.12 — normalize at the route boundary so the
+    # throttle key, the DB lookup, and the token row see the same
+    # canonical value. CITEXT on Postgres masks case differences, but
+    # the SQLite test path stores raw strings and the Redis throttle
+    # key is a SHA-256 of the raw input — without normalization the
+    # two paths drift.
+    email = email.strip().lower()
+    email_hash = hash_email_for_event(email, settings)
+
+    # First consult Redis. If Redis is unavailable, fall through to the
+    # DB-derived heuristic — the most-recent sign-in token row carries
+    # the precise mint time via ``expires_at - magic_link_ttl_minutes``.
+    # ``None`` distinguishes "Redis is down" from "Redis says no throttle"
+    # (P1 / Phase 4.A.17). Only the down case forces the DB fallback.
+    redis_wait = await magic_link_resend_wait_seconds(email)
+    if redis_wait is None:
+        wait = await magic_link_resend_db_fallback_wait_seconds(db, email)
+    else:
+        wait = redis_wait
+    if wait > 0:
+        # P1 / Phase 4.A.16 — dedicated counter so the "throttled" line
+        # doesn't share the ``magic_link_email_total{backend="unknown"}``
+        # bucket (which mis-labelled every throttle hit as an unknown
+        # transport). Operators page off this counter independently.
+        magic_link_throttled_total.inc()
+        _logger.info(
+            "auth.magic_link.throttled email_hash={} wait={}",
+            email_hash,
+            wait,
+        )
+        return wait
+
+    # Past the throttle gate — proceed with the real send.
+    base_url = (settings.web_origin or str(request.base_url)).rstrip("/")
+    magic_url = await create_magic_link(db, email=email, base_url=base_url, next_path=next_path)
+
+    # Commit the magic-link row BEFORE we await on outbound email so a
+    # slow/wedged SMTP backend cannot pin this DB connection (and its
+    # row-level locks) for the duration of the send timeout. The link is
+    # persistent in the DB the moment we commit, so the user can retry
+    # email delivery without losing the token.
+    await db.commit()
+
+    # Phase 4.A.5 — stamp the throttle IMMEDIATELY after the commit and
+    # BEFORE awaiting the SMTP backend. This closes a race where two
+    # concurrent ``/auth/magic-link/resend`` calls land within the
+    # backend's own send window: under the old "stamp-after-send"
+    # ordering the second caller saw an empty throttle (the first send
+    # hadn't yet stamped), proceeded past the gate, and queued a
+    # duplicate delivery. The throttle is advisory — it's stamped
+    # regardless of whether SMTP actually delivers — so a transient
+    # transport failure forces the user to either wait out the 60s
+    # cooldown or click the link from the prior email (the token row
+    # itself is durable post-commit).
+    await record_magic_link_resend(email)
+    _logger.info(
+        "auth.magic_link.throttle_stamped email_hash={}",
+        email_hash,
+    )
+
+    if magic_url is None:
+        # ``create_magic_link`` returns ``None`` when the requested
+        # address is currently reserved as ``pending_email`` on another
+        # account (P0-6 reverse-direction TOCTOU defence). The throttle
+        # is already stamped above; no SMTP dispatch on this branch.
+        return 0
+
+    try:
+        delivered = await asyncio.wait_for(
+            send_magic_link_email(
+                to_email=email,
+                magic_url=magic_url,
+                settings=settings,
+            ),
+            timeout=10.0,
+        )
+    except TimeoutError:
+        # Hashed email keeps the audit trail useful without leaking PII
+        # (the redaction filter would mask the raw value anyway, but we
+        # prefer to never even render it in the first place).
+        _logger.warning(
+            "[auth] magic-link email send timed out email_hash={} (token already persisted)",
+            email_hash,
+        )
+        delivered = False
+
+    if not delivered:
+        _logger.error(
+            "[auth] magic-link delivery FAILED email_hash={} (no backend confirmed delivery)",
+            email_hash,
+        )
+
+    # Touch the legacy counter so anyone grepping for the old name still
+    # gets a path to the rename. (No-op — kept as a reference, removed
+    # entirely once dashboards migrate.)
+    _ = magic_link_email_total
+    return 0
+
+
+def _safe_next_for_magic_link(raw: str | None) -> str | None:
+    """Phase 4.A.13 — apply the shared FE-route allowlist to a magic-link ``next``.
+
+    Returns the validated path or ``None``. Wrapped here so the route
+    can pass the validated value into ``create_magic_link`` directly;
+    invalid values are silently dropped (the callback then defaults to
+    ``/missions``).
+    """
+    from app.auth.github_oauth import _validate_return_to
+
+    return _validate_return_to(raw, get_settings())
 
 
 @router.post("/magic-link", status_code=204, summary="Request a magic login link")
@@ -100,62 +267,73 @@ async def post_magic_link(
     exists / email sent" and "delivery failed" so we can't be used as an
     account-existence oracle. Internal observability still records the
     failure via :func:`loguru.warning`.
+
+    P0-10 — the resend-throttle window
+    (:data:`MAGIC_LINK_RESEND_WINDOW_SECONDS`) is enforced on this path
+    too. When the same address re-requests within the window we still
+    return 204, but the email backend is NOT invoked. The
+    ``Retry-After`` header on the response surfaces the precise wait
+    time so the FE timer renders accurately without a separate
+    round-trip.
     """
-    settings = get_settings()
-    # The link in the email points at the *web* frontend's /auth/callback,
-    # which forwards to the API's /api/v1/auth/callback. Using request.base_url
-    # (= the API host) lands users on a 404 because /auth/callback is a
-    # Next.js route, not a backend one. Prefer settings.web_origin when set;
-    # fall back to request.base_url only when no web origin is configured.
-    base_url = (settings.web_origin or str(request.base_url)).rstrip("/")
-    magic_url = await create_magic_link(db, email=str(body.email), base_url=base_url)
+    wait = await _send_magic_link_with_throttle(
+        email=str(body.email),
+        db=db,
+        request=request,
+        next_path=_safe_next_for_magic_link(body.next),
+    )
+    response = Response(status_code=204)
+    response.headers["Retry-After"] = str(wait)
+    return response
 
-    # Commit the magic-link row BEFORE we await on outbound email — otherwise
-    # a slow/wedged SMTP backend pins this DB connection (and its row-level
-    # locks) for the duration of the send timeout. The link is persistent in
-    # the DB the moment we commit, so the user can retry email delivery
-    # without losing the token.
-    await db.commit()
 
-    from loguru import logger as _logger
+class MagicLinkResendResponse(BaseModel):
+    """JSON envelope for ``POST /auth/magic-link/resend`` (Phase 4.A.24 rename).
 
-    # ``create_magic_link`` returns ``None`` when the requested address is
-    # currently reserved as ``pending_email`` on another account (P0-6
-    # reverse-direction TOCTOU defence). In that window the endpoint MUST
-    # still return 204 — the standard privacy-preserving convention — but
-    # there is no token to deliver. The skip is already logged at info-
-    # level by ``create_magic_link``; we exit early to keep the email
-    # backend out of the picture entirely.
-    if magic_url is None:
-        return Response(status_code=204)
+    Previously ``_ResendResponse`` — the underscore prefix tagged it as
+    "private", but the schema is part of the public API contract and
+    appears in ``openapi.json``. Rename keeps the wire shape identical
+    (still a single ``wait_seconds: int``) but removes the misleading
+    leading underscore.
+    """
 
-    try:
-        delivered = await asyncio.wait_for(
-            send_magic_link_email(
-                to_email=str(body.email),
-                magic_url=magic_url,
-                settings=settings,
-            ),
-            timeout=10.0,
-        )
-    except TimeoutError:
-        # The token is already persisted; treat email-send timeout as a
-        # warning, not a request failure. The user can request a fresh link.
-        # Hashed email keeps the audit trail useful without leaking PII
-        # (the redaction filter would mask the raw value anyway, but we
-        # prefer to never even render it in the first place).
-        _logger.warning(
-            "[auth] magic-link email send timed out email_hash={} (token already persisted)",
-            hash_email_for_event(str(body.email), settings),
-        )
-        delivered = False
+    wait_seconds: int
 
-    if not delivered:
-        _logger.error(
-            "[auth] magic-link delivery FAILED email_hash={} (no backend confirmed delivery)",
-            hash_email_for_event(str(body.email), settings),
-        )
-    return Response(status_code=204)
+
+@router.post(
+    "/magic-link/resend",
+    response_model=MagicLinkResendResponse,
+    status_code=200,
+    summary=("Resend the magic-link email (60-second per-email cooldown, P0-10)"),
+)
+async def post_magic_link_resend(
+    body: MagicLinkRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Idempotent resend endpoint with a 60-second per-email cooldown.
+
+    Semantics — identical to ``POST /auth/magic-link`` except:
+
+    * The response body is ``{"wait_seconds": int}`` so the FE timer can
+      render without parsing headers separately.
+    * The ``Retry-After`` header is always set: ``0`` when a send
+      proceeded, the remaining wait when throttled.
+    * Privacy: the response shape is identical for "user exists" and
+      "user does not exist" — the endpoint cannot be used as an
+      account-existence oracle.
+    * Idempotent: calling twice in the same window does not consume two
+      slots; the second call returns the in-flight wait time.
+    """
+    wait = await _send_magic_link_with_throttle(
+        email=str(body.email),
+        db=db,
+        request=request,
+        next_path=_safe_next_for_magic_link(body.next),
+    )
+    response = JSONResponse(content={"wait_seconds": wait})
+    response.headers["Retry-After"] = str(wait)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +348,8 @@ async def get_callback(
     db: AsyncSession = Depends(get_db),
 ) -> RedirectResponse:
     settings = get_settings()
-    user = await consume_magic_token(db, token)
-    if user is None:
+    result = await consume_magic_token(db, token)
+    if result is None:
         raise HTTPException(
             status_code=400,
             detail={
@@ -179,10 +357,26 @@ async def get_callback(
                 "message": "invalid or expired magic link",
             },
         )
+    # Phase 4.A.13 — ``consume_magic_token`` returns ``(user, next_path)``.
+    # Tolerate the legacy ``User`` return shape from any monkeypatched
+    # test fixture so we don't regress existing tests.
+    if isinstance(result, tuple):
+        user, next_path = result
+    else:
+        user, next_path = result, None
 
-    # Redirect to the frontend /missions page (absolute URL so the browser
+    # Re-validate the persisted next_path against the live allowlist —
+    # the token row may have been minted under an older policy that has
+    # since tightened. Anything outside the allowlist falls back to
+    # ``/missions``.
+    from app.auth.github_oauth import _validate_return_to
+
+    safe_next = _validate_return_to(next_path, settings)
+    target_path = safe_next or "/missions"
+
+    # Redirect to the validated target (absolute URL so the browser
     # goes to the web origin, not the API origin).
-    frontend_url = f"{settings.web_origin.rstrip('/')}/missions"
+    frontend_url = f"{settings.web_origin.rstrip('/')}{target_path}"
     redirect = RedirectResponse(url=frontend_url, status_code=302)
     # Stamp the user's current session_epoch into the cookie so a future
     # "sign out everywhere" can invalidate this login alongside any other
@@ -265,7 +459,13 @@ def _build_me_response(user: User, request: Request) -> JSONResponse:
             "email": user.email,
             "handle": user.handle,
             "display_name": user.display_name,
+            # P0-7 — verified-via-GitHub identity surface. The FE's
+            # /account page renders the "Connected to GitHub" panel when
+            # ``github_verified_at`` is non-null.
             "github_login": user.github_login,
+            "github_avatar_url": user.github_avatar_url,
+            "github_html_url": user.github_html_url,
+            "github_verified_at": user.github_verified_at,
             "created_at": user.created_at,
             "last_login_at": user.last_login_at,
             "csrf_token": csrf_value,
@@ -411,12 +611,16 @@ async def get_me_consent(
     needs to render.
     """
     rows = (
-        await db.execute(
-            select(UserConsent)
-            .where(UserConsent.user_id == user.id)
-            .order_by(UserConsent.granted_at.desc())
+        (
+            await db.execute(
+                select(UserConsent)
+                .where(UserConsent.user_id == user.id)
+                .order_by(UserConsent.granted_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     # First-seen-wins under the ``ORDER BY granted_at DESC`` projection
     # yields the latest record per kind in a single pass; no need for a
@@ -547,9 +751,7 @@ async def post_me_consent(
 # the cross-stream view.
 
 
-def _build_account_event(
-    user_id, event_type: str, payload: dict
-) -> AccountEvent:
+def _build_account_event(user_id, event_type: str, payload: dict) -> AccountEvent:
     """Build an :class:`AccountEvent` ORM object for the caller to ``db.add``.
 
     Kept as a pure factory (no ``db`` parameter, no I/O) so callers can
@@ -837,9 +1039,7 @@ async def post_me_email_confirm(
         # HTTPException we're about to raise — which would wipe this
         # compensating change. The subsequent rollback by ``get_db`` runs
         # against an empty transaction and is a harmless no-op.
-        refetched = (
-            await db.execute(select(User).where(User.id == user_id))
-        ).scalar_one_or_none()
+        refetched = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
         if refetched is not None and refetched.pending_email is not None:
             refetched.pending_email = None
             db.add(refetched)
@@ -852,10 +1052,7 @@ async def post_me_email_confirm(
             status_code=409,
             detail={
                 "code": "email_taken_in_flight",
-                "message": (
-                    "This email was claimed by another account before you "
-                    "could confirm."
-                ),
+                "message": ("This email was claimed by another account before you could confirm."),
             },
         ) from None
     await db.refresh(user)
@@ -980,9 +1177,7 @@ async def post_me_data_export(
         try:
             queue.enqueue("app.workers.account_export.build_user_export", str(export.id))
         except Exception as exc:
-            logger.warning(
-                "data-export enqueue failed for {}, running inline: {}", export.id, exc
-            )
+            logger.warning("data-export enqueue failed for {}, running inline: {}", export.id, exc)
             queue = None
 
     if queue is None:
@@ -1210,3 +1405,378 @@ async def post_me_delete_cancel(
     account_deletions_cancelled_total.inc()
     logger.info("auth.deletion_cancelled user_id={}", user.id)
     return Response(status_code=204)
+
+
+# ===========================================================================
+# P0-7 — GitHub OAuth identity verification
+# ===========================================================================
+#
+# Three endpoints under ``/api/v1/auth/github/*`` implement the OAuth
+# round-trip with github.com. Design notes live in docs/security.md; in
+# short:
+#
+#   1. ``GET /auth/github/available`` — feature-flag probe. Returns
+#      ``{enabled: bool}`` so the FE can hide the button when the operator
+#      hasn't configured GITHUB_OAUTH_CLIENT_ID/SECRET.
+#   2. ``GET /auth/github/start?return_to=…`` — mints a state JWT
+#      (cookie-bound, 10-min TTL) and 302s to github.com/login/oauth.
+#   3. ``GET /auth/github/callback?code=…&state=…`` — verifies state,
+#      exchanges code for access token, fetches /user + /user/emails,
+#      upserts users by github_id (preferred) or by email (link path),
+#      mints a session cookie, redirects to the FE.
+#
+# Failure mode (any GithubOAuthError) → redirect to
+# ``/auth/sign-in?error=github_oauth_failed`` with a structured log line.
+# We never echo GitHub error strings back to the user.
+
+
+@router.get(
+    "/github/available",
+    response_model=GithubOAuthAvailability,
+    summary="Whether GitHub OAuth is configured on this deployment (P0-7)",
+)
+async def get_github_oauth_available() -> GithubOAuthAvailability:
+    """Cheap probe used by the FE sign-in page.
+
+    Returns ``{enabled: true}`` only when both ``GITHUB_OAUTH_CLIENT_ID``
+    and ``GITHUB_OAUTH_CLIENT_SECRET`` are set. The FE hides the
+    "Continue with GitHub" button when ``enabled`` is False so users
+    aren't shown a path that would 503 on click.
+    """
+    return GithubOAuthAvailability(enabled=get_settings().github_oauth_enabled)
+
+
+@router.get(
+    "/github/start",
+    summary="Begin the GitHub OAuth round-trip (P0-7)",
+)
+async def get_github_oauth_start(
+    request: Request,
+    return_to: str | None = Query(
+        default=None,
+        description=(
+            "Optional relative path the callback will redirect to after "
+            "minting the session cookie. Must start with ``/`` and not "
+            "with ``//``; otherwise dropped."
+        ),
+    ),
+) -> Response:
+    """Mint the state cookie and 302 to github.com/login/oauth/authorize.
+
+    Returns 503 with ``{code: 'oauth_unavailable'}`` when the operator has
+    not configured client_id + client_secret. The FE's
+    ``GET /auth/github/available`` probe is the primary defence against
+    showing the button in that case — this 503 is the defence-in-depth
+    fallback for clients that hit the URL directly.
+    """
+    settings = get_settings()
+    if not settings.github_oauth_enabled:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "oauth_unavailable",
+                "message": "github oauth is not configured on this deployment",
+            },
+        )
+
+    # Build the redirect response FIRST so ``issue_oauth_state`` can attach
+    # the cookie to it (RedirectResponse → 302). The state value is
+    # embedded in the URL we redirect to so GitHub can echo it back.
+    redirect = RedirectResponse(url="", status_code=302)
+    try:
+        state = _issue_state_with_response(redirect, settings, return_to=return_to)
+        authorize_url = build_authorize_url(state, settings)
+    except GithubOAuthError as exc:
+        # Should be unreachable because we checked github_oauth_enabled
+        # above, but keep the typed-error path consistent with the rest of
+        # the module.
+        logger.warning("auth.github.start failed: {}", exc.message)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": exc.code,
+                "message": "github oauth is not configured on this deployment",
+            },
+        )
+    redirect.headers["location"] = authorize_url
+    logger.info(
+        "auth.github.start.redirect ip={}",
+        request.client.host if request.client else "unknown",
+    )
+    return redirect
+
+
+def _issue_state_with_response(response: Response, settings, *, return_to: str | None) -> str:
+    """Indirection so the route handler can stay declarative.
+
+    Pure pass-through to :func:`app.auth.github_oauth.issue_oauth_state` —
+    isolated here so the test suite can monkeypatch this symbol if it
+    wants to assert on cookie attributes without re-implementing the JWT
+    minting logic.
+    """
+    from app.auth.github_oauth import issue_oauth_state as _issue
+
+    return _issue(response, settings, return_to=return_to)
+
+
+@router.get(
+    "/github/callback",
+    summary="Complete the GitHub OAuth round-trip (P0-7)",
+)
+async def get_github_oauth_callback(
+    request: Request,
+    code: str = Query(..., description="GitHub authorization code"),
+    state: str = Query(..., description="State value echoed by GitHub"),
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Verify state, exchange code, upsert user, mint session, redirect.
+
+    The "happy path" is:
+
+      1. ``consume_oauth_state`` verifies the state cookie matches the
+         ``?state=`` query and the JWT is unexpired.
+      2. ``exchange_code_for_token`` POSTs to github.com → access token.
+      3. ``fetch_user_profile`` GETs ``/user`` + ``/user/emails`` and
+         returns a normalised ``GithubProfile``.
+      4. We upsert the local user by ``github_id`` (primary key), falling
+         back to ``email`` for first-time link, falling back to a new row
+         if neither matches.
+      5. Mint a session cookie, set CSRF, redirect to
+         ``web_origin + (return_to or '/missions')``.
+
+    Any failure (state mismatch, expired JWT, GitHub 4xx/5xx, network
+    error) is logged with a structured ``auth.github.callback.failure``
+    line and redirects to
+    ``web_origin/auth/sign-in?error=github_oauth_failed``. We never echo
+    GitHub error strings back to the browser.
+    """
+    settings = get_settings()
+    if not settings.github_oauth_enabled:
+        return _github_oauth_error_redirect(settings, "oauth_unavailable")
+
+    # 1. Verify state. ``consume_oauth_state`` is async after Phase 4.A.6
+    # so the nonce single-use SETNX can await the Redis client.
+    try:
+        state_payload = await consume_oauth_state(request, settings, presented_state=state)
+    except OAuthStateReplayError as exc:
+        # Replay attempts get the same generic redirect every other OAuth
+        # failure does — but with a distinct log line so dashboards can
+        # alert on the pattern. Replays come from either a re-used
+        # bookmark / "back" navigation (benign double-click) or an
+        # attacker re-presenting a stolen callback URL (a real attack);
+        # we don't differentiate at the API layer.
+        logger.warning(
+            "auth.github.callback.failure stage=state code={} message={}",
+            exc.code,
+            exc.message,
+        )
+        return _github_oauth_error_redirect(settings, exc.code)
+    except HTTPException as exc:
+        raw_detail = exc.detail
+        detail: dict[str, object] = raw_detail if isinstance(raw_detail, dict) else {}
+        code_value = str(detail.get("code", "oauth_state_invalid"))
+        logger.warning("auth.github.callback.failure stage=state code={}", code_value)
+        return _github_oauth_error_redirect(settings, code_value)
+
+    # Phase 4.A.7 — re-validate the embedded ``return_to`` even though
+    # ``issue_oauth_state`` already filtered it at mint time. The state
+    # cookie is signed (so the value cannot be tampered with by the
+    # browser), but the allowlist may have tightened between mint and
+    # consume, and a stale cookie minted under an older allowlist must
+    # NOT pass through. Anything outside the current allowlist falls
+    # back to ``/missions``.
+    from app.auth.github_oauth import _validate_return_to
+
+    raw_return_to = state_payload.get("return_to")
+    return_to = _validate_return_to(
+        raw_return_to if isinstance(raw_return_to, str) else None,
+        settings,
+    )
+    if return_to is None:
+        return_to = "/missions"
+
+    # 2-3. Exchange code + fetch profile.
+    try:
+        access_token = await exchange_code_for_token(code, settings)
+        profile = await fetch_user_profile(access_token)
+    except GithubOAuthError as exc:
+        logger.warning(
+            "auth.github.callback.failure stage=github code={} message={}",
+            exc.code,
+            exc.message,
+        )
+        return _github_oauth_error_redirect(settings, exc.code)
+
+    # 4. Upsert. Three branches:
+    #    a) row exists with the same github_id → merge / refresh fields.
+    #    b) row exists with the same email but no github_id → link.
+    #    c) no row → create new row with handle derived from email/login.
+    user, linkage = await _upsert_user_from_github(db, profile)
+    await db.flush()
+    await db.commit()
+
+    # 5. Mint session cookie, CSRF, redirect.
+    redirect_url = f"{settings.web_origin.rstrip('/')}{return_to}"
+    response = RedirectResponse(url=redirect_url, status_code=302)
+    mint_session_cookie_for_user(response, user, settings)
+    issue_csrf_token(response, settings)
+    # Clear the short-lived state cookie now that we've consumed it.
+    response.delete_cookie(
+        key=OAUTH_STATE_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+    )
+    logger.info(
+        "auth.github.callback.success user_id={} github_id={} linkage={}",
+        user.id,
+        profile.github_id,
+        linkage,
+    )
+    return response
+
+
+def _github_oauth_error_redirect(settings, code: str) -> RedirectResponse:
+    """Build the standard sign-in error redirect for an OAuth failure.
+
+    Always lands on ``/auth/sign-in?error=github_oauth_failed`` so the FE
+    can render a single, generic error toast (GitHub error strings are
+    not safe to surface — they can leak internal identifiers). The
+    ``code`` parameter is kept for the log line that the caller emits
+    immediately before this helper.
+
+    Phase 4.A.23 — also clears the OAUTH_STATE_COOKIE on every failure
+    path so a stale state cookie can't shadow a subsequent retry (the
+    callback otherwise reads the old cookie, mismatches the fresh
+    ``?state=`` GitHub echoes back, and the user sees a second
+    ``oauth_state_mismatch`` failure that's confusing to debug).
+    """
+    _ = code  # logged by the caller, retained for symmetry with the redirect URL
+    base = settings.web_origin.rstrip("/")
+    response = RedirectResponse(
+        url=f"{base}/auth/sign-in?error=github_oauth_failed",
+        status_code=302,
+    )
+    response.delete_cookie(
+        key=OAUTH_STATE_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+    )
+    return response
+
+
+async def _upsert_user_from_github(
+    db: AsyncSession,
+    profile,
+) -> tuple[User, str]:
+    """Upsert a :class:`User` row from a fetched :class:`GithubProfile`.
+
+    Returns the user + a ``linkage`` string the route logs:
+
+      * ``"merged"`` — matched by ``github_id`` (the canonical key). The
+        same GitHub identity is re-signing in; we refresh login/avatar/
+        html_url/verified_at in case the user renamed on github.com or
+        rotated their avatar.
+      * ``"linked"`` — matched by email but ``github_id`` was unset. The
+        user previously signed up via magic-link; we attach the verified
+        GitHub identity now.
+      * ``"new"`` — no existing user, create a fresh row. Handle is
+        derived from the GitHub login (lowercased + sanitised); collisions
+        fall through to the standard ``-2``, ``-3``, … suffix path.
+    """
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    from app.auth.magic_link import _allocate_handle, _slugify_handle
+
+    now = _datetime.now(_UTC)
+
+    # Phase 4.A.12 — normalize at the boundary. ``fetch_user_profile``
+    # already lower-cases the primary email it picks, but defensive
+    # normalization here keeps the SQLite test path (where the column
+    # is plain TEXT, not CITEXT) consistent with the Postgres
+    # case-insensitive upsert.
+    profile_email = (profile.email or "").strip().lower()
+
+    # a) by github_id (preferred).
+    existing_by_id = (
+        await db.execute(select(User).where(User.github_id == profile.github_id))
+    ).scalar_one_or_none()
+    if existing_by_id is not None:
+        existing_by_id.github_login = profile.login
+        existing_by_id.github_avatar_url = profile.avatar_url
+        existing_by_id.github_html_url = profile.html_url
+        existing_by_id.github_verified_at = now
+        existing_by_id.last_login_at = now
+        db.add(existing_by_id)
+        return existing_by_id, "merged"
+
+    # b) by email (link path).
+    existing_by_email = (
+        await db.execute(select(User).where(User.email == profile_email))
+    ).scalar_one_or_none()
+    if existing_by_email is not None:
+        existing_by_email.github_id = profile.github_id
+        existing_by_email.github_login = profile.login
+        existing_by_email.github_avatar_url = profile.avatar_url
+        existing_by_email.github_html_url = profile.html_url
+        existing_by_email.github_verified_at = now
+        existing_by_email.last_login_at = now
+        # Backfill display_name from GitHub's ``name`` field if the user
+        # never set one locally — a tiny ergonomic win on first link.
+        if not existing_by_email.display_name and profile.name:
+            existing_by_email.display_name = profile.name[:120]
+        db.add(existing_by_email)
+        return existing_by_email, "linked"
+
+    # c) no row — create fresh.
+    base_handle = (
+        _slugify_handle(profile_email)
+        if profile_email
+        else (_slugify_handle(profile.login) or "user")
+    )
+    # Prefer the GitHub login when it produces a non-default slug — it
+    # tends to be more recognisable on the public profile URL.
+    github_slug = _slugify_handle(profile.login)
+    if github_slug and github_slug != "user":
+        base_handle = github_slug
+    handle = await _allocate_handle(db, base_handle)
+    display_name = profile.name[:120] if profile.name else None
+    user = User(
+        email=profile_email,
+        handle=handle,
+        display_name=display_name,
+        github_id=profile.github_id,
+        github_login=profile.login,
+        github_avatar_url=profile.avatar_url,
+        github_html_url=profile.html_url,
+        github_verified_at=now,
+        last_login_at=now,
+    )
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Race: a concurrent magic-link or another OAuth callback inserted
+        # the same email between our SELECT and INSERT. Roll back, re-fetch,
+        # then attach github_id to the now-existing row.
+        await db.rollback()
+        refetched = (
+            await db.execute(select(User).where(User.email == profile_email))
+        ).scalar_one_or_none()
+        if refetched is None:
+            raise
+        refetched.github_id = profile.github_id
+        refetched.github_login = profile.login
+        refetched.github_avatar_url = profile.avatar_url
+        refetched.github_html_url = profile.html_url
+        refetched.github_verified_at = now
+        refetched.last_login_at = now
+        if not refetched.display_name and profile.name:
+            refetched.display_name = profile.name[:120]
+        db.add(refetched)
+        return refetched, "linked"
+    return user, "new"

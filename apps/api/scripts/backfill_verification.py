@@ -122,9 +122,7 @@ async def _main(apply: bool, reseal: bool, limit: int | None) -> int:
 
         outcomes: dict[str, int] = {}
         for row in rows:
-            result = await _stamp_one(
-                db, row, secret=secret, apply=apply, reseal=reseal
-            )
+            result = await _stamp_one(db, row, secret=secret, apply=apply, reseal=reseal)
             outcomes[result] = outcomes.get(result, 0) + 1
 
         if apply:

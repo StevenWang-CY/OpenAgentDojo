@@ -35,9 +35,7 @@ async def test_publish_clears_cached_client_on_connection_error() -> None:
     boom = redis_exc.ConnectionError("connection refused")
     events_module._redis_client = _RaisingClient(boom)
     try:
-        ok = await events_module._publish(
-            events_module._redis_client, "events:session:x", "{}"
-        )
+        ok = await events_module._publish(events_module._redis_client, "events:session:x", "{}")
         assert ok is False
         # The cached client MUST have been cleared so the next get_redis call
         # rebuilds against the recovered Redis (or re-fails cleanly with its
@@ -53,9 +51,7 @@ async def test_publish_clears_cached_client_on_timeout_error() -> None:
 
     events_module._redis_client = _RaisingClient(redis_exc.TimeoutError("slow"))
     try:
-        ok = await events_module._publish(
-            events_module._redis_client, "events:session:x", "{}"
-        )
+        ok = await events_module._publish(events_module._redis_client, "events:session:x", "{}")
         assert ok is False
         assert events_module._redis_client is None
     finally:
@@ -69,9 +65,7 @@ async def test_publish_keeps_cached_client_on_unrelated_error() -> None:
     a full reconnect storm."""
     events_module._redis_client = _RaisingClient(ValueError("bad payload"))
     try:
-        ok = await events_module._publish(
-            events_module._redis_client, "events:session:x", "{}"
-        )
+        ok = await events_module._publish(events_module._redis_client, "events:session:x", "{}")
         assert ok is False
         # Cache survives.
         assert events_module._redis_client is not None

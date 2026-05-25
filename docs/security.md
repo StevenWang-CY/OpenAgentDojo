@@ -69,8 +69,14 @@ See [docs/runbooks/rotate-secrets.md](./runbooks/rotate-secrets.md) for rotation
 
 - Magic-link sign-in via Resend. Tokens are signed 30-minute JWTs, single-use (recorded in `magic_link_tokens.used_at`).
 - No password storage.
-- GitHub OAuth available post-MVP; same user record matched by verified email.
-- No PII beyond email + `display_name` for MVP.
+- **GitHub OAuth (P0-7)** is now a primary sign-in option. Off by default; the operator enables it by setting `GITHUB_OAUTH_CLIENT_ID` + `GITHUB_OAUTH_CLIENT_SECRET`. When unset the FE's `auth.isGithubOAuthAvailable()` probe returns `false` and the sign-in page hides the button — the backend's `GET /auth/github/start` likewise returns 503 `oauth_unavailable` as a defence-in-depth.
+- OAuth flow:
+  1. `GET /api/v1/auth/github/start?return_to=…` mints a `state` JWT (HS256-signed with `SESSION_SECRET`, 10-min TTL, carries a 16-byte nonce + an optional `return_to` validated to be a same-origin relative path) and sets it as the `arena_oauth_state` cookie (HttpOnly, Secure in non-dev, SameSite=Lax, 10-min Max-Age). It then 302s the browser to `github.com/login/oauth/authorize` with `scope=read:user user:email`.
+  2. GitHub redirects the user back to `GET /api/v1/auth/github/callback?code=…&state=…`. The route verifies the cookie equals the `?state=` (CSRF / replay defence), JWT-verifies it, exchanges the code for an access token via `POST https://github.com/login/oauth/access_token`, and `GET`s `/user` + `/user/emails`. We refuse to attach an unverified email — the user must mark their primary email verified on github.com first.
+  3. The callback upserts the local user by `github_id` (preferred), or by email (link path), or creates a fresh row. It mints the session cookie + CSRF token and 302s to `web_origin + (return_to or '/missions')`, clearing the state cookie on the response.
+- **Failure mode:** any OAuth failure (state mismatch, expired JWT, GitHub 4xx, network error, no verified primary email) is logged with a structured `auth.github.callback.failure stage=… code=…` line and redirects to `web_origin/auth/sign-in?error=github_oauth_failed`. GitHub error strings are never echoed back to the browser.
+- **CHECK invariant:** the DB enforces `(github_id IS NULL) = (github_verified_at IS NULL)` so the FE's verified-badge logic can branch on either column with the same truth.
+- No PII beyond email + `display_name` for MVP. The GitHub-derived columns (`github_login`, `github_avatar_url`, `github_html_url`) are public-by-design — they mirror what already lives on `github.com/$login`.
 
 ## Logging & privacy
 
@@ -87,6 +93,24 @@ See [docs/runbooks/rotate-secrets.md](./runbooks/rotate-secrets.md) for rotation
 ## Incident response
 
 If you suspect a security incident — leaked token, suspicious authentication pattern, sandbox-escape evidence — follow [docs/runbooks/incident-response.md](./runbooks/incident-response.md). Security incidents are always SEV1.
+
+## Operator checklist
+
+Per-environment hygiene every operator should confirm before opening
+the gates on a new deployment. Each row maps to a config-validator
+check that refuses to boot the API when the invariant fails.
+
+| # | Item | How to verify |
+|---|---|---|
+| 1 | `SESSION_SECRET` is a fresh 64+ char random string (not the `dev-`-prefixed default) | `python -c "import secrets; print(secrets.token_urlsafe(64))"` then set via Fly secrets |
+| 2 | `VERIFY_SECRET` is set, ≥32 chars, distinct from `SESSION_SECRET` and `SHARE_TOKEN_SECRET` | `apps/api/app/config.py::_validate_verify_secret` enforces; the runbook check is `fly secrets list \| grep VERIFY_SECRET` |
+| 3 | `SHARE_TOKEN_SECRET` is set and distinct from `SESSION_SECRET` | Same pattern as VERIFY_SECRET above |
+| 4 | `IP_HASH_SALT` is set, ≥32 chars, not `dev-`-prefixed | Required for the cookie-consent hashed-IP audit row |
+| 5 | `ALLOWED_HOSTS` is an explicit non-wildcard list | `"*"` is permissive and the config validator refuses to boot on it in staging/production |
+| 6 | SMTP `SMTP_VERIFY_CERTS=true` outside dev | Forced on by `_validate_for_environment`; double-check the Fly secret if your transport is anything other than Mailhog |
+| 7 | GitHub OAuth credentials configured (if enabled) | `GITHUB_OAUTH_CLIENT_ID` + `GITHUB_OAUTH_CLIENT_SECRET` are either **both** set or **both** empty; the validator refuses the half-configured case so the FE never renders a button that immediately 503s. The redirect URI registered on github.com matches `${WEB_ORIGIN}/api/v1/auth/github/callback` (or the explicit `GITHUB_OAUTH_REDIRECT_URI` override) |
+| 8 | Magic-link backend monitored | Both `magic_link_email_total` and `magic_link_throttled_total` are scraped by Prometheus and surfaced on the deliverability dashboard. See [`docs/runbooks/email-deliverability.md`](./runbooks/email-deliverability.md) |
+| 9 | Bedrock / Anthropic credentials live in Fly secrets, not the repo | `git grep -n "ABSK"` returns nothing; CI also asserts this |
 
 ## References
 

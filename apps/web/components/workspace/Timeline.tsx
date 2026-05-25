@@ -312,6 +312,44 @@ function render(event: SupervisionEvent): RenderedEvent {
         label: "Consent revoked",
         detail: event.payload.kind,
       };
+    // P0-8 — integrity signals for proctored sessions. Each kind carries
+    // a distinct shape; the timeline summarises them so a reviewer can
+    // see the cadence at a glance.
+    case "tab.blurred":
+      return {
+        icon: AlertTriangle,
+        tone: "warning",
+        label: "Tab blurred",
+        detail: `${event.payload.seconds_visible_before}s visible before`,
+      };
+    case "tab.focused":
+      return {
+        icon: CheckCircle2,
+        tone: "neutral",
+        label: "Tab focused",
+        detail: `${event.payload.seconds_blurred}s blurred`,
+      };
+    case "paste.large":
+      return {
+        icon: AlertTriangle,
+        tone: "warning",
+        label: "Large paste",
+        detail: `${event.payload.chars} chars → ${event.payload.target}`,
+      };
+    case "focus.lost":
+      return {
+        icon: AlertTriangle,
+        tone: "warning",
+        label: "Focus lost",
+        detail: event.payload.element_id || "unknown element",
+      };
+    case "proctored.violation":
+      return {
+        icon: XCircle,
+        tone: "danger",
+        label: "Proctored violation",
+        detail: `${event.payload.kind}: ${event.payload.detail}`,
+      };
     default:
       return unreachable(event);
   }

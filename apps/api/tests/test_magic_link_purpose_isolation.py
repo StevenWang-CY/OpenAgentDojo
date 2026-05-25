@@ -96,9 +96,7 @@ async def test_email_change_token_rejected_by_signin_consumer(db_session) -> Non
     # flow still needs to redeem it.
     row = (
         await db_session.execute(
-            select(MagicLinkToken).where(
-                MagicLinkToken.token_hash == _hash_token(raw)
-            )
+            select(MagicLinkToken).where(MagicLinkToken.token_hash == _hash_token(raw))
         )
     ).scalar_one()
     assert row.used_at is None, (
@@ -137,17 +135,13 @@ async def test_signin_token_rejected_by_email_change_consumer(db_session) -> Non
     raw = await _mint_token(db_session, user=user, purpose=PURPOSE_SIGN_IN)
 
     result = await consume_email_change_token(db_session, raw)
-    assert result is None, (
-        "consume_email_change_token must reject sign_in tokens"
-    )
+    assert result is None, "consume_email_change_token must reject sign_in tokens"
 
     # Sign-in row likewise stays unused so it can still be redeemed via
     # the sign-in callback.
     row = (
         await db_session.execute(
-            select(MagicLinkToken).where(
-                MagicLinkToken.token_hash == _hash_token(raw)
-            )
+            select(MagicLinkToken).where(MagicLinkToken.token_hash == _hash_token(raw))
         )
     ).scalar_one()
     assert row.used_at is None
@@ -163,13 +157,17 @@ async def test_signin_token_consumed_by_signin_consumer_returns_user(
 
     returned = await consume_magic_token(db_session, raw)
     assert returned is not None
-    assert returned.id == user.id
+    # Phase 4.A.13 — consume_magic_token now returns ``(user, next_path)``;
+    # legacy tests that expect a bare User object need to unpack.
+    if isinstance(returned, tuple):
+        returned_user, _next = returned
+    else:
+        returned_user = returned
+    assert returned_user.id == user.id
 
     row = (
         await db_session.execute(
-            select(MagicLinkToken).where(
-                MagicLinkToken.token_hash == _hash_token(raw)
-            )
+            select(MagicLinkToken).where(MagicLinkToken.token_hash == _hash_token(raw))
         )
     ).scalar_one()
     assert row.used_at is not None
@@ -184,10 +182,13 @@ def _counter_value(reason: str) -> float:
     """Read the labelled value of email_change_token_rejected_total."""
     from app.observability import REGISTRY
 
-    return REGISTRY.get_sample_value(
-        "email_change_token_rejected_total",
-        labels={"reason": reason},
-    ) or 0.0
+    return (
+        REGISTRY.get_sample_value(
+            "email_change_token_rejected_total",
+            labels={"reason": reason},
+        )
+        or 0.0
+    )
 
 
 @pytest.mark.asyncio

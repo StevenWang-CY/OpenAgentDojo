@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Final
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -40,12 +41,8 @@ RENDER_STATUS_RUNNING: Final = "running"
 RENDER_STATUS_READY: Final = "ready"
 RENDER_STATUS_FAILED: Final = "failed"
 
-RENDER_TERMINAL_STATUSES: frozenset[str] = frozenset(
-    {RENDER_STATUS_READY, RENDER_STATUS_FAILED}
-)
-RENDER_IN_FLIGHT_STATUSES: frozenset[str] = frozenset(
-    {RENDER_STATUS_QUEUED, RENDER_STATUS_RUNNING}
-)
+RENDER_TERMINAL_STATUSES: frozenset[str] = frozenset({RENDER_STATUS_READY, RENDER_STATUS_FAILED})
+RENDER_IN_FLIGHT_STATUSES: frozenset[str] = frozenset({RENDER_STATUS_QUEUED, RENDER_STATUS_RUNNING})
 
 # Kind enum.
 RENDER_KIND_PDF: Final = "pdf"
@@ -90,8 +87,19 @@ class ReportRender(Base):
         nullable=False,
         server_default=func.now(),
     )
-    ready_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Phase 4.A.20 — distinguishes a system-initiated first render (the
+    # auto-render fired by ``GET /reports/{id}/render`` on a missing
+    # row, ``force=False``) from a user-initiated force-rerender (the
+    # explicit ``POST /reports/{id}/render``, ``force=True``). The daily
+    # cap at ``Settings.report_render_force_daily_cap`` only counts
+    # rows where ``force=True`` so a freshly-graded report's first
+    # automatic render doesn't burn the user's force-rerender budget.
+    force: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
     )
 
     def __repr__(self) -> str:  # pragma: no cover

@@ -51,8 +51,7 @@ def test_score_engine_emits_exactly_the_seven_dimensions() -> None:
     assert tuple(report.dimensions.keys()) == DIMENSION_NAMES
     for name, max_score in RUBRIC_DIMENSIONS:
         assert report.dimensions[name].max_score == max_score, (
-            f"dimension {name!r} max={report.dimensions[name].max_score} "
-            f"!= central {max_score}"
+            f"dimension {name!r} max={report.dimensions[name].max_score} != central {max_score}"
         )
 
 

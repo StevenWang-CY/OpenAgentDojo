@@ -24,6 +24,18 @@ export const env = {
    * Empty string disables product analytics (paired with posthogKey).
    */
   posthogHost: process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "",
+  /**
+   * P0-7 — build-time override for the GitHub OAuth CTA on the sign-in
+   * post-send card. The canonical signal is the runtime probe
+   * ``auth.isGithubOAuthAvailable()``; this flag is a deliberate escape
+   * hatch for preview builds that need to render the button before the
+   * backend feature flag has rolled. ``true`` only when the env var is
+   * literally ``"true"`` (case-insensitive); any other value disables
+   * the override and the runtime probe wins.
+   */
+  githubOauthEnabledBuildtime:
+    (process.env.NEXT_PUBLIC_GITHUB_OAUTH_ENABLED ?? "").toLowerCase() ===
+    "true",
 } as const;
 
 function trimTrailingSlash(s: string): string {

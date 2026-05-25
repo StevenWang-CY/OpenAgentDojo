@@ -208,7 +208,12 @@ def build_envelope(
         "effective_max": int(effective_max),
         "missed_failure_mode": bool(score_report.get("missed_failure_mode", False)),
         "score_cap_reason": _coerce_str(getattr(submission, "score_cap_reason", None)),
-        "proctored": False,  # Reserved for future P0-7 / P0-8 integration.
+        # P0-8 — read the persisted ``submission.verified`` (mirrored from
+        # ``session.mode == 'proctored'`` at grade time). The previous
+        # placeholder ``False`` is intentionally retained as the default
+        # for any caller passing an envelope-stub without the attribute
+        # (e.g. legacy fixtures that predate the column).
+        "proctored": bool(getattr(submission, "verified", False)),
         "attempt_index": _resolve_attempt_index(session),
         "graded_at": _coerce_iso(getattr(submission, "created_at", None)),
     }

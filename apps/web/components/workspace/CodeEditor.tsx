@@ -75,6 +75,16 @@ export function CodeEditor({
   const store = useWorkspaceStore(sessionId);
   const fileBuffers = store((s) => s.fileBuffers);
   const setActiveFileContent = store((s) => s.setActiveFileContent);
+  // P0-9 — find-in-files drives the editor to a specific line via
+  // ``workspaceStore.activeLineFocus``. We read the value, reveal it once
+  // the editor has rendered, then clear it from the store so a later
+  // open of the same file doesn't keep stealing focus.
+  const activeLineFocus = store((s) => s.activeLineFocus);
+  const setActiveLineFocus = store((s) => s.setActiveLineFocus);
+  // ``editor.IStandaloneCodeEditor`` from Monaco — typed as ``any`` because
+  // we don't bundle ``monaco-editor`` types in this component and the
+  // surface we touch is tiny (``revealLineInCenter`` + ``setPosition``).
+  const editorRef = React.useRef<unknown>(null);
 
   const fileQuery = useQuery({
     queryKey: ["file", sessionId, path],
@@ -96,6 +106,31 @@ export function CodeEditor({
     setActiveFileContent(path, fileQuery.data.content);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, fileQuery.data]);
+
+  // P0-9 — honour a pending line-focus when the file content lands. Runs
+  // after the editor is already mounted (the onMount handler covers the
+  // first-mount case) so quick-open + find-in-files flows both reveal the
+  // requested line.
+  React.useEffect(() => {
+    if (!activeLineFocus || activeLineFocus <= 0) return;
+    if (!path) return;
+    if (!fileQuery.data) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+    try {
+      const ed = editor as {
+        revealLineInCenter: (line: number) => void;
+        setPosition: (pos: { lineNumber: number; column: number }) => void;
+        focus: () => void;
+      };
+      ed.revealLineInCenter(activeLineFocus);
+      ed.setPosition({ lineNumber: activeLineFocus, column: 1 });
+      ed.focus();
+    } catch {
+      // ignore — best-effort focus
+    }
+    setActiveLineFocus(null);
+  }, [activeLineFocus, path, fileQuery.data, setActiveLineFocus]);
 
   const [savingState, setSavingState] = React.useState<"idle" | "saving" | "saved">(
     "idle"
@@ -260,6 +295,26 @@ export function CodeEditor({
             language={languageFor(path)}
             value={value}
             onChange={handleEditorChange}
+            onMount={(editor) => {
+              editorRef.current = editor;
+              // If a search-driven line focus was already queued before the
+              // editor mounted, honour it now and clear the store flag.
+              if (activeLineFocus && activeLineFocus > 0) {
+                try {
+                  const ed = editor as {
+                    revealLineInCenter: (line: number) => void;
+                    setPosition: (pos: { lineNumber: number; column: number }) => void;
+                    focus: () => void;
+                  };
+                  ed.revealLineInCenter(activeLineFocus);
+                  ed.setPosition({ lineNumber: activeLineFocus, column: 1 });
+                  ed.focus();
+                } catch {
+                  // ignore — best-effort focus, never block the editor mount
+                }
+                setActiveLineFocus(null);
+              }
+            }}
             theme={resolvedTheme === "dark" ? "vs-dark" : "light"}
             options={{
               fontFamily:

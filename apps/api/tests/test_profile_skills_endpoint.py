@@ -30,9 +30,7 @@ async def _bind_engine(db_engine):
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return session_module.AsyncSessionLocal
@@ -57,9 +55,7 @@ def _basic_report(missed: bool, final: int = 24) -> dict:
     }
 
 
-async def _seed_session(
-    *, db, user_id, mission_id, missed, final, completed_at
-) -> None:
+async def _seed_session(*, db, user_id, mission_id, missed, final, completed_at) -> None:
     sess = SessionRow(
         user_id=user_id,
         mission_id=mission_id,
@@ -103,9 +99,7 @@ async def test_skills_aggregates_attempts_and_passes(db_engine) -> None:
     Session = await _bind_engine(db_engine)
     user_id = uuid.uuid4()
     async with Session() as db:
-        user = User(
-            id=user_id, email="me@example.com", handle="me", display_name="Me"
-        )
+        user = User(id=user_id, email="me@example.com", handle="me", display_name="Me")
         db.add(user)
         db.add(
             _make_mission(
@@ -179,11 +173,7 @@ async def test_skills_lists_failure_modes_without_attempts(db_engine) -> None:
     Session = await _bind_engine(db_engine)
     user_id = uuid.uuid4()
     async with Session() as db:
-        db.add(
-            User(
-                id=user_id, email="me@example.com", handle="me", display_name="Me"
-            )
-        )
+        db.add(User(id=user_id, email="me@example.com", handle="me", display_name="Me"))
         db.add(
             _make_mission(
                 id_="security-validation-removed",
@@ -215,9 +205,7 @@ async def test_skills_groups_multiple_missions_per_failure_mode(
     Session = await _bind_engine(db_engine)
     user_id = uuid.uuid4()
     async with Session() as db:
-        db.add(
-            User(id=user_id, email="m@e.com", handle="m", display_name="M")
-        )
+        db.add(User(id=user_id, email="m@e.com", handle="m", display_name="M"))
         db.add(_make_mission(id_="m1", fm="cast_via_as_any", title="M1"))
         db.add(_make_mission(id_="m2", fm="cast_via_as_any", title="M2"))
         await db.commit()

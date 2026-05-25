@@ -31,9 +31,7 @@ async def _seed(
     from app.db import session as session_module
 
     session_module.get_engine.cache_clear()  # type: ignore[attr-defined]
-    session_module.AsyncSessionLocal = async_sessionmaker(
-        bind=db_engine, expire_on_commit=False
-    )
+    session_module.AsyncSessionLocal = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -92,12 +90,14 @@ async def _seed(
             from app.config import get_settings
 
             secret = verify_secret(get_settings())
+
             class _S:
                 id = submission_id
                 total_score = 85
                 score_cap_reason = None
                 score_report = sub.score_report
                 created_at = datetime.now(UTC)
+
             envelope = build_envelope(
                 submission=_S(),
                 session=SessionRow(

@@ -69,9 +69,7 @@ except Exception:  # pragma: no cover
 # Columns scrubbed from ``user.json`` because they leak no-value-to-user
 # internals (epoch is server-only state; tutorial_replay_count is content-
 # tuning telemetry). The README documents the omission.
-_SCRUBBED_USER_FIELDS: frozenset[str] = frozenset(
-    {"session_epoch", "tutorial_replay_count"}
-)
+_SCRUBBED_USER_FIELDS: frozenset[str] = frozenset({"session_epoch", "tutorial_replay_count"})
 
 
 def _upload_zip(s3_key: str, zip_path: str) -> None:
@@ -127,6 +125,22 @@ async def _async_build_user_export(export_id: uuid.UUID, *, inline: bool = False
         ).scalar_one_or_none()
         if export is None:
             logger.warning("account_export: row {} disappeared before build", export_id)
+            return
+
+        # Phase 4.A.9 — idempotent skip on terminal states. RQ
+        # re-delivery (acknowledgement loss) or a stale in-process
+        # fallback re-enqueue could re-fire the worker against an
+        # already-built archive. Re-running would either overwrite a
+        # known-good zip with a fresher (but identical) one OR flip a
+        # failed export back to ``running`` and lose the original
+        # ``error`` string. ``queued`` → ``running`` stays the
+        # legitimate transition this worker owns.
+        if export.status in (EXPORT_STATUS_READY, EXPORT_STATUS_FAILED):
+            logger.info(
+                "account_export: idempotent skip for export={} status={} (already terminal)",
+                export_id,
+                export.status,
+            )
             return
 
         user = (
@@ -278,19 +292,23 @@ async def _build_zip(
 
             if _UserConsentCls is not None and _AccountEventCls is not None:
                 consents = (
-                    await db.execute(
-                        select(_UserConsentCls).where(
-                            _UserConsentCls.user_id == user.id
+                    (
+                        await db.execute(
+                            select(_UserConsentCls).where(_UserConsentCls.user_id == user.id)
                         )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 account_events = (
-                    await db.execute(
-                        select(_AccountEventCls).where(
-                            _AccountEventCls.user_id == user.id
+                    (
+                        await db.execute(
+                            select(_AccountEventCls).where(_AccountEventCls.user_id == user.id)
                         )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 for row in consents:
                     assert row.user_id == user.id
                 for row in account_events:
@@ -327,9 +345,7 @@ async def _build_zip(
 
 async def _fetch_user_sessions(db: AsyncSession, user_id: uuid.UUID) -> list[SessionRow]:
     return list(
-        (
-            await db.execute(select(SessionRow).where(SessionRow.user_id == user_id))
-        ).scalars()
+        (await db.execute(select(SessionRow).where(SessionRow.user_id == user_id))).scalars()
     )
 
 
