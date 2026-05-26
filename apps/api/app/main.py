@@ -80,7 +80,11 @@ async def _render_sweep_loop() -> None:
         except asyncio.CancelledError:
             return
         except Exception as exc:  # sweep must keep ticking past per-iteration errors
-            logger.warning("report_render_sweep_iteration_failed: {}", exc)
+            # ERROR (was WARNING): a stuck render sweep silently consumes the
+            # user's force-rerender budget without alerting on-call. The loop
+            # already recovers on the next tick — the log level just makes
+            # sure operators see the failure rate on dashboards.
+            logger.error("report_render_sweep_iteration_failed: {}", exc)
 
 
 @asynccontextmanager

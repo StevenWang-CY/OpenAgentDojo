@@ -66,10 +66,18 @@ def _payload_size_bytes(payload: dict[str, Any]) -> int | None:
     Uses the same ``default=str`` coercion as the publish path so what we
     measure here matches what hits Redis (and the DB column, which stores the
     same dict but as JSONB).
+
+    The except set matches the publish-time catch in :meth:`EventEmitter.emit`
+    so a payload that's safe to size is also safe to publish — and a payload
+    that breaks here lets emit fall through to its own catch and persist the
+    DB row without 500-ing the request. ``AttributeError`` covers wrappers
+    whose ``__str__`` raises during ``default=str`` coercion (e.g. a
+    half-initialised ``Path`` subclass); ``ValueError`` covers custom
+    stringifiers that reject specific shapes.
     """
     try:
         return len(json.dumps(payload, default=str).encode("utf-8"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
         return None
 
 
@@ -312,10 +320,17 @@ class EventEmitter:
         channel = f"events:session:{session_id}"
         # ``default=str`` coerces datetimes, Paths, UUIDs and any other
         # stringifiable object so an upstream caller can't silently break
-        # the publish path just by passing a richer payload. On the rare
-        # raise (a custom __repr__ that re-throws, for example) we keep
-        # the DB row but drop the publish — subscribers will catch up via
-        # the next reconnect's backfill.
+        # the publish path just by passing a richer payload. We keep the
+        # DB row but drop the publish on any serialisation raise —
+        # subscribers will catch up via the next reconnect's backfill.
+        # The catch is intentionally broader than ``TypeError``:
+        # ``json.dumps(default=str)`` ends up calling ``str(obj)`` for
+        # unknown types, and a custom ``__str__`` / ``__repr__`` can
+        # raise ``AttributeError`` (missing attribute) or ``ValueError``
+        # (e.g. a Path whose ``__fspath__`` rejects) on top of the
+        # canonical ``TypeError``. Without the broader catch, a single
+        # misbehaving payload could 500 the entire request handler and
+        # leave the session pinned mid-submit.
         try:
             message = json.dumps(
                 {
@@ -327,7 +342,7 @@ class EventEmitter:
                 },
                 default=str,
             )
-        except TypeError as exc:
+        except (TypeError, ValueError, AttributeError) as exc:
             logger.warning(
                 "supervision event {} type={} could not be serialised — DB row kept, publish dropped: {}",
                 event.id,

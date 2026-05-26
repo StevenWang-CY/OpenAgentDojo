@@ -33,6 +33,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -79,6 +80,17 @@ class DeletionLockMiddleware(BaseHTTPMiddleware):
         try:
             user_id = uuid.UUID(sub)
         except (TypeError, ValueError):
+            # A malformed ``sub`` claim means either (a) a forged cookie that
+            # somehow passed the HMAC check (signature key compromise — page
+            # ops) or (b) a deploy-time bug that minted a non-UUID sub. Either
+            # way the deletion lock has no row to check; we fall through so
+            # the route layer's auth dependency rejects the request, but log
+            # at WARNING so the noise is visible on dashboards instead of
+            # silently swallowed.
+            logger.warning(
+                "deletion_lock: malformed sub claim, falling through to route auth ({!r})",
+                sub,
+            )
             return await call_next(request)
 
         # Resolve the user row via a short-lived async session — we cannot
