@@ -1,5 +1,6 @@
 id: overfitted-test-fix
 version: 1
+published: true
 title: "Overfitted Test Fix (Price Calculation)"
 short_description: "Volume-discount calc is off by one. The agent hardcodes the failing case; the hidden grid catches it."
 difficulty: beginner

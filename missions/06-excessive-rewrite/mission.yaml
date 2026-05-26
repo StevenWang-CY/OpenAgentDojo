@@ -1,5 +1,6 @@
 id: excessive-rewrite
 version: 1
+published: true
 title: "Excessive Rewrite (Dashboard Stuck Loading)"
 short_description: "Spinner stays after a failed fetch. The agent rewrites the whole component into a useReducer state machine; the real fix is one line."
 difficulty: intermediate

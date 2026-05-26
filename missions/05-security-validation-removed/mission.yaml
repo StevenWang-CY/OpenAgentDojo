@@ -1,5 +1,6 @@
 id: security-validation-removed
 version: 1
+published: true
 title: "Security Validation Removed (Settings Update Returns 403)"
 short_description: "Owners get 403 on their own settings. The agent's fix removes the guard entirely; the real fix is a one-character param-name change."
 difficulty: advanced

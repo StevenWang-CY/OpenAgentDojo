@@ -1,5 +1,6 @@
 id: auth-cookie-expiration
 version: 1
+published: true
 title: "Expired Session Cookie Still Grants Access"
 short_description: "Users with expired session cookies can still access protected routes."
 difficulty: intermediate

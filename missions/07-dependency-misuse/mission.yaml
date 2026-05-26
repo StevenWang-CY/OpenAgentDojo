@@ -1,5 +1,6 @@
 id: dependency-misuse
 version: 1
+published: true
 title: "Dependency Misuse (Date Formatting & DST)"
 short_description: "Report timestamps are off by an hour at DST boundaries. The agent reaches for arrow; the fix is in stdlib."
 difficulty: intermediate

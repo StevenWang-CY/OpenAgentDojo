@@ -1,5 +1,6 @@
 id: async-race-condition
 version: 1
+published: true
 title: "Async Race Condition (Queue Processing)"
 short_description: "Jobs process twice under load. The agent's fix is a check-then-act; the test catches it the first time."
 difficulty: advanced

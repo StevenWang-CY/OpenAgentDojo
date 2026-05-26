@@ -1,5 +1,6 @@
 id: api-contract-drift
 version: 1
+published: true
 title: "API Contract Drift (Backend Rename Missed in the Frontend)"
 short_description: "Backend renamed user.fullName -> user.displayName. Frontend still reads fullName in three places; the agent patches one."
 difficulty: intermediate

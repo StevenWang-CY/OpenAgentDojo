@@ -1,5 +1,6 @@
 id: agent-wrong-file
 version: 1
+published: true
 title: "Agent Edits the Wrong File (Profile Name Truncation)"
 short_description: "Profile names render truncated. The agent reaches for CSS; the bug is in the backend serializer."
 difficulty: beginner

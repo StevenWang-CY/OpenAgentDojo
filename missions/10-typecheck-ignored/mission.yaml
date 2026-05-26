@@ -1,5 +1,6 @@
 id: typecheck-ignored
 version: 1
+published: true
 title: "Typecheck Ignored (Avatar Upload)"
 short_description: "Adding `avatarUrl?: string` end-to-end. The agent's patch is fast — but it quietly erodes the codebase's strict typing along the way."
 difficulty: intermediate

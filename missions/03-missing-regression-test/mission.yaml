@@ -1,5 +1,6 @@
 id: missing-regression-test
 version: 1
+published: true
 title: "Missing Regression Test (Duplicate Submissions)"
 short_description: "Double-clicks insert duplicate rows. The agent's fix is a Set; the real fix is a durable uniqueness guard plus a test that locks it down."
 difficulty: intermediate
