@@ -249,7 +249,11 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        # Keep in lockstep with the methods declared by ``APIRoute``s — a
+        # regression test (``tests/test_cors_methods.py``) reads the router and
+        # fails if any route uses a verb not in this list, because the browser
+        # preflight will 400 and the FE surfaces it as a generic network error.
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
         # Browsers hide every non-safelisted response header from cross-origin
         # JS reads unless they're listed here. ``Retry-After`` powers the
