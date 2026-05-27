@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Moon, RotateCcw, Settings, Shield, Sun, User as UserIcon } from "lucide-react";
+import { ArrowRight, LogOut, Moon, RotateCcw, Settings, Shield, Sun, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, auth, createSession, replayTutorial } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
@@ -225,6 +225,29 @@ export function Header({ showCta = true }: HeaderProps) {
                     <span className="text-[var(--color-muted-foreground)]">@</span>
                     {handle}
                   </span>
+                </Link>
+              ) : null}
+              {/* P1-2 — top recommendation "Resume" chip. Surfaces inline
+                  on /auth/me so the FE can deep-link to the highest-ranked
+                  next mission without an extra round-trip. Hidden on
+                  small viewports to keep the header tight. ``null`` on
+                  cold-cache / recommendation faults (the BE degrades the
+                  field rather than 5xx-ing the auth poll). */}
+              {user.recommendation ? (
+                <Link
+                  href={`/missions/${user.recommendation.mission_id}`}
+                  className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-xs font-medium text-[var(--color-foreground)] transition-colors duration-150 ease-macos hover:bg-[var(--color-muted)] max-w-[18rem]"
+                  data-testid="header-resume-recommendation"
+                  title={`Resume → ${user.recommendation.title}`}
+                >
+                  <span className="text-[var(--color-muted-foreground)]">
+                    Resume
+                  </span>
+                  <ArrowRight
+                    className="size-3 text-[var(--color-muted-foreground)]"
+                    aria-hidden
+                  />
+                  <span className="truncate">{user.recommendation.title}</span>
                 </Link>
               ) : null}
               {/* P0-5 — direct links to account self-service and the

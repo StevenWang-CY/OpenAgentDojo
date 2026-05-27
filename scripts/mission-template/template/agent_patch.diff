@@ -1,0 +1,16 @@
+# TODO: replace this comment with a unified diff that, when applied to
+# the $repo_pack repo pack, *reproduces* the failure mode
+# ``$failure_mode``. The diff should look plausible (the canned agent
+# narrates it confidently in prompts/response.md) but should leave the
+# hidden tests failing.
+#
+# Example minimal shape:
+#
+# diff --git a/path/to/file.ts b/path/to/file.ts
+# --- a/path/to/file.ts
+# +++ b/path/to/file.ts
+# @@ -10,7 +10,7 @@
+#  function foo() {
+# -  bar();
+# +  baz();
+#  }

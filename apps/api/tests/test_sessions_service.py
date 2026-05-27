@@ -73,6 +73,7 @@ async def test_set_sandbox_persists_when_session_exists(db_engine) -> None:
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

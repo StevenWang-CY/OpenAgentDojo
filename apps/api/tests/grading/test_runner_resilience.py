@@ -154,6 +154,7 @@ async def _seed_mission_and_session(
             manifest_sha256="sha",
             version=1,
             published=True,
+            expected_weak_dim="safety",
         )
         db.add(mission)
         await db.flush()

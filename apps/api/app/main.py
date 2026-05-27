@@ -33,6 +33,7 @@ from app.middleware import (
 from app.missions.router import router as missions_router
 from app.observability import configure_logging, metrics_asgi_app
 from app.profiles.router import router as profiles_router
+from app.recommendations.router import router as recommendations_router
 from app.reports.router import router as reports_router
 from app.reports.router import verify_router
 from app.sandbox.pool import SandboxPool
@@ -311,14 +312,21 @@ def create_app() -> FastAPI:
     # canonical credential URL is short and doesn't pun on /reports.
     app.include_router(verify_router, prefix="/api/v1")
     app.include_router(profiles_router, prefix="/api/v1")
+    # P1-2 — adaptive next-mission recommendation. Lives under
+    # ``/api/v1/me/recommendations`` so a future ``/me`` sub-tree (account
+    # settings, etc.) can mount adjacent without re-routing this surface.
+    app.include_router(recommendations_router, prefix="/api/v1")
 
     # WebSocket routers — imported here (not at module top) so optional deps
     # like docker don't break unit tests that don't exercise WS code paths.
     from app.ws.events import router as events_ws_router
+    from app.ws.lsp import router as lsp_ws_router
     from app.ws.terminal import router as terminal_ws_router
 
     app.include_router(terminal_ws_router)
     app.include_router(events_ws_router)
+    # P1-3 — LSP proxy. Lives alongside terminal + events under /ws/sessions.
+    app.include_router(lsp_ws_router)
 
     # ---- prometheus ----
     app.mount("/metrics", metrics_asgi_app())

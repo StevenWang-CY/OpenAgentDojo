@@ -65,6 +65,13 @@ class _NullDriver(SandboxDriver):
     async def destroy(self, handle):  # type: ignore[override]
         return None
 
+    async def spawn_lsp(self, handle, language):  # type: ignore[override]
+        # P1-3 — orphan-sweep tests don't exercise the LSP surface; raise
+        # the typed unavailable error so the abstract contract is satisfied.
+        from app.sandbox.lsp import LSPUnavailableError
+
+        raise LSPUnavailableError("binary_not_found", language)
+
 
 @pytest.mark.asyncio
 async def test_orphan_sweep_marks_orphans_abandoned(db_engine, monkeypatch) -> None:
@@ -96,6 +103,7 @@ async def test_orphan_sweep_marks_orphans_abandoned(db_engine, monkeypatch) -> N
             skills_tested=[],
             manifest_sha256="0" * 64,
             published=True,
+            expected_weak_dim="safety",
         )
         db.add(mission)
         await db.commit()

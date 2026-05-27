@@ -1,0 +1,12 @@
+diff --git a/internal/handlers/handlers.go b/internal/handlers/handlers.go
+--- a/internal/handlers/handlers.go
++++ b/internal/handlers/handlers.go
+@@ -110,7 +110,7 @@ func lookupOrder(ctx context.Context, s *store.Store, id string) (model.Order, error) {
+ func lookupOrder(ctx context.Context, s *store.Store, id string) (model.Order, error) {
+ 	o, err := s.Get(ctx, id)
+ 	if err != nil {
+-		return model.Order{}, fmt.Errorf("lookup order %q: %v", id, err)
++		return model.Order{}, fmt.Errorf("failed to look up order %q: %v", id, err)
+ 	}
+ 	return o, nil
+ }

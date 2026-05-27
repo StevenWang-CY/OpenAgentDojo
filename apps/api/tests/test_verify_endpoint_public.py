@@ -56,6 +56,7 @@ async def _seed(
                 version=1,
                 kind=mission_kind,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

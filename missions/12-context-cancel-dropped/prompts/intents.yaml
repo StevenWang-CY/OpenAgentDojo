@@ -1,0 +1,49 @@
+# Mission 12 — intent classifier keyword sets.
+
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - address
+      - debug
+      - resolve
+      - patch
+      - the bug
+      - investigate
+      - context
+      - cancel
+
+  test:
+    keywords:
+      - add a test
+      - write a test
+      - regression test
+      - errors.Is
+      - WithCancel
+      - cover this
+      - lock this down
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - that is wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+      - parent
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+
+  unknown: {}

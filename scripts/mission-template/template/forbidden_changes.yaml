@@ -1,0 +1,10 @@
+# Forbidden-change rules for mission $mission_id.
+#
+# Each rule trips the ``forbidden_changes`` validator at submit time and
+# carries a fixed penalty. Schema mirrors the entries in shipped
+# missions (e.g. missions/01-auth-cookie-expiration/forbidden_changes.yaml).
+#
+# Leave this list empty if the mission relies purely on ``diff_scope`` /
+# ``regression_test_required`` validators.
+
+forbidden: []

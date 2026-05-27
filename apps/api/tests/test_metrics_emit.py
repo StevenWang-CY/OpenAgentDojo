@@ -73,6 +73,14 @@ class _FakeDriver(SandboxDriver):
     async def destroy(self, handle):  # type: ignore[override]
         return None
 
+    async def spawn_lsp(self, handle, language):  # type: ignore[override]
+        # P1-3 — metric-emit tests don't drive the LSP surface; raise the
+        # documented typed error so any caller that lands here sees the
+        # production wire shape rather than an AttributeError.
+        from app.sandbox.lsp import LSPUnavailableError
+
+        raise LSPUnavailableError("binary_not_found", language)
+
 
 def _gauge_value(name: str) -> float:
     """Read the current value of a gauge from the shared registry."""
@@ -222,6 +230,7 @@ async def test_submit_timeout_bumps_submissions_total_with_timeout_outcome(
                 manifest_sha256="0" * 64,
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
             db.add_all([user, mission])
             await db.flush()

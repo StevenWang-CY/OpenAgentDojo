@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `data-api-demo` |
-| Failure mode | `installs_unnecessary_dep` |
+| Failure mode | `dependency_misuse` |
 | Difficulty | intermediate |
 | Diff envelope (p50) | 6 lines |
 | Score band, unmodified agent patch | 25–50 |

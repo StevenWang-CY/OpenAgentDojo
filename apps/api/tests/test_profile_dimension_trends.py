@@ -85,6 +85,7 @@ async def test_profile_anonymous_view_omits_dimension_trends(db_engine, client) 
             failure_mode="checks_presence_not_expiration",
             skills_tested=["auth"],
             manifest_sha256="0" * 64,
+            expected_weak_dim="safety",
         )
         db.add(mission)
         await db.flush()
@@ -148,6 +149,7 @@ async def test_profile_trends_exclude_pending_scores(db_engine, client) -> None:
             failure_mode="in_memory_set_guard",
             skills_tested=["regression-tests"],
             manifest_sha256="0" * 64,
+            expected_weak_dim="safety",
         )
         db.add(mission)
         await db.flush()

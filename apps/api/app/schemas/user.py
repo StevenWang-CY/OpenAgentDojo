@@ -8,12 +8,38 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+MeRecommendationLanguage = Literal["typescript", "python", "go"]
+
+
+class MeRecommendationInline(BaseModel):
+    """Compact "next mission" surfaced inline on ``GET /auth/me`` (P1-2).
+
+    Only the three fields the header `[ Resume → ]` chip needs;
+    everything else (diagnosis, full top-3, etc.) lives on the
+    dedicated ``/me/recommendations`` endpoint. Optional so the
+    response stays backwards-compatible — cold-cache or recommendation
+    errors degrade to omitting the field, never to a 5xx on auth.me.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mission_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    language: MeRecommendationLanguage
+
 # Maximum display-name length (matches ``users.display_name`` String(120)).
 DISPLAY_NAME_MAX_LEN = 120
 
 
 class UserRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    # P0-6 — ``extra='forbid'`` matches the sibling auth schemas
+    # (``DisplayNameUpdate``, ``EmailChangeRequest``, etc.) so a FE call
+    # site that POSTs an unknown field gets a typed 422 rather than
+    # silently dropping it on the BE side. ``from_attributes=True`` keeps
+    # the ORM ``model_validate(user)`` path working — Pydantic only looks
+    # up declared field names on the source object, so extra ORM columns
+    # never reach the validator.
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
 
     id: uuid.UUID
     email: EmailStr
@@ -55,6 +81,11 @@ class UserRead(BaseModel):
     # The deletion-lock middleware blocks every mutating endpoint except
     # ``/me/delete/cancel`` while this is non-null.
     deletion_scheduled_at: datetime | None = None
+    # P1-2 — top recommendation surfaced inline for the header chip.
+    # Optional: cold-cache or recommendation errors degrade to ``None``
+    # rather than failing the auth roundtrip; the FE renders the chip
+    # only when this is present.
+    recommendation: MeRecommendationInline | None = None
 
 
 class DisplayNameUpdate(BaseModel):

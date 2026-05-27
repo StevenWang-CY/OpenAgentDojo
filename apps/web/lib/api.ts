@@ -23,6 +23,7 @@ import type {
   PatchResult,
   PromptInput,
   PublicProfile,
+  RecommendationSet,
   ReportRenderRead,
   SearchRequest,
   SearchResponse,
@@ -117,7 +118,11 @@ interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: JsonBody;
   signal?: AbortSignal;
+  /** Single-value query params. P1-1 added ``queryList`` for repeatable
+   *  params (FastAPI ``list[str]`` collation) so the catalog filter can
+   *  pass ``?tags=a&tags=b`` cleanly. */
   query?: Record<string, string | number | boolean | undefined>;
+  queryList?: Record<string, string[] | undefined>;
 }
 
 /**
@@ -165,6 +170,14 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   if (opts.query) {
     for (const [k, v] of Object.entries(opts.query)) {
       if (v !== undefined) url.searchParams.set(k, String(v));
+    }
+  }
+  if (opts.queryList) {
+    for (const [k, values] of Object.entries(opts.queryList)) {
+      if (!values) continue;
+      for (const v of values) {
+        url.searchParams.append(k, v);
+      }
     }
   }
 
@@ -531,8 +544,40 @@ export const account = {
 
 // ── Missions ─────────────────────────────────────────────────────────────────
 
-export function listMissions(signal?: AbortSignal): Promise<Mission[]> {
-  return request<Mission[]>("/missions", { signal });
+/** P1-1 — optional catalog filters mirrored from the backend
+ *  ``GET /api/v1/missions`` query params. Every field is server-side;
+ *  the FE also runs the same filter set client-side for snappy chip
+ *  interactions, but exposing the wire-shape keeps the hook future-proof
+ *  (e.g. a deep link from a recommendation surface can prefetch the
+ *  pre-filtered slice). */
+export interface ListMissionsFilters {
+  /** Filter to missions whose pack carries this language. Mirrors
+   *  ``repo_packs.language``. */
+  language?: "typescript" | "python" | "go";
+  /** OR-within-the-param: a mission matches if it carries *any* of the
+   *  supplied tags. Closed vocabulary (see
+   *  ``apps/api/app/missions/manifest.py::_KNOWN_TAGS``). */
+  tags?: string[];
+  /** Exact ``repo_pack_id`` match. */
+  repoPack?: string;
+  /** When true, append dated ``coming_soon`` placeholders from
+   *  ``apps/api/app/missions/roadmap.yaml`` to the response. */
+  includeUpcoming?: boolean;
+}
+
+export function listMissions(
+  signal?: AbortSignal,
+  filters?: ListMissionsFilters,
+): Promise<Mission[]> {
+  const query: Record<string, string | undefined> = {};
+  if (filters?.language) query.language = filters.language;
+  if (filters?.repoPack) query.repo_pack = filters.repoPack;
+  if (filters?.includeUpcoming) query.include = "upcoming";
+  const queryList: Record<string, string[] | undefined> = {};
+  if (filters?.tags && filters.tags.length > 0) {
+    queryList.tags = filters.tags;
+  }
+  return request<Mission[]>("/missions", { signal, query, queryList });
 }
 
 export function getMission(id: string, signal?: AbortSignal): Promise<MissionDetail> {
@@ -1018,6 +1063,25 @@ export function getProfile(
  *  logged-in user. Requires auth. */
 export function getMySkills(signal?: AbortSignal): Promise<SkillsCatalog> {
   return request<SkillsCatalog>(`/profiles/me/skills`, { signal });
+}
+
+/**
+ * P1-2 — adaptive next-mission recommendation set for the signed-in user.
+ *
+ * Returns the deterministic top-3 ranking plus the LLM-polished diagnosis
+ * + per-mission ``why`` prose. Requires auth (401 for anonymous callers);
+ * the FE branches on the viewer's signed-in state before calling so this
+ * endpoint never fires for unauthenticated catalog visitors.
+ *
+ * The cache hit/miss flag is surfaced as ``cache_hit`` on the body so
+ * call-sites can attribute warm-vs-cold timing to the operational metric;
+ * the deterministic fallback (when Bedrock is down) is indistinguishable
+ * from a cache hit on the wire — the strings are templated, not blank.
+ */
+export function getMyRecommendations(
+  signal?: AbortSignal,
+): Promise<RecommendationSet> {
+  return request<RecommendationSet>(`/me/recommendations`, { signal });
 }
 
 /**

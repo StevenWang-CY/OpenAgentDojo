@@ -78,6 +78,14 @@ class _DestroyRaisingDriver(SandboxDriver):
         self.destroy_called += 1
         raise RuntimeError("docker daemon disappeared")
 
+    async def spawn_lsp(self, handle, language):  # type: ignore[override]
+        # P1-3 — this test exercises destroy() outage handling, not the LSP
+        # surface; raise the typed unavailable error so any incidental
+        # caller sees the production wire shape.
+        from app.sandbox.lsp import LSPUnavailableError
+
+        raise LSPUnavailableError("driver_unavailable", language)
+
 
 def _gauge_value() -> float:
     return float(sessions_active._value.get())

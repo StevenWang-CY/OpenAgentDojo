@@ -24,6 +24,10 @@ MissionCategory = Literal[
 MissionKind = Literal["standard", "tutorial"]
 
 
+MissionLanguage = Literal["typescript", "python", "go"]
+MissionStatus = Literal["shipped", "coming_soon"]
+
+
 class MissionListItem(BaseModel):
     """Minimal mission card payload for `GET /missions`."""
 
@@ -32,10 +36,17 @@ class MissionListItem(BaseModel):
     id: str
     title: str
     short_description: str = ""
-    difficulty: Difficulty
-    category: MissionCategory
-    estimated_minutes: int
-    failure_mode_id: str = Field(validation_alias=AliasChoices("failure_mode_id", "failure_mode"))
+    # P1-1 — coming-soon entries don't have a difficulty / category band yet
+    # (the calibration envelope only exists once the mission is real), so
+    # they ship with default labels. ``shipped`` rows always carry the real
+    # value; the FE branches on ``status`` before rendering filter chips.
+    difficulty: Difficulty = "beginner"
+    category: MissionCategory = "debugging"
+    estimated_minutes: int = 0
+    failure_mode_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("failure_mode_id", "failure_mode"),
+    )
     skills_tested: list[str] = Field(default_factory=list)
     version: int = 1
     published: bool = True
@@ -44,6 +55,19 @@ class MissionListItem(BaseModel):
     # the field on the list payload (instead of forcing a per-mission detail
     # fetch) keeps the catalog render single-roundtrip.
     kind: MissionKind = "standard"
+    # P1-1 — typed FK to ``repo_packs.id`` (None on coming_soon placeholders
+    # whose pack hasn't shipped yet). ``language`` is derived from the
+    # pack's ``repo_packs.language`` (or the roadmap entry's own
+    # ``language`` field for placeholders).
+    repo_pack_id: str | None = None
+    language: MissionLanguage = "typescript"
+    tags: list[str] = Field(default_factory=list)
+    # P1-1 — ``shipped`` for catalog rows; ``coming_soon`` for roadmap
+    # entries appended when the caller passes ``?include=upcoming``. The
+    # FE renders coming-soon cards muted with the dated chip.
+    status: MissionStatus = "shipped"
+    # Only populated when ``status == 'coming_soon'``; ISO ``YYYY-MM-DD``.
+    target_release_date: str | None = None
 
 
 class YourAttempts(BaseModel):
@@ -105,13 +129,31 @@ class MissionDetail(BaseModel):
     version: int = 1
     published: bool = True
     brief: str = ""
-    language_runtime: Literal["node20", "python312"] | None = None
+    # P1-1 — ``go122`` is the third sandbox runtime (Go 1.22 / chi) shipped
+    # with the ``go-orders-service`` repo pack. Kept in lockstep with
+    # ``app.missions.manifest.LanguageRuntime`` so the catalog detail
+    # response is honest about what the workspace can actually boot.
+    language_runtime: Literal["node20", "python312", "go122"] | None = None
     visible_tests: list[str] = Field(default_factory=list)
     expected_context_required: list[str] = Field(default_factory=list)
     expected_context_recommended: list[str] = Field(default_factory=list)
     expected_diff_lines_p50: int | None = None
     # P0-1 — see MissionListItem.kind.
     kind: MissionKind = "standard"
+    # P1-1 — typed FK to ``repo_packs.id`` (None on coming-soon detail
+    # responses whose pack hasn't shipped yet). ``language`` is derived
+    # from the pack's ``repo_packs.language`` (or defaults to ``typescript``
+    # when no pack metadata exists), mirroring the catalog list response.
+    repo_pack_id: str | None = None
+    language: MissionLanguage = "typescript"
+    tags: list[str] = Field(default_factory=list)
+    # P1-1 — ``shipped`` for catalog rows; ``coming_soon`` for roadmap
+    # entries. The FE renders coming-soon detail pages muted with the
+    # dated chip; ``status`` is the canonical discriminator (NOT
+    # ``published``, which stays ``True`` so the row is publicly readable).
+    status: MissionStatus = "shipped"
+    # Only populated when ``status == 'coming_soon'``; ISO ``YYYY-MM-DD``.
+    target_release_date: str | None = None
     # P0-3 — populated only for signed-in callers. ``None`` for anonymous
     # viewers so the FE renders the catalog "Start mission" CTA without a
     # private overlay. ``count == 0`` (with non-null wrapper) means the

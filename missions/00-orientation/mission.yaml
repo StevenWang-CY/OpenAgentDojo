@@ -15,6 +15,11 @@ skills_tested:
   - workflow
   - agent-review
 
+# P1-1 — tutorials don't appear in the catalog grid and aren't filtered by
+# failure mode, so an empty tag list is permitted by the manifest validator
+# (standard missions must carry exactly one failure-mode tag).
+tags: []
+
 repo:
   pack: fullstack-auth-demo
   initial_commit: HEAD

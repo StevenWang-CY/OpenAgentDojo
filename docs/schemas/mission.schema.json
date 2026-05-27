@@ -121,8 +121,8 @@
         },
         "language_runtime": {
           "type": "string",
-          "description": "Base image tag selector.",
-          "enum": ["node20", "python312"]
+          "description": "Base image tag selector. ``go122`` lands with the P1-1 Go pack (golang:1.22-bookworm).",
+          "enum": ["node20", "python312", "go122"]
         },
         "setup_commands": {
           "type": "array",
@@ -436,6 +436,62 @@
       "description": "Median expected added-line count for an ideal solution. Drives Diff Minimality scoring (IMPLEMENTATION_PLAN.md §11.2.7).",
       "minimum": 1,
       "maximum": 500
+    },
+    "tags": {
+      "type": "array",
+      "description": "Closed-vocabulary catalog tags. Standard missions MUST carry exactly one failure-mode tag, and it MUST equal `failure_mode.id`. Skill (`skill:*`) and language (`lang:*`) tags are optional. New tags require an ADR (P1-1).",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "checks_presence_not_expiration",
+          "overfitted_visible_test",
+          "wrong_layer_committed",
+          "missing_regression_test",
+          "race_condition",
+          "context_dropped",
+          "error_wrapped_swallowed",
+          "dependency_misuse",
+          "security_check_removed",
+          "typecheck_ignored",
+          "api_contract_drift",
+          "excessive_rewrite",
+          "goroutine_leak",
+          "skill:concurrency",
+          "skill:typing",
+          "skill:auth",
+          "skill:http",
+          "skill:sql",
+          "skill:cli",
+          "lang:typescript",
+          "lang:python",
+          "lang:go"
+        ]
+      }
+    },
+    "repo_pack_id": {
+      "type": "string",
+      "description": "Server-derived FK to `repo_packs.id` (P1-1). The on-disk manifest field is `repo.pack`; the API response mirrors it under this name so the catalog filter and the language chip stay independently addressable. Authors do not write this directly.",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "expected_weak_dim": {
+      "type": ["string", "null"],
+      "description": "The single rubric dimension this mission primarily exercises (P1-2). Standard missions MUST set this; tutorial missions allow null. Mirrors apps/api/app/grading/dimensions.py::RUBRIC_DIMENSIONS.",
+      "enum": [
+        "final_correctness",
+        "verification",
+        "agent_review",
+        "prompt_quality",
+        "context_selection",
+        "safety",
+        "diff_minimality",
+        null
+      ]
+    },
+    "published": {
+      "type": "boolean",
+      "description": "When false the mission is excluded from the public catalog grid (default for half-written drafts).",
+      "default": false
     }
   }
 }

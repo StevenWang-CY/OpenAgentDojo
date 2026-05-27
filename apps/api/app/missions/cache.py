@@ -69,7 +69,13 @@ def cached_manifests() -> dict[str, LoadedMission]:
 
 
 def detail_extras_for(loaded: LoadedMission | None) -> dict[str, Any]:
-    """Return the manifest-derived fields merged into MissionDetail responses."""
+    """Return the manifest-derived fields merged into MissionDetail responses.
+
+    P1-1 — ``tags`` is sourced here as a fallback when the DB row is missing
+    them (e.g. a freshly-loaded mission whose ``alembic upgrade`` lags
+    behind the manifest copy). The router prefers the DB value; this entry
+    keeps the wire shape stable for a manifest-only callpath.
+    """
     if loaded is None:
         return {
             "brief": "",
@@ -79,6 +85,7 @@ def detail_extras_for(loaded: LoadedMission | None) -> dict[str, Any]:
             "expected_context_required": [],
             "expected_context_recommended": [],
             "expected_diff_lines_p50": None,
+            "tags": [],
         }
     m = loaded.manifest
     return {
@@ -89,6 +96,7 @@ def detail_extras_for(loaded: LoadedMission | None) -> dict[str, Any]:
         "expected_context_required": list(m.expected_context.required),
         "expected_context_recommended": list(m.expected_context.recommended),
         "expected_diff_lines_p50": m.expected_diff_lines_p50,
+        "tags": list(m.tags),
     }
 
 

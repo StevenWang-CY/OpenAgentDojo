@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `data-api-demo` |
-| Failure mode | `overfits_visible_test_case` |
+| Failure mode | `overfitted_visible_test` |
 | Difficulty | beginner |
 | Diff envelope (p50) | 4 lines |
 | Score band, unmodified agent patch | 28–52 |

@@ -1,0 +1,200 @@
+id: goroutine-leak
+version: 1
+published: true
+title: "Goroutine Leak on Shutdown"
+short_description: "queue.Pool.Stop() returns without cancelling its workers — every Start leaks N goroutines."
+difficulty: intermediate
+category: debugging
+estimated_minutes: 30
+skills_tested:
+  - concurrency
+  - go
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - goroutine_leak
+  - skill:concurrency
+  - lang:go
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. Computed from missions/_calibration/<id>.yaml as the
+# argmin of (ideal.dimensions[d] / DIMENSION_MAX[d]) with the canonical
+# RUBRIC_DIMENSIONS order as tie-break. The recommendation engine
+# aligns a user's weakest measured dimension against this field.
+expected_weak_dim: safety
+
+repo:
+  pack: go-orders-service
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: go122
+  setup_commands:
+    - go mod download
+  ready_check: make test
+  test_commands:
+    unit: make test
+    lint: make vet
+
+brief: |
+  ## What's broken
+
+  Operations noticed that every long-running `orders` process steadily
+  accumulates goroutines — by the time the pod hits its weekly
+  restart it's holding ~10× the workers it should. A flame graph points
+  at `queue.Pool`: every `Start` adds `numWorkers` goroutines, but
+  `Stop()` doesn't reclaim them.
+
+  The visible test suite is green on the current tree. The bug doesn't
+  affect *functional* behaviour (events still process and the API
+  still answers), only the goroutine bookkeeping.
+
+  ## What you need to deliver
+
+  - A patch to `internal/queue/queue.go` that makes `Stop()` cancel
+    every worker goroutine and wait for them to exit before returning.
+  - A regression test that asserts `runtime.NumGoroutine()` collapses
+    back to the baseline after `Stop()`.
+  - The existing tests stay green; `make test` and `make race` both
+    keep passing.
+
+  ## Where to look
+
+  Start in `internal/queue/queue.go`. The `Pool` already wires up a
+  `context.CancelFunc` (`p.cancel`) during `Start`, but `Stop` never
+  invokes it. The `sync.WaitGroup` is similarly populated but never
+  awaited. The fix is small — both calls land inside `Stop` after the
+  `stopped = true` flip.
+
+  ## How you'll be scored
+
+  This mission rewards correct concurrency hygiene. You earn points by
+  reading `Start` *before* writing the fix, naming `context.CancelFunc`
+  in your prompt, and writing a regression test that exercises
+  `runtime.NumGoroutine()`. You lose points for masking the symptom
+  (a `defer log.Println` that "logs the shutdown" without actually
+  closing the channel or cancelling the context).
+
+failure_mode:
+  id: goroutine_leak
+  title: "Agent adds a shutdown log but never cancels the worker context"
+  description: |
+    The agent reads `Stop()`, sees the `// BUG` comment, and decides
+    the canonical fix is to *signal* the shutdown by emitting a log
+    line. The patch adds `defer log.Println("queue: stop")` inside
+    `Stop`, leaves the body unchanged, and walks away. Workers keep
+    blocking on the events channel — the leak is unchanged but the
+    log line gives the agent a confident-looking diff to point at.
+  hint_after_submit_if_missed: "The cancel func is already stored on the Pool. Look at `p.cancel` and `p.wg`."
+
+expected_files:
+  - internal/queue/queue.go
+  - internal/queue/queue_test.go
+
+expected_context:
+  required:
+    - internal/queue/queue.go
+    - internal/queue/queue_test.go
+  recommended:
+    - cmd/orders/main.go
+    - internal/store/store.go
+  discouraged:
+    - internal/handlers/handlers.go
+    - internal/model/order.go
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+      - leak
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "TestPoolProcessesEvents marks the order shipped"
+  - "TestPoolStopIsIdempotent does not panic on double-stop"
+  - "TestSubmitAfterStopFails surfaces a clear error"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "TestStopReclaimsEveryGoroutine"
+    - "TestStopHonoursParentCancellation"
+    - "TestStopUnblocksOnBufferedEvents"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 80
+    must_touch_any_of:
+      - internal/queue/queue.go
+    must_not_touch:
+      - go.mod
+      - go.sum
+      - internal/handlers/**
+      - internal/store/**
+  - kind: regression_test_required
+    test_globs:
+      - internal/queue/*_test.go
+    keywords_any_of:
+      - NumGoroutine
+      - leak
+      - Stop
+      - cancel
+      - WaitGroup
+  - kind: no_skipped_tests
+    patterns:
+      - "t.Skip"
+      - "//go:build ignore"
+  - kind: no_new_dependencies
+    allowed: []
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 12
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - cancel
+      - WaitGroup
+      - regression test
+      - goroutine
+      - leak
+    bonus_keywords:
+      - context
+      - shutdown
+      - NumGoroutine
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "queue"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

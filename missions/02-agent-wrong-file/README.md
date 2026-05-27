@@ -5,7 +5,7 @@ Author notes for content maintainers. Not user-facing.
 | | |
 |---|---|
 | Repo pack | `fullstack-auth-demo` |
-| Failure mode | `edits_wrong_file` |
+| Failure mode | `wrong_layer_committed` |
 | Difficulty | beginner |
 | Diff envelope (p50) | 6 lines |
 | Score band, unmodified agent patch | 30–55 |

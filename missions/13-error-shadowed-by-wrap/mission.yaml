@@ -1,0 +1,195 @@
+id: error-shadowed-by-wrap
+version: 1
+published: true
+title: "errors.Is Shadowed by an Over-Eager Wrap"
+short_description: "lookupOrder wraps ErrOrderNotFound with %v not %w, so handlers return 500 instead of 404."
+difficulty: beginner
+category: api
+estimated_minutes: 20
+skills_tested:
+  - error-handling
+  - go
+
+tags:
+  - error_wrapped_swallowed
+  - skill:typing
+  - lang:go
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. Computed from missions/_calibration/<id>.yaml as the
+# argmin of (ideal.dimensions[d] / DIMENSION_MAX[d]) with the canonical
+# RUBRIC_DIMENSIONS order as tie-break. The recommendation engine
+# aligns a user's weakest measured dimension against this field.
+expected_weak_dim: safety
+
+repo:
+  pack: go-orders-service
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: go122
+  setup_commands:
+    - go mod download
+  ready_check: make test
+  test_commands:
+    unit: make test
+    lint: make vet
+
+brief: |
+  ## What's broken
+
+  Customers reported that `GET /orders/<id>` returns a 500 when the
+  order doesn't exist, instead of the documented 404. Engineering
+  audit shows the store layer correctly returns
+  `store.ErrOrderNotFound`, and the handler correctly checks
+  `errors.Is(err, store.ErrOrderNotFound)` — but somewhere between
+  the two, the sentinel is getting lost.
+
+  The visible test suite is green (no visible test exercises the
+  missing-order path through HTTP).
+
+  ## What you need to deliver
+
+  - A patch to `internal/handlers/handlers.go` that makes
+    `GET /orders/<id>` return 404 (not 500) when the order doesn't
+    exist.
+  - A regression test that pins the 404 contract for missing orders.
+  - The existing tests stay green.
+
+  ## Where to look
+
+  Read `lookupOrder` in `internal/handlers/handlers.go`. It wraps the
+  store error with `fmt.Errorf`, but read the format verb carefully —
+  there's exactly one character wrong. The handler's `errors.Is`
+  check is already correct; the wrap is what's swallowing the
+  sentinel.
+
+  ## How you'll be scored
+
+  This mission rewards understanding of Go's error wrapping. You
+  earn points by naming `%w` (or `errors.Is`) in your prompt,
+  writing a regression test that hits `/orders/{missing}` and
+  asserts 404, and running the handlers test suite before submit.
+  You lose points for "fixing" the message text without changing the
+  verb (e.g. swapping `lookup order` for `failed to find order`
+  while keeping `%v`).
+
+failure_mode:
+  id: error_wrapped_swallowed
+  title: "Agent rewords the wrap message but keeps %v"
+  description: |
+    The agent reads `lookupOrder`, sees the wrap, and decides the
+    issue is the message string ("lookup order" is too cryptic for
+    operators). The patch changes the verbiage to "failed to look up
+    order" but keeps the `%v` verb. The sentinel is still demoted to
+    a string, `errors.Is` still returns false, and the handler still
+    answers 500.
+  hint_after_submit_if_missed: "Look at the verb character in the fmt.Errorf format string. %w vs %v matters here."
+
+expected_files:
+  - internal/handlers/handlers.go
+  - internal/handlers/handlers_test.go
+
+expected_context:
+  required:
+    - internal/handlers/handlers.go
+    - internal/handlers/handlers_test.go
+  recommended:
+    - internal/store/store.go
+  discouraged:
+    - internal/queue/queue.go
+    - internal/model/order.go
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+      - "404"
+      - error
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "TestHealthz returns 200"
+  - "TestCreateThenListAndGet round-trips an order"
+  - "TestShipQueuesEvent returns 202"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "TestGetMissingOrderReturns404"
+    - "TestShipMissingOrderReturns404"
+    - "TestLookupOrderPreservesSentinel"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 50
+    must_touch_any_of:
+      - internal/handlers/handlers.go
+    must_not_touch:
+      - go.mod
+      - go.sum
+      - internal/store/**
+      - internal/queue/**
+  - kind: regression_test_required
+    test_globs:
+      - internal/handlers/*_test.go
+    keywords_any_of:
+      - "404"
+      - StatusNotFound
+      - ErrOrderNotFound
+      - errors.Is
+  - kind: no_skipped_tests
+    patterns:
+      - "t.Skip"
+      - "//go:build ignore"
+  - kind: no_new_dependencies
+    allowed: []
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 3
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - errors.Is
+      - sentinel
+      - "%w"
+      - wrap
+      - "404"
+    bonus_keywords:
+      - error chain
+      - fmt.Errorf
+      - root cause
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "handlers"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

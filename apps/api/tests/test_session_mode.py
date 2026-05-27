@@ -63,6 +63,7 @@ async def _seed_mission_and_user(db_engine) -> tuple[uuid.UUID, str]:
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         await db.commit()

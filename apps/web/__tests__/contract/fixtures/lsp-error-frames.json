@@ -1,0 +1,47 @@
+[
+  {
+    "name": "minimal_binary_not_found",
+    "frame": {
+      "type": "lsp_error",
+      "error": "binary_not_found",
+      "language": "python",
+      "detail": null
+    }
+  },
+  {
+    "name": "spawn_failed_with_detail",
+    "frame": {
+      "type": "lsp_error",
+      "error": "spawn_failed",
+      "language": "typescript",
+      "detail": "ENOENT: tsserver"
+    }
+  },
+  {
+    "name": "unsupported_language",
+    "frame": {
+      "type": "lsp_error",
+      "error": "unsupported_language",
+      "language": "go",
+      "detail": null
+    }
+  },
+  {
+    "name": "driver_unavailable",
+    "frame": {
+      "type": "lsp_error",
+      "error": "driver_unavailable",
+      "language": "python",
+      "detail": "docker SDK not importable"
+    }
+  },
+  {
+    "name": "session_not_found",
+    "frame": {
+      "type": "lsp_error",
+      "error": "session_not_found",
+      "language": "typescript",
+      "detail": null
+    }
+  }
+]

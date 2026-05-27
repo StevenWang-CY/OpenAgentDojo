@@ -11,6 +11,20 @@ skills_tested:
   - api-contract
   - agent-review
 
+# P1-1 — see manifest.py::_KNOWN_TAGS. The failure-mode tag must equal
+# ``failure_mode.id`` below.
+tags:
+  - wrong_layer_committed
+  - skill:http
+  - lang:typescript
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. Computed from missions/_calibration/<id>.yaml as the
+# argmin of (ideal.dimensions[d] / DIMENSION_MAX[d]) with the canonical
+# RUBRIC_DIMENSIONS order as tie-break. The recommendation engine
+# aligns a user's weakest measured dimension against this field.
+expected_weak_dim: safety
+
 repo:
   pack: fullstack-auth-demo
   initial_commit: HEAD
@@ -59,7 +73,7 @@ brief: |
   than the symptom. You lose points for accepting a CSS-only change.
 
 failure_mode:
-  id: edits_wrong_file
+  id: wrong_layer_committed
   title: "Agent patches the frontend CSS instead of the backend serializer"
   description: |
     The agent reads the visible symptom (text looks cut off), assumes

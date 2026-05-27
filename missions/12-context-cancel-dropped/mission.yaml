@@ -1,0 +1,201 @@
+id: context-cancel-dropped
+version: 1
+published: true
+title: "Store Layer Drops the Request Context"
+short_description: "store.Get/List ignore the caller's ctx and run against context.Background — cancellation never reaches the driver."
+difficulty: intermediate
+category: api
+estimated_minutes: 30
+skills_tested:
+  - context
+  - http
+  - go
+
+tags:
+  - context_dropped
+  - skill:http
+  - lang:go
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. Computed from missions/_calibration/<id>.yaml as the
+# argmin of (ideal.dimensions[d] / DIMENSION_MAX[d]) with the canonical
+# RUBRIC_DIMENSIONS order as tie-break. The recommendation engine
+# aligns a user's weakest measured dimension against this field.
+expected_weak_dim: safety
+
+repo:
+  pack: go-orders-service
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: go122
+  setup_commands:
+    - go mod download
+  ready_check: make test
+  test_commands:
+    unit: make test
+    lint: make vet
+
+brief: |
+  ## What's broken
+
+  An SRE noticed the orders process keeps executing database reads
+  long after the inbound HTTP request has been cancelled by the
+  caller. Load-test panels show 99p tail latency holding steady on
+  the DB side even when the front-end aborts the connection within
+  10ms.
+
+  The visible tests are green. The bug is in the **store layer**:
+  `Get` and `List` accept a `context.Context` parameter but throw it
+  away, running every query against `context.Background()`.
+
+  ## What you need to deliver
+
+  - A patch to `internal/store/store.go` that threads the caller's
+    `ctx` directly into `QueryContext` / `QueryRowContext`.
+  - A regression test that cancels the context *before* the call and
+    asserts the returned error wraps `context.Canceled` (use
+    `errors.Is`).
+  - The existing tests stay green.
+
+  ## Where to look
+
+  The two offending sites are `Store.Get` and `Store.List` in
+  `internal/store/store.go`. Both currently have a `_ = ctx`
+  discard followed by `context.Background()`. The fix is one line in
+  each method — pass `ctx` through to the driver.
+
+  ## How you'll be scored
+
+  This mission rewards correct context propagation. You earn points
+  by naming `context.Background` in your root-cause description,
+  reading both `Get` *and* `List` (not just the one named in the
+  reproduction), and adding a regression test that exercises a
+  pre-cancelled context. You lose points for "fixing" the symptom by
+  adding a `context.WithTimeout(context.Background(), ...)` —
+  Background is still the parent, the request cancellation is still
+  lost.
+
+failure_mode:
+  id: context_dropped
+  title: "Agent wraps Background with a timeout but keeps Background as the parent"
+  description: |
+    The agent reads `Get`, sees the `context.Background()` call, and
+    decides the right fix is to bound the query with a timeout. The
+    patch replaces `context.Background()` with
+    `context.WithTimeout(context.Background(), 5*time.Second)` —
+    but **Background is still the parent**. The request's
+    `context.Canceled` signal still never reaches the driver; the
+    only difference is that queries now self-abort after five
+    seconds instead of running forever. The pre-cancelled-ctx
+    regression test still fails.
+  hint_after_submit_if_missed: "What is the parent of the new context? It should be `ctx`, not `context.Background()`."
+
+expected_files:
+  - internal/store/store.go
+  - internal/store/store_test.go
+
+expected_context:
+  required:
+    - internal/store/store.go
+    - internal/store/store_test.go
+  recommended:
+    - internal/handlers/handlers.go
+    - cmd/orders/main.go
+  discouraged:
+    - internal/queue/queue.go
+    - internal/model/order.go
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+      - context
+      - cancel
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "TestInsertAndGetRoundTrip persists and re-reads"
+  - "TestListReturnsOrdersInInsertionOrder orders by created_at"
+  - "TestGetReturnsSentinelOnMissingRow returns ErrOrderNotFound"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "TestGetPropagatesCancellation"
+    - "TestListPropagatesCancellation"
+    - "TestGetHonoursRequestContextOverBackground"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 60
+    must_touch_any_of:
+      - internal/store/store.go
+    must_not_touch:
+      - go.mod
+      - go.sum
+      - internal/queue/**
+      - internal/handlers/**
+  - kind: regression_test_required
+    test_globs:
+      - internal/store/*_test.go
+    keywords_any_of:
+      - context.Canceled
+      - WithCancel
+      - context
+      - errors.Is
+  - kind: no_skipped_tests
+    patterns:
+      - "t.Skip"
+      - "//go:build ignore"
+  - kind: no_new_dependencies
+    allowed: []
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 8
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - context
+      - propagation
+      - cancellation
+      - Background
+      - regression test
+    bonus_keywords:
+      - errors.Is
+      - context.Canceled
+      - QueryContext
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "store"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

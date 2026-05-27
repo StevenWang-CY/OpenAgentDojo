@@ -60,6 +60,7 @@ async def _prime_catalog(session_factory) -> None:
                     manifest_sha256=f"sha-{mid}",
                     version=1,
                     published=True,
+                    expected_weak_dim="safety",
                 )
             )
         for bid in (

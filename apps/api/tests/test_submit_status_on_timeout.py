@@ -90,6 +90,7 @@ async def test_submit_timeout_marks_session_errored(db_engine, monkeypatch) -> N
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

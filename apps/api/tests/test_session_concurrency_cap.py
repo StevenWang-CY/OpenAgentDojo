@@ -88,6 +88,7 @@ async def cap_setup(client, db_engine, monkeypatch):
                 manifest_sha256="c" * 64,
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         await db.commit()

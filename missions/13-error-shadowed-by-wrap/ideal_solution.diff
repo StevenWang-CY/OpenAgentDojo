@@ -1,0 +1,20 @@
+diff --git a/internal/handlers/handlers.go b/internal/handlers/handlers.go
+--- a/internal/handlers/handlers.go
++++ b/internal/handlers/handlers.go
+@@ -102,13 +102,9 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+ // lookupOrder isolates the ``Get`` call so handlers can share the
+ // not-found / 5xx translation logic.
+-//
+-// XXX (mission 13): the wrap uses ``%v`` (not ``%w``), which demotes
+-// the typed ``store.ErrOrderNotFound`` sentinel to an opaque string.
+-// ``errors.Is(err, store.ErrOrderNotFound)`` upstack returns false and
+-// the handler answers 500 instead of 404 for a missing order. This is
+-// the load-bearing bug in the ``error-shadowed-by-wrap`` mission.
+ func lookupOrder(ctx context.Context, s *store.Store, id string) (model.Order, error) {
+ 	o, err := s.Get(ctx, id)
+ 	if err != nil {
+-		return model.Order{}, fmt.Errorf("lookup order %q: %v", id, err)
++		return model.Order{}, fmt.Errorf("lookup order %q: %w", id, err)
+ 	}
+ 	return o, nil
+ }

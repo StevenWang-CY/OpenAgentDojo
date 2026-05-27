@@ -38,6 +38,7 @@ Single source of truth for the load-bearing nouns and conventions used across co
 - File paths in docs are repo-relative.
 - Identifiers in YAML/JSON use `snake_case`; identifiers in TypeScript use `camelCase`; types use `PascalCase`.
 - Mission IDs are kebab-case with an `NN-` prefix on the folder name (e.g. `01-auth-cookie-expiration`); the manifest `id` field omits the prefix (`auth-cookie-expiration`).
+- **Adding a new mission**: run `python scripts/mission-template/init.py` from the repo root. The CLI prompts for the required metadata, enforces the closed tag vocabulary in [apps/api/app/missions/manifest.py](apps/api/app/missions/manifest.py) (`_FAILURE_MODE_TAGS`, repo packs, language runtimes), and scaffolds the next-numbered `missions/<NN>-<id>/` directory from `scripts/mission-template/template/`. See [scripts/mission-template/README.md](scripts/mission-template/README.md) for the author checklist.
 - All Anthropic LLM access goes through `civitas_core.llm.anthropic_client.build_anthropic_sdk_client()` (Bedrock by default in prod). **Never hard-code Bedrock inference-profile ids.**
 - All POST routes require `X-Csrf-Token` once auth is enabled (M3+).
 - Times are `TIMESTAMPTZ` in DB and ISO-8601 UTC in JSON.

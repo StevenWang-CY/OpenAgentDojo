@@ -52,6 +52,7 @@ async def _setup(db_engine, mission_id="auth-cookie-expiration"):
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

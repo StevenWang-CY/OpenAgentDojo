@@ -89,6 +89,7 @@ async def _seed_mission_and_session(session_factory, mission_id: str) -> uuid.UU
             manifest_sha256="sha",
             version=1,
             published=True,
+            expected_weak_dim="safety",
         )
         db.add(mission)
         await db.flush()
@@ -573,6 +574,7 @@ async def test_submission_graded_breakdown_always_has_seven_dimensions(
         agent_turns,
         prompt_judgements=None,
         completed_mission_ids=None,
+        engine_recommended_mission_ids=None,
     ):
         from app.grading.dimensions import DIMENSION_MAX
 

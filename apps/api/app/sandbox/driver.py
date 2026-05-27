@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from app.sandbox.types import (
     ApplyResult,
@@ -13,6 +13,12 @@ from app.sandbox.types import (
     RunResult,
     SandboxHandle,
 )
+
+# Re-exported lazily inside :meth:`SandboxDriver.spawn_lsp` typing — keep the
+# ``app.sandbox.lsp`` import out of the module-load path so importing the
+# driver base does NOT pull in asyncio.subprocess wiring at module load time.
+if TYPE_CHECKING:
+    from app.sandbox.lsp import LSPProcess
 
 
 class SearchTimeoutError(RuntimeError):
@@ -154,6 +160,23 @@ class SandboxDriver(ABC):
 
     @abstractmethod
     async def destroy(self, handle: SandboxHandle) -> None: ...
+
+    @abstractmethod
+    async def spawn_lsp(self, handle: SandboxHandle, language: str) -> LSPProcess:
+        """Launch a Language Server Protocol process inside the sandbox.
+
+        ``language`` is one of :data:`app.sandbox.lsp.SUPPORTED_LANGUAGES`
+        (``python``, ``typescript``, ``go``). Returns a concrete
+        :class:`app.sandbox.lsp.LSPProcess` whose stdio is wired to the
+        underlying transport (host subprocess for the local driver, docker
+        exec socket for the docker driver).
+
+        Implementations MUST raise :class:`app.sandbox.lsp.LSPUnavailableError`
+        when the binary is missing from the sandbox image instead of crashing
+        — the WS proxy translates that into an ``lsp_error`` text frame so
+        the frontend can render a degraded-but-usable editor rather than
+        forcing the user to reload.
+        """
 
     async def ping(self) -> bool:
         """Lightweight readiness probe — used by ``/healthz/ready``.

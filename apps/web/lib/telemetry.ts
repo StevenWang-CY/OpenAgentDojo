@@ -87,7 +87,45 @@ export type TelemetryEvent =
   // Distinct from ``github_oauth_clicked_from_resend`` so the funnel
   // can distinguish "started with GitHub" from "fell back to GitHub
   // after the email didn't arrive".
-  | "sign_in_github_clicked";
+  | "sign_in_github_clicked"
+  // P1-2 — emitted when an adaptive next-mission recommendation surface
+  // mounts with data. ``kind`` discriminates the three surfaces
+  // (profile strip, catalog chip, report footer); ``weakest_dim`` is
+  // ``null`` for cold-start users (ladder path); ``mission_ids`` is the
+  // ordered top-3 (or just the single id for the catalog chip / report
+  // footer). ``signed_in`` is technically redundant (the surface only
+  // renders for signed-in viewers) but kept for the funnel join.
+  | "recommendation_shown"
+  // P1-2 — emitted when the user clicks a recommendation card / chip.
+  // ``position`` is the 0-indexed slot in the rendered list (always 0
+  // for the catalog chip / report footer); ``mission_id`` lets the
+  // attribution join across surfaces; ``kind`` matches
+  // ``recommendation_shown``'s kind.
+  | "recommendation_clicked"
+  // P1-3 — emitted by ``lib/lsp/client.ts`` once the JSON-RPC
+  // ``initialize`` handshake against the in-sandbox language server
+  // succeeds. ``cold_start_ms`` is the wall-clock duration from WS
+  // open to the ``initialized`` notification being sent — this is the
+  // load-bearing operational metric (the design caps it at 5 s for
+  // the amber chip, beyond which we want telemetry to surface a
+  // suspicious cold start).
+  | "lsp_session_started"
+  // P1-3 — emitted by ``CodeEditor`` when the user accepts a
+  // completion suggestion proxied through the LSP client. Monaco
+  // doesn't fire a direct "completion accepted" event; we hook the
+  // ``IStandaloneCodeEditor.onDidPaste`` / ``onDidCompositionEnd``
+  // surface plus the completion provider's ``resolveCompletionItem``
+  // — when both fire in quick succession we count an acceptance.
+  // Best-effort signal; missing one acceptance is fine.
+  | "lsp_completion_accepted"
+  // P1-3 — emitted on any LSP failure path: structured ``lsp_error``
+  // text frame from the backend (``binary_not_found``,
+  // ``unsupported_language``, ...), an unexpected WS close
+  // (``close_4404`` / ``close_4503`` / ``close_1011`` / ...), or a
+  // local ``initialize_failed``. ``error_class`` is a free-form
+  // string so a future backend error class doesn't require a FE
+  // typedef bump.
+  | "lsp_error";
 
 /**
  * Canonical event names, exposed as a const enum-like object so call sites
@@ -116,7 +154,32 @@ export const TelemetryEvents = {
   magic_link_resend_clicked: "magic_link_resend_clicked",
   github_oauth_clicked_from_resend: "github_oauth_clicked_from_resend",
   sign_in_github_clicked: "sign_in_github_clicked",
+  recommendation_shown: "recommendation_shown",
+  recommendation_clicked: "recommendation_clicked",
+  lsp_session_started: "lsp_session_started",
+  lsp_completion_accepted: "lsp_completion_accepted",
+  lsp_error: "lsp_error",
 } as const satisfies Record<TelemetryEvent, TelemetryEvent>;
+
+// ── P1-3 LSP convenience helpers ────────────────────────────────────────────
+
+/**
+ * Lightweight typed wrapper around ``track`` for the three LSP events.
+ * Lives here (not in ``lib/lsp/client.ts``) so the consent gate stays a
+ * single chokepoint and so the LSP client can be imported without
+ * pulling the full telemetry surface into its own type graph.
+ */
+export type LspTelemetryEvent =
+  | "lsp_session_started"
+  | "lsp_completion_accepted"
+  | "lsp_error";
+
+export function trackLspEvent(
+  event: LspTelemetryEvent,
+  props: Record<string, unknown>
+): void {
+  track(event, props);
+}
 
 // ── Ring buffer & internal state ────────────────────────────────────────────
 

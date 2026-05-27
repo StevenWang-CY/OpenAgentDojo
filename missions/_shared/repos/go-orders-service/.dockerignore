@@ -1,0 +1,9 @@
+bin/
+*.db
+testdata/*.db
+.git
+.idea
+.vscode
+*.test
+*.out
+*.swp

@@ -1,0 +1,48 @@
+diff --git a/internal/store/store.go b/internal/store/store.go
+--- a/internal/store/store.go
++++ b/internal/store/store.go
+@@ -18,6 +18,10 @@ import (
+ 	_ "modernc.org/sqlite" // pure-Go sqlite driver, no CGO required
+ )
+
++// queryTimeout bounds every storage call so a stuck driver can't tie
++// up a worker forever.
++const queryTimeout = 5 * time.Second
++
+ // ErrOrderNotFound is the sentinel returned by ``Get`` and ``UpdateStatus``
+ // when no row matches. Handlers compare against this with ``errors.Is`` to
+ // translate the storage outcome into an HTTP 404. Keep it exported and
+@@ -118,6 +122,8 @@ func (s *Store) ensureSchema(ctx context.Context) error {
+ // in the ``context-cancel-dropped`` mission.
+ func (s *Store) Get(ctx context.Context, id string) (model.Order, error) {
+ 	_ = ctx
++	boundedCtx, cancel := context.WithTimeout(context.Background(), queryTimeout)
++	defer cancel()
+ 	const q = `
+ 		SELECT id, sku, quantity, status, created_at
+ 		FROM   orders
+@@ -125,7 +131,7 @@ func (s *Store) Get(ctx context.Context, id string) (model.Order, error) {
+ 	`
+ 	var o model.Order
+ 	var statusText string
+-	row := s.db.QueryRowContext(context.Background(), q, id)
++	row := s.db.QueryRowContext(boundedCtx, q, id)
+ 	err := row.Scan(&o.ID, &o.SKU, &o.Quantity, &statusText, &o.CreatedAt)
+ 	if errors.Is(err, sql.ErrNoRows) {
+ 		return model.Order{}, ErrOrderNotFound
+@@ -145,12 +151,14 @@ func (s *Store) Get(ctx context.Context, id string) (model.Order, error) {
+ // the inbound HTTP request has been cancelled.
+ func (s *Store) List(ctx context.Context) ([]model.Order, error) {
+ 	_ = ctx
++	boundedCtx, cancel := context.WithTimeout(context.Background(), queryTimeout)
++	defer cancel()
+ 	const q = `
+ 		SELECT id, sku, quantity, status, created_at
+ 		FROM   orders
+ 		ORDER  BY created_at ASC, id ASC
+ 	`
+-	rows, err := s.db.QueryContext(context.Background(), q)
++	rows, err := s.db.QueryContext(boundedCtx, q)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("list orders: %w", err)
+ 	}

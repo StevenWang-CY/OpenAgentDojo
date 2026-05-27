@@ -369,6 +369,7 @@ def build_feedback_narrative(
     dimensions: dict[str, Any],
     completed_mission_ids: list[str] | None = None,
     max_diagnostics: int = 4,
+    engine_recommended_mission_ids: list[str] | None = None,
 ) -> list[Diagnostic]:
     """Produce one ``Diagnostic`` per weakness, ordered by severity.
 
@@ -381,8 +382,20 @@ def build_feedback_narrative(
     Recommended mission ids exclude anything already in
     ``completed_mission_ids`` — there's no point sending the user back
     to a mission they have already attempted.
+
+    P1-2 — when ``engine_recommended_mission_ids`` is supplied, it
+    overrides the legacy per-dimension static lists. The persisted
+    field becomes a globally-ranked top-3 (same on every diagnostic
+    entry) sourced from the deterministic recommendation engine. The
+    P0-11 verify envelope hashes against the persisted ranking, so
+    this must remain deterministic for the same user + history.
     """
     completed = set(completed_mission_ids or [])
+    engine_recs: list[str] | None = (
+        list(engine_recommended_mission_ids)
+        if engine_recommended_mission_ids is not None
+        else None
+    )
 
     # Score each dimension's "weakness intensity" — pending dimensions are
     # surfaced too (severity = max, so they sort high). Among scored
@@ -413,9 +426,19 @@ def build_feedback_narrative(
             if cause_fn is not None
             else "See per-signal breakdown above."
         )
-        recs = [mid for mid in _RECOMMENDED_BY_DIMENSION.get(dim_name, []) if mid not in completed][
-            :2
-        ]
+        # P1-2 — when the engine has supplied the globally-ranked top-3
+        # ids, use them directly instead of the legacy per-dimension
+        # static list. The same ranking is surfaced on every diagnostic
+        # entry so the persisted field carries the same top-3 the
+        # ``/me/recommendations`` endpoint serves on the hot path.
+        if engine_recs is not None:
+            recs = list(engine_recs)
+        else:
+            recs = [
+                mid
+                for mid in _RECOMMENDED_BY_DIMENSION.get(dim_name, [])
+                if mid not in completed
+            ][:2]
         if recs:
             recommendation = _format_recommendation(dim_name, recs)
         else:

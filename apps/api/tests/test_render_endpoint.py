@@ -49,6 +49,7 @@ async def _seed(db_engine, *, status: str = "graded") -> tuple[uuid.UUID, uuid.U
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

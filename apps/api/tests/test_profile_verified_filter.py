@@ -56,6 +56,7 @@ async def _seed_user_and_missions(SessionLocal) -> tuple[uuid.UUID, list[str]]: 
                     manifest_sha256="sha",
                     version=1,
                     published=True,
+                    expected_weak_dim="safety",
                 )
             )
         await db.commit()

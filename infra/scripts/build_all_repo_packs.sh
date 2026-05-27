@@ -4,8 +4,9 @@
 #
 # Iterates missions/_shared/repos/*/ and shells out to build_repo_pack.sh.
 # Picks the base image per pack name:
-#   data-api-demo  -> agentarena/python312:1
-#   anything else  -> agentarena/node20:1
+#   data-api-demo      -> agentarena/python312:1
+#   go-orders-service  -> agentarena/go122:1
+#   anything else      -> agentarena/node20:1
 #
 # The commit SHA tag is derived from the working tree's HEAD (short SHA) so
 # packs stay reproducible alongside the platform code. Override per-pack by
@@ -43,8 +44,9 @@ for pack_dir in "${PACKS_DIR}"/*/; do
   fi
 
   case "${pack_name}" in
-    data-api-demo)    base_image="agentarena/python312:1" ;;
-    *)                base_image="agentarena/node20:1" ;;
+    data-api-demo)      base_image="agentarena/python312:1" ;;
+    go-orders-service)  base_image="agentarena/go122:1" ;;
+    *)                  base_image="agentarena/node20:1" ;;
   esac
 
   echo "============================================================"

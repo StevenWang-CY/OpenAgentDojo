@@ -5,11 +5,12 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle, UserX } from "lucide-react";
 import type { PublicProfile } from "@arena/shared-types";
-import { ApiError, getProfile } from "@/lib/api";
+import { ApiError, auth, getMyRecommendations, getProfile } from "@/lib/api";
 import { ProfileHeader } from "./ProfileHeader";
 import { ProfileRadar } from "./ProfileRadar";
 import { BadgeGrid } from "./BadgeGrid";
 import { MissionHistoryTable } from "./MissionHistoryTable";
+import { RecommendationStrip } from "./RecommendationStrip";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { track } from "@/lib/telemetry";
@@ -24,6 +25,38 @@ export function ProfileView({ handle }: ProfileViewProps) {
     queryFn: ({ signal }) => getProfile(handle, signal),
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status === 404) return false;
+      return failureCount < 1;
+    },
+  });
+
+  // P1-2 — viewer-vs-owner check. The recommendation strip is owner-only:
+  // anonymous viewers (401 on /me) and other-user viewers never see it.
+  // ``retry: false`` on 401 keeps the anonymous path from churning.
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: ({ signal }) => auth.me(signal),
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 0)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+  });
+  const viewer = meQuery.data ?? null;
+  const isOwner = viewer?.handle != null && viewer.handle === handle;
+
+  // P1-2 — fetch the recommendation set only for the owner. The endpoint
+  // 401s for anonymous callers and never returns another user's
+  // recommendations, but gating on ``enabled`` keeps the network quiet
+  // on other-user profile views.
+  const recommendationsQuery = useQuery({
+    queryKey: ["me-recommendations"],
+    queryFn: ({ signal }) => getMyRecommendations(signal),
+    enabled: isOwner,
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 0)) {
+        return false;
+      }
       return failureCount < 1;
     },
   });
@@ -112,6 +145,15 @@ export function ProfileView({ handle }: ProfileViewProps) {
       <section className="mt-3" aria-labelledby="profile-header">
         <ProfileHeader profile={profile} />
       </section>
+
+      {/* P1-2 — adaptive next-mission recommendation strip. Owner-only:
+          rendered only when the viewer's handle matches the profile being
+          viewed. The strip sits above the radar so the "what to work on
+          next" affordance is the first thing the owner sees on their own
+          profile — it's the load-bearing CTA. */}
+      {isOwner && recommendationsQuery.data ? (
+        <RecommendationStrip data={recommendationsQuery.data} />
+      ) : null}
 
       {Object.keys(profile.radar_averages).length > 0 ? (
         <>

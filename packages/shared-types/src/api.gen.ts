@@ -4,21 +4,15 @@
  */
 
 export interface paths {
-  '/healthz': {
+  '/api/v1/auth/callback': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /**
-     * Liveness probe
-     * @description Cheap liveness probe — no DB / Redis touches.
-     *
-     *     Kubernetes / load balancers should hit this every second; the heavier
-     *     DB+Redis check lives at ``/healthz/ready``.
-     */
-    get: operations['healthz_healthz_get'];
+    /** Exchange magic-link token for a session */
+    get: operations['get_callback_api_v1_auth_callback_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -27,241 +21,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/healthz/ready': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Readiness probe
-     * @description Full readiness check with bounded per-probe timeouts.
-     *
-     *     Returns HTTP 200 when the DB, Redis, and sandbox runtime are reachable.
-     *     When any of those three fail we return the same JSON body with HTTP 503
-     *     so load balancers and Kubernetes can de-list the pod. ``s3_ok`` is
-     *     treated as best-effort and does NOT force 503 — object storage is not on
-     *     the request hot-path for every endpoint, and a transient S3 hiccup
-     *     shouldn't take traffic away from the API.
-     */
-    get: operations['healthz_ready_healthz_ready_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/status': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Public status page
-     * @description Aggregated, human-readable system status. Cached for 10s. Mirrors the components probed by ``/healthz/ready`` plus uptime and version.
-     */
-    get: operations['status_status_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/status': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** API status (v1 alias for public /status) */
-    get: operations['status_v1_api_v1_status_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/missions': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List published missions */
-    get: operations['list_missions_api_v1_missions_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/missions/{mission_id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Mission detail */
-    get: operations['get_mission_detail_api_v1_missions__mission_id__get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Create a session */
-    post: operations['post_session_api_v1_sessions_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Read a session */
-    get: operations['get_session_endpoint_api_v1_sessions__session_id__get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/ws-token': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Mint a short-lived WS auth token */
-    get: operations['get_ws_token_api_v1_sessions__session_id__ws_token_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/context': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Update session context selection */
-    post: operations['post_context_api_v1_sessions__session_id__context_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/tree': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** List the sandbox file tree */
-    get: operations['get_tree_api_v1_sessions__session_id__tree_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/file': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Read a file from the sandbox */
-    get: operations['get_file_api_v1_sessions__session_id__file_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/files': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Write a file in the sandbox */
-    post: operations['post_file_api_v1_sessions__session_id__files_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/files/revert': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Revert a file to its initial state */
-    post: operations['post_revert_api_v1_sessions__session_id__files_revert_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/reset': {
+  '/api/v1/auth/csrf-refresh': {
     parameters: {
       query?: never;
       header?: never;
@@ -271,63 +31,36 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Reset the workspace to the mission's initial commit (P0-12)
-     * @description Roll the sandbox back to ``mission.initial_commit``.
+     * Force-rotate the CSRF token (clears the existing cookie)
+     * @description Explicit endpoint to rotate the CSRF cookie.
      *
-     *     Preconditions:
-     *       * the caller owns the session,
-     *       * ``session.status == 'active'`` (the mutability gate),
-     *       * the sandbox handle is alive (the existing 503 path).
-     *
-     *     Side effects (in order):
-     *       1. ``git status --porcelain`` → count discarded files (telemetry).
-     *       2. ``git reset --hard <initial_commit>``.
-     *       3. ``git clean -fd`` — drops untracked files + directories.
-     *       4. Emit ``session.reset`` with
-     *          ``{files_discarded, had_agent_patch, seconds_into_session}``.
-     *       5. Insert a ``FileChange(source='revert', path='*')`` so the file-
-     *          change audit trail records the wipe.
-     *
-     *     Concurrency note: the existing apply-patch path holds no per-handle
-     *     lock today (see ``app/sandbox/pool.py``). A reset issued while a
-     *     patch is mid-apply may race; the workspace store is single-tab so
-     *     the FE side rarely produces this. A future hardening pass should
-     *     add a per-handle ``asyncio.Lock`` and wrap both apply-patch and
-     *     reset in it.
+     *     Useful for tooling / Selenium that wants a fresh token without going
+     *     through ``/auth/callback``.
      */
-    post: operations['post_reset_api_v1_sessions__session_id__reset_post'];
+    post: operations['post_csrf_refresh_api_v1_auth_csrf_refresh_post'];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/api/v1/sessions/{session_id}/commands': {
+  '/api/v1/auth/github/available': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get?: never;
-    put?: never;
-    /** Run a command in the sandbox */
-    post: operations['post_command_api_v1_sessions__session_id__commands_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/diff': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get the workspace diff from initial state */
-    get: operations['get_diff_api_v1_sessions__session_id__diff_get'];
+    /**
+     * Whether GitHub OAuth is configured on this deployment (P0-7)
+     * @description Cheap probe used by the FE sign-in page.
+     *
+     *     Returns ``{enabled: true}`` only when both ``GITHUB_OAUTH_CLIENT_ID``
+     *     and ``GITHUB_OAUTH_CLIENT_SECRET`` are set. The FE hides the
+     *     "Continue with GitHub" button when ``enabled`` is False so users
+     *     aren't shown a path that would 503 on click.
+     */
+    get: operations['get_github_oauth_available_api_v1_auth_github_available_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -336,62 +69,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/sessions/{session_id}/events/diff-opened': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Record that the user opened the diff viewer (for scoring + badges)
-     * @description Emits a ``diff.opened`` supervision event.
-     *
-     *     Driven by the frontend DiffViewer the first time it mounts with a
-     *     non-empty diff. The score engine's "Agent Output Review" dimension
-     *     (§11.2.4) checks for this event after ``patch.applied`` to award up to
-     *     +6 points; without it, the dimension is hard-capped.
-     *
-     *     Accepts an optional ``{"path": "..."}`` body so the timeline can name the
-     *     specific file the user opened. An empty body is still accepted for
-     *     backwards compatibility with older clients.
-     */
-    post: operations['post_diff_opened_api_v1_sessions__session_id__events_diff_opened_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/events/tutorial-step': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Record a tutorial coachmark step transition (P0-1)
-     * @description Persist a ``tutorial.step_completed`` or ``tutorial.dismissed`` event.
-     *
-     *     These events are tutorial-only — the grader ignores them (Mission 00
-     *     short-circuits the scoring path entirely). Persisting them via the
-     *     supervision-event log keeps the audit trail uniform with every other
-     *     user action, which is the load-bearing invariant for the post-mortem
-     *     replay tool.
-     */
-    post: operations['post_tutorial_step_api_v1_sessions__session_id__events_tutorial_step_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/files/list': {
+  '/api/v1/auth/github/callback': {
     parameters: {
       query?: never;
       header?: never;
@@ -399,21 +77,29 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List workspace files (gitignore-aware, fuzzy-filtered server-side)
-     * @description Return workspace paths for the quick-open file palette.
+     * Complete the GitHub OAuth round-trip (P0-7)
+     * @description Verify state, exchange code, upsert user, mint session, redirect.
      *
-     *     The listing comes from ``git ls-files --cached --others
-     *     --exclude-standard`` so ``.gitignore`` is honoured and untracked-but-not-
-     *     ignored files surface immediately. Results are deduplicated and sorted by
-     *     depth-then-name (top-level entrypoints first), then filtered by ``query``
-     *     if supplied. The substring match is intentionally simple — the full fuzzy
-     *     score lives on the client where it can re-rank without a roundtrip.
+     *     The "happy path" is:
      *
-     *     Cached per sandbox for 30 seconds so a fast-typing user doesn't shell out
-     *     to ``git`` on every keystroke. The cache is bypassed transparently when
-     *     the sandbox is destroyed (the handle id changes).
+     *       1. ``consume_oauth_state`` verifies the state cookie matches the
+     *          ``?state=`` query and the JWT is unexpired.
+     *       2. ``exchange_code_for_token`` POSTs to github.com → access token.
+     *       3. ``fetch_user_profile`` GETs ``/user`` + ``/user/emails`` and
+     *          returns a normalised ``GithubProfile``.
+     *       4. We upsert the local user by ``github_id`` (primary key), falling
+     *          back to ``email`` for first-time link, falling back to a new row
+     *          if neither matches.
+     *       5. Mint a session cookie, set CSRF, redirect to
+     *          ``web_origin + (return_to or '/missions')``.
+     *
+     *     Any failure (state mismatch, expired JWT, GitHub 4xx/5xx, network
+     *     error) is logged with a structured ``auth.github.callback.failure``
+     *     line and redirects to
+     *     ``web_origin/auth/sign-in?error=github_oauth_failed``. We never echo
+     *     GitHub error strings back to the browser.
      */
-    get: operations['get_files_list_api_v1_sessions__session_id__files_list_get'];
+    get: operations['get_github_oauth_callback_api_v1_auth_github_callback_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -422,49 +108,24 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/sessions/{session_id}/files/search': {
+  '/api/v1/auth/github/start': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get?: never;
-    put?: never;
     /**
-     * Find-in-files across the workspace (ripgrep-backed)
-     * @description Run a ripgrep-backed search across the sandbox workspace.
+     * Begin the GitHub OAuth round-trip (P0-7)
+     * @description Mint the state cookie and 302 to github.com/login/oauth/authorize.
      *
-     *     The search itself is read-only — but we DO emit a ``command.run``
-     *     supervision event with ``category='manual'`` so the grader's
-     *     context_selection dimension can credit the supervisor for actually
-     *     poking around the workspace before prompting. The event payload
-     *     carries the query (truncated) and the result count; the literal
-     *     ripgrep argv is never logged because it could contain sensitive
-     *     user-supplied substrings.
-     *
-     *     Errors:
-     *         400 ``invalid_regex`` — the user enabled regex mode and the pattern
-     *             failed to compile.
-     *         504 ``search_timeout`` — the ripgrep subprocess exceeded the 10s
-     *             wall-clock budget.
+     *     Returns 503 with ``{code: 'oauth_unavailable'}`` when the operator has
+     *     not configured client_id + client_secret. The FE's
+     *     ``GET /auth/github/available`` probe is the primary defence against
+     *     showing the button in that case — this 503 is the defence-in-depth
+     *     fallback for clients that hit the URL directly.
      */
-    post: operations['post_files_search_api_v1_sessions__session_id__files_search_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/timeline': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Return the supervision event timeline for the session */
-    get: operations['get_timeline_api_v1_sessions__session_id__timeline_get'];
+    get: operations['get_github_oauth_start_api_v1_auth_github_start_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -473,7 +134,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/sessions/{session_id}/submit': {
+  '/api/v1/auth/logout': {
     parameters: {
       query?: never;
       header?: never;
@@ -483,119 +144,10 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Submit a session for grading
-     * @description Trigger the grading pipeline for a session.
-     *
-     *     Returns 200 with the final ``SubmissionRead`` once grading completes
-     *     (the call blocks until the runner returns; see ``sessions/submit.py``).
+     * Clear the session cookie
+     * @description Clear the session cookie and revoke its JTI so the token cannot replay.
      */
-    post: operations['post_submit_api_v1_sessions__session_id__submit_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/give-up': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Forfeit the session, reveal the ideal solution, cap the score at 50
-     * @description Forfeit the active session and immediately submit it for grading.
-     *
-     *     Preconditions:
-     *       * The caller owns the session.
-     *       * ``session.status == 'active'`` (a session that's already submitting
-     *         or graded can't be given up on — the user must wait for the
-     *         in-flight grade to finish, then they can retry).
-     *       * At least :data:`GIVE_UP_MIN_SECONDS` (10 min) have elapsed since
-     *         ``session.started_at`` — prevents quitting before engaging.
-     *
-     *     Side-effects (in order):
-     *       1. Emit ``session.gave_up`` supervision event with the
-     *          ``seconds_into_session`` payload (so the timeline reflects the
-     *          deliberate forfeit).
-     *       2. Stamp ``sessions.gave_up_at = now()``. The grading runner reads
-     *          this flag when computing the score report and applies a 50/100
-     *          cap with ``score_cap_reason='gave_up'``.
-     *       3. Call the standard submit pipeline (same path as
-     *          ``POST /sessions/{id}/submit``).
-     *
-     *     Errors:
-     *       * 409 — session is not active (already graded, abandoned, errored,
-     *         or mid-submit). Detail includes the current status.
-     *       * 425 (Too Early) — 10-min window hasn't elapsed yet. Detail
-     *         carries ``seconds_remaining`` so the FE can render a countdown.
-     */
-    post: operations['post_give_up_api_v1_sessions__session_id__give_up_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/submission': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Retrieve the grading result for a session
-     * @description Return the grading submission for an already-graded session.
-     *
-     *     Returns 404 if the session has not been submitted yet, or 404 if the
-     *     session itself does not exist. ``ideal_solution`` /
-     *     ``ideal_solution_diff`` / ``agent_patch_diff`` are injected from disk
-     *     when ``session.status == 'graded'`` so the FE can render the
-     *     post-mortem walkthrough (P0-2) without a second roundtrip to
-     *     ``/reports``.
-     */
-    get: operations['get_submission_api_v1_sessions__session_id__submission_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/events/integrity': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Record a proctored-mode integrity signal (P0-8)
-     * @description Persist an integrity signal for a proctored session.
-     *
-     *     Behaviour:
-     *       * Self-study session: drop the event silently, return 204. The FE
-     *         keeps its listeners attached so a future toggle into proctored
-     *         mode (currently rejected at create-time, but defence-in-depth)
-     *         wouldn't surprise the user.
-     *       * Proctored session: rate-limit (60/min/session), persist as a
-     *         supervision event, increment ``integrity_signals_count``,
-     *         return 204.
-     *       * Unknown kind: 422.
-     *       * Bucket full: 429 with ``Retry-After: 60``.
-     *
-     *     Ownership is enforced via ``_require_owned_session`` — the same 404
-     *     "session not found" vs. 403 "not your session" envelope every other
-     *     session-scoped endpoint uses.
-     */
-    post: operations['post_integrity_event_api_v1_sessions__session_id__events_integrity_post'];
+    post: operations['post_logout_api_v1_auth_logout_post'];
     delete?: never;
     options?: never;
     head?: never;
@@ -667,43 +219,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/auth/callback': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Exchange magic-link token for a session */
-    get: operations['get_callback_api_v1_auth_callback_get'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/auth/logout': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Clear the session cookie
-     * @description Clear the session cookie and revoke its JTI so the token cannot replay.
-     */
-    post: operations['post_logout_api_v1_auth_logout_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/api/v1/auth/me': {
     parameters: {
       query?: never;
@@ -728,54 +243,6 @@ export interface paths {
      *     fail at validation with a 422 + a typed FE error.
      */
     patch: operations['patch_me_api_v1_auth_me_patch'];
-    trace?: never;
-  };
-  '/api/v1/auth/csrf-refresh': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Force-rotate the CSRF token (clears the existing cookie)
-     * @description Explicit endpoint to rotate the CSRF cookie.
-     *
-     *     Useful for tooling / Selenium that wants a fresh token without going
-     *     through ``/auth/callback``.
-     */
-    post: operations['post_csrf_refresh_api_v1_auth_csrf_refresh_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/auth/me/tutorial/replay': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Clear tutorial completion + increment replay count (P0-1)
-     * @description Re-arm the tutorial coachmark for the signed-in user.
-     *
-     *     Atomic: a single SQL ``UPDATE`` clears ``tutorial_completed_at`` and
-     *     increments ``tutorial_replay_count`` server-side. The previous
-     *     Python-side read-modify-write lost increments under concurrent
-     *     replays (two callers each read N, both wrote N+1).
-     */
-    post: operations['post_tutorial_replay_api_v1_auth_me_tutorial_replay_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
     trace?: never;
   };
   '/api/v1/auth/me/consent': {
@@ -814,6 +281,85 @@ export interface paths {
      *     :class:`AccountEvent` for the full event-type allow-list.
      */
     post: operations['post_me_consent_api_v1_auth_me_consent_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/data-export': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Kick off an asynchronous account data-export job (P0-6)
+     * @description Insert a ``queued`` row and enqueue the export worker.
+     *
+     *     Returns 409 if there is already a ``queued`` or ``running`` export for
+     *     this user — the partial unique index enforces this at the DB layer on
+     *     Postgres, but we also check at the application layer for SQLite (which
+     *     ignores ``WHERE`` on unique indexes) AND as defence-in-depth.
+     *
+     *     If the RQ queue is unreachable we fall back to running the worker
+     *     inline in the request loop — same pattern as ``provision_in_process``.
+     */
+    post: operations['post_me_data_export_api_v1_auth_me_data_export_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/data-export/{export_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Poll a data-export job and (if ready) get a signed download URL (P0-6) */
+    get: operations['get_me_data_export_api_v1_auth_me_data_export__export_id__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/delete': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Schedule the caller's account for hard deletion in 7 days (P0-6) */
+    post: operations['post_me_delete_api_v1_auth_me_delete_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/me/delete/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Cancel a pending account deletion during the grace window (P0-6) */
+    post: operations['post_me_delete_cancel_api_v1_auth_me_delete_cancel_post'];
     delete?: never;
     options?: never;
     head?: never;
@@ -904,7 +450,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/auth/me/data-export': {
+  '/api/v1/auth/me/tutorial/replay': {
     parameters: {
       query?: never;
       header?: never;
@@ -914,33 +460,40 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Kick off an asynchronous account data-export job (P0-6)
-     * @description Insert a ``queued`` row and enqueue the export worker.
+     * Clear tutorial completion + increment replay count (P0-1)
+     * @description Re-arm the tutorial coachmark for the signed-in user.
      *
-     *     Returns 409 if there is already a ``queued`` or ``running`` export for
-     *     this user — the partial unique index enforces this at the DB layer on
-     *     Postgres, but we also check at the application layer for SQLite (which
-     *     ignores ``WHERE`` on unique indexes) AND as defence-in-depth.
-     *
-     *     If the RQ queue is unreachable we fall back to running the worker
-     *     inline in the request loop — same pattern as ``provision_in_process``.
+     *     Atomic: a single SQL ``UPDATE`` clears ``tutorial_completed_at`` and
+     *     increments ``tutorial_replay_count`` server-side. The previous
+     *     Python-side read-modify-write lost increments under concurrent
+     *     replays (two callers each read N, both wrote N+1).
      */
-    post: operations['post_me_data_export_api_v1_auth_me_data_export_post'];
+    post: operations['post_tutorial_replay_api_v1_auth_me_tutorial_replay_post'];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  '/api/v1/auth/me/data-export/{export_id}': {
+  '/api/v1/me/recommendations': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /** Poll a data-export job and (if ready) get a signed download URL (P0-6) */
-    get: operations['get_me_data_export_api_v1_auth_me_data_export__export_id__get'];
+    /**
+     * Adaptive next-mission recommendation for the signed-in user
+     * @description Return the top-3 next missions tailored to ``user``.
+     *
+     *     Always returns a populated :class:`RecommendationSet`. Cold-start
+     *     users (no graded submissions) get the introductory ladder; users
+     *     who have graded every shipped mission get the largest-gap retry +
+     *     two ``coming_soon`` placeholders. The endpoint never 5xx's on a
+     *     missing-cache row — the engine recomputes deterministically and
+     *     persists the result.
+     */
+    get: operations['get_recommendations_api_v1_me_recommendations_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -949,41 +502,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/auth/me/delete': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Schedule the caller's account for hard deletion in 7 days (P0-6) */
-    post: operations['post_me_delete_api_v1_auth_me_delete_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/auth/me/delete/cancel': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Cancel a pending account deletion during the grace window (P0-6) */
-    post: operations['post_me_delete_cancel_api_v1_auth_me_delete_cancel_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/auth/github/available': {
+  '/api/v1/missions': {
     parameters: {
       query?: never;
       header?: never;
@@ -991,15 +510,21 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Whether GitHub OAuth is configured on this deployment (P0-7)
-     * @description Cheap probe used by the FE sign-in page.
+     * List published missions
+     * @description List published missions with optional catalog filters (P1-1).
      *
-     *     Returns ``{enabled: true}`` only when both ``GITHUB_OAUTH_CLIENT_ID``
-     *     and ``GITHUB_OAUTH_CLIENT_SECRET`` are set. The FE hides the
-     *     "Continue with GitHub" button when ``enabled`` is False so users
-     *     aren't shown a path that would 503 on click.
+     *     Filter semantics
+     *     ----------------
+     *     * ``tags`` is an OR-within-the-param, AND-across-params filter — a row
+     *       matches if it carries *any* of the supplied tags. Multiple ``tags``
+     *       query params chain via the usual FastAPI list collation.
+     *     * ``repo_pack`` and ``language`` are equality matches against the
+     *       mission's pack metadata.
+     *     * Coming-soon entries are independent of the ``tags`` / ``repo_pack``
+     *       filters (they have no manifest yet); ``language`` *does* apply to
+     *       placeholders since the roadmap entry carries its own language.
      */
-    get: operations['get_github_oauth_available_api_v1_auth_github_available_get'];
+    get: operations['list_missions_api_v1_missions_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1008,24 +533,15 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/auth/github/start': {
+  '/api/v1/missions/{mission_id}': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    /**
-     * Begin the GitHub OAuth round-trip (P0-7)
-     * @description Mint the state cookie and 302 to github.com/login/oauth/authorize.
-     *
-     *     Returns 503 with ``{code: 'oauth_unavailable'}`` when the operator has
-     *     not configured client_id + client_secret. The FE's
-     *     ``GET /auth/github/available`` probe is the primary defence against
-     *     showing the button in that case — this 503 is the defence-in-depth
-     *     fallback for clients that hit the URL directly.
-     */
-    get: operations['get_github_oauth_start_api_v1_auth_github_start_get'];
+    /** Mission detail */
+    get: operations['get_mission_detail_api_v1_missions__mission_id__get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1034,7 +550,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/auth/github/callback': {
+  '/api/v1/profiles/me/skills': {
     parameters: {
       query?: never;
       header?: never;
@@ -1042,29 +558,15 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Complete the GitHub OAuth round-trip (P0-7)
-     * @description Verify state, exchange code, upsert user, mint session, redirect.
+     * Per-failure-mode mastery summary for the logged-in user
+     * @description Return the failure-mode catalog with the user's attempt/pass stats.
      *
-     *     The "happy path" is:
-     *
-     *       1. ``consume_oauth_state`` verifies the state cookie matches the
-     *          ``?state=`` query and the JWT is unexpired.
-     *       2. ``exchange_code_for_token`` POSTs to github.com → access token.
-     *       3. ``fetch_user_profile`` GETs ``/user`` + ``/user/emails`` and
-     *          returns a normalised ``GithubProfile``.
-     *       4. We upsert the local user by ``github_id`` (primary key), falling
-     *          back to ``email`` for first-time link, falling back to a new row
-     *          if neither matches.
-     *       5. Mint a session cookie, set CSRF, redirect to
-     *          ``web_origin + (return_to or '/missions')``.
-     *
-     *     Any failure (state mismatch, expired JWT, GitHub 4xx/5xx, network
-     *     error) is logged with a structured ``auth.github.callback.failure``
-     *     line and redirects to
-     *     ``web_origin/auth/sign-in?error=github_oauth_failed``. We never echo
-     *     GitHub error strings back to the browser.
+     *     The catalog groups the 10 supervision failure modes (one per mission)
+     *     and reports, for each, the user's attempt count, pass count, and
+     *     average + best total score. A "pass" is a session whose score_report
+     *     has ``missed_failure_mode == False``.
      */
-    get: operations['get_github_oauth_callback_api_v1_auth_github_callback_get'];
+    get: operations['get_my_skills_api_v1_profiles_me_skills_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1073,43 +575,28 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/sessions/{session_id}/prompts': {
+  '/api/v1/profiles/{handle}': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get?: never;
-    put?: never;
-    /** Submit a prompt and get an agent response */
-    post: operations['post_prompt_api_v1_sessions__session_id__prompts_post'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sessions/{session_id}/patches/{turn_id}/apply': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
     /**
-     * Apply the agent patch for a specific turn (no request body)
-     * @description Apply the agent-proposed patch for ``turn_id``.
+     * Get a user's public profile by handle
+     * @description Return the public profile for ``handle``.
      *
-     *     Takes no request body — the (turn_id, session_id) tuple in the URL is
-     *     the only input. The previous ``ApplyPatchBody`` placeholder model was
-     *     removed (P1-B9): nothing consumed it and publishing an empty schema as
-     *     part of the public OpenAPI surface led FE generators to mint a useless
-     *     type alias.
+     *     No authentication required — public surface per §13.1. Returns 404 with
+     *     ``{"detail": "profile not found"}`` when no user owns this handle.
+     *
+     *     The detailed per-dimension longitudinal trail is only returned to the
+     *     profile owner themselves — anonymous and other-user viewers see the
+     *     radar averages but not the trend per session. This avoids leaking a
+     *     fingerprintable skill trajectory of any user by handle.
      */
-    post: operations['post_apply_patch_api_v1_sessions__session_id__patches__turn_id__apply_post'];
+    get: operations['get_profile_api_v1_profiles__handle__get'];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1143,20 +630,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/reports/{submission_id}/share': {
+  '/api/v1/reports/{submission_id}/print': {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
       cookie?: never;
     };
-    get?: never;
-    put?: never;
     /**
-     * Mint a 30-day share token for a report
-     * @description Owner-only: returns the share URL and token (TTL 30d).
+     * Internal: full report payload for the print-mode worker (P0-11)
+     * @description Worker-only endpoint that returns the same SubmissionRead shape as
+     *     ``GET /reports/{id}`` but authorises by ``X-Render-Token`` header
+     *     instead of by session ownership / share token. The token is an
+     *     HMAC over the submission id signed with ``VERIFY_SECRET``.
+     *
+     *     The route is intentionally undocumented in the public surface — the
+     *     worker's bridge constructs the URL itself and the FE never hits it.
      */
-    post: operations['post_share_api_v1_reports__submission_id__share_post'];
+    get: operations['get_report_for_print_api_v1_reports__submission_id__print_get'];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1198,7 +691,236 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/reports/{submission_id}/print': {
+  '/api/v1/reports/{submission_id}/share': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Mint a 30-day share token for a report
+     * @description Owner-only: returns the share URL and token (TTL 30d).
+     */
+    post: operations['post_share_api_v1_reports__submission_id__share_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create a session */
+    post: operations['post_session_api_v1_sessions_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read a session */
+    get: operations['get_session_endpoint_api_v1_sessions__session_id__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/commands': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Run a command in the sandbox */
+    post: operations['post_command_api_v1_sessions__session_id__commands_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/context': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Update session context selection */
+    post: operations['post_context_api_v1_sessions__session_id__context_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/diff': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get the workspace diff from initial state */
+    get: operations['get_diff_api_v1_sessions__session_id__diff_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/events/diff-opened': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record that the user opened the diff viewer (for scoring + badges)
+     * @description Emits a ``diff.opened`` supervision event.
+     *
+     *     Driven by the frontend DiffViewer the first time it mounts with a
+     *     non-empty diff. The score engine's "Agent Output Review" dimension
+     *     (§11.2.4) checks for this event after ``patch.applied`` to award up to
+     *     +6 points; without it, the dimension is hard-capped.
+     *
+     *     Accepts an optional ``{"path": "..."}`` body so the timeline can name the
+     *     specific file the user opened. An empty body is still accepted for
+     *     backwards compatibility with older clients.
+     */
+    post: operations['post_diff_opened_api_v1_sessions__session_id__events_diff_opened_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/events/integrity': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record a proctored-mode integrity signal (P0-8)
+     * @description Persist an integrity signal for a proctored session.
+     *
+     *     Behaviour:
+     *       * Self-study session: drop the event silently, return 204. The FE
+     *         keeps its listeners attached so a future toggle into proctored
+     *         mode (currently rejected at create-time, but defence-in-depth)
+     *         wouldn't surprise the user.
+     *       * Proctored session: rate-limit (60/min/session), persist as a
+     *         supervision event, increment ``integrity_signals_count``,
+     *         return 204.
+     *       * Unknown kind: 422.
+     *       * Bucket full: 429 with ``Retry-After: 60``.
+     *
+     *     Ownership is enforced via ``_require_owned_session`` — the same 404
+     *     "session not found" vs. 403 "not your session" envelope every other
+     *     session-scoped endpoint uses.
+     */
+    post: operations['post_integrity_event_api_v1_sessions__session_id__events_integrity_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/events/tutorial-step': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record a tutorial coachmark step transition (P0-1)
+     * @description Persist a ``tutorial.step_completed`` or ``tutorial.dismissed`` event.
+     *
+     *     These events are tutorial-only — the grader ignores them (Mission 00
+     *     short-circuits the scoring path entirely). Persisting them via the
+     *     supervision-event log keeps the audit trail uniform with every other
+     *     user action, which is the load-bearing invariant for the post-mortem
+     *     replay tool.
+     */
+    post: operations['post_tutorial_step_api_v1_sessions__session_id__events_tutorial_step_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/file': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Read a file from the sandbox */
+    get: operations['get_file_api_v1_sessions__session_id__file_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/files': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Write a file in the sandbox */
+    post: operations['post_file_api_v1_sessions__session_id__files_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/files/list': {
     parameters: {
       query?: never;
       header?: never;
@@ -1206,16 +928,318 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Internal: full report payload for the print-mode worker (P0-11)
-     * @description Worker-only endpoint that returns the same SubmissionRead shape as
-     *     ``GET /reports/{id}`` but authorises by ``X-Render-Token`` header
-     *     instead of by session ownership / share token. The token is an
-     *     HMAC over the submission id signed with ``VERIFY_SECRET``.
+     * List workspace files (gitignore-aware, fuzzy-filtered server-side)
+     * @description Return workspace paths for the quick-open file palette.
      *
-     *     The route is intentionally undocumented in the public surface — the
-     *     worker's bridge constructs the URL itself and the FE never hits it.
+     *     The listing comes from ``git ls-files --cached --others
+     *     --exclude-standard`` so ``.gitignore`` is honoured and untracked-but-not-
+     *     ignored files surface immediately. Results are deduplicated and sorted by
+     *     depth-then-name (top-level entrypoints first), then filtered by ``query``
+     *     if supplied. The substring match is intentionally simple — the full fuzzy
+     *     score lives on the client where it can re-rank without a roundtrip.
+     *
+     *     Cached per sandbox for 30 seconds so a fast-typing user doesn't shell out
+     *     to ``git`` on every keystroke. The cache is bypassed transparently when
+     *     the sandbox is destroyed (the handle id changes).
      */
-    get: operations['get_report_for_print_api_v1_reports__submission_id__print_get'];
+    get: operations['get_files_list_api_v1_sessions__session_id__files_list_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/files/revert': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Revert a file to its initial state */
+    post: operations['post_revert_api_v1_sessions__session_id__files_revert_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/files/search': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Find-in-files across the workspace (ripgrep-backed)
+     * @description Run a ripgrep-backed search across the sandbox workspace.
+     *
+     *     The search itself is read-only — but we DO emit a ``command.run``
+     *     supervision event with ``category='manual'`` so the grader's
+     *     context_selection dimension can credit the supervisor for actually
+     *     poking around the workspace before prompting. The event payload
+     *     carries the query (truncated) and the result count; the literal
+     *     ripgrep argv is never logged because it could contain sensitive
+     *     user-supplied substrings.
+     *
+     *     Errors:
+     *         400 ``invalid_regex`` — the user enabled regex mode and the pattern
+     *             failed to compile.
+     *         504 ``search_timeout`` — the ripgrep subprocess exceeded the 10s
+     *             wall-clock budget.
+     */
+    post: operations['post_files_search_api_v1_sessions__session_id__files_search_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/give-up': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Forfeit the session, reveal the ideal solution, cap the score at 50
+     * @description Forfeit the active session and immediately submit it for grading.
+     *
+     *     Preconditions:
+     *       * The caller owns the session.
+     *       * ``session.status == 'active'`` (a session that's already submitting
+     *         or graded can't be given up on — the user must wait for the
+     *         in-flight grade to finish, then they can retry).
+     *       * At least :data:`GIVE_UP_MIN_SECONDS` (10 min) have elapsed since
+     *         ``session.started_at`` — prevents quitting before engaging.
+     *
+     *     Side-effects (in order):
+     *       1. Emit ``session.gave_up`` supervision event with the
+     *          ``seconds_into_session`` payload (so the timeline reflects the
+     *          deliberate forfeit).
+     *       2. Stamp ``sessions.gave_up_at = now()``. The grading runner reads
+     *          this flag when computing the score report and applies a 50/100
+     *          cap with ``score_cap_reason='gave_up'``.
+     *       3. Call the standard submit pipeline (same path as
+     *          ``POST /sessions/{id}/submit``).
+     *
+     *     Errors:
+     *       * 409 — session is not active (already graded, abandoned, errored,
+     *         or mid-submit). Detail includes the current status.
+     *       * 425 (Too Early) — 10-min window hasn't elapsed yet. Detail
+     *         carries ``seconds_remaining`` so the FE can render a countdown.
+     */
+    post: operations['post_give_up_api_v1_sessions__session_id__give_up_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/patches/{turn_id}/apply': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Apply the agent patch for a specific turn (no request body)
+     * @description Apply the agent-proposed patch for ``turn_id``.
+     *
+     *     Takes no request body — the (turn_id, session_id) tuple in the URL is
+     *     the only input. The previous ``ApplyPatchBody`` placeholder model was
+     *     removed (P1-B9): nothing consumed it and publishing an empty schema as
+     *     part of the public OpenAPI surface led FE generators to mint a useless
+     *     type alias.
+     */
+    post: operations['post_apply_patch_api_v1_sessions__session_id__patches__turn_id__apply_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/prompts': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Submit a prompt and get an agent response */
+    post: operations['post_prompt_api_v1_sessions__session_id__prompts_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/reset': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reset the workspace to the mission's initial commit (P0-12)
+     * @description Roll the sandbox back to ``mission.initial_commit``.
+     *
+     *     Preconditions:
+     *       * the caller owns the session,
+     *       * ``session.status == 'active'`` (the mutability gate),
+     *       * the sandbox handle is alive (the existing 503 path).
+     *
+     *     Side effects (in order):
+     *       1. ``git status --porcelain`` → count discarded files (telemetry).
+     *       2. ``git reset --hard <initial_commit>``.
+     *       3. ``git clean -fd`` — drops untracked files + directories.
+     *       4. Emit ``session.reset`` with
+     *          ``{files_discarded, had_agent_patch, seconds_into_session}``.
+     *       5. Insert a ``FileChange(source='revert', path='*')`` so the file-
+     *          change audit trail records the wipe.
+     *
+     *     Concurrency note: the existing apply-patch path holds no per-handle
+     *     lock today (see ``app/sandbox/pool.py``). A reset issued while a
+     *     patch is mid-apply may race; the workspace store is single-tab so
+     *     the FE side rarely produces this. A future hardening pass should
+     *     add a per-handle ``asyncio.Lock`` and wrap both apply-patch and
+     *     reset in it.
+     */
+    post: operations['post_reset_api_v1_sessions__session_id__reset_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/submission': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Retrieve the grading result for a session
+     * @description Return the grading submission for an already-graded session.
+     *
+     *     Returns 404 if the session has not been submitted yet, or 404 if the
+     *     session itself does not exist. ``ideal_solution`` /
+     *     ``ideal_solution_diff`` / ``agent_patch_diff`` are injected from disk
+     *     when ``session.status == 'graded'`` so the FE can render the
+     *     post-mortem walkthrough (P0-2) without a second roundtrip to
+     *     ``/reports``.
+     */
+    get: operations['get_submission_api_v1_sessions__session_id__submission_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/submit': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Submit a session for grading
+     * @description Trigger the grading pipeline for a session.
+     *
+     *     Returns 200 with the final ``SubmissionRead`` once grading completes
+     *     (the call blocks until the runner returns; see ``sessions/submit.py``).
+     */
+    post: operations['post_submit_api_v1_sessions__session_id__submit_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/timeline': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Return the supervision event timeline for the session */
+    get: operations['get_timeline_api_v1_sessions__session_id__timeline_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/tree': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** List the sandbox file tree */
+    get: operations['get_tree_api_v1_sessions__session_id__tree_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sessions/{session_id}/ws-token': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Mint a short-lived WS auth token */
+    get: operations['get_ws_token_api_v1_sessions__session_id__ws_token_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** API status (v1 alias for public /status) */
+    get: operations['status_v1_api_v1_status_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1256,7 +1280,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/profiles/{handle}': {
+  '/healthz': {
     parameters: {
       query?: never;
       header?: never;
@@ -1264,18 +1288,13 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Get a user's public profile by handle
-     * @description Return the public profile for ``handle``.
+     * Liveness probe
+     * @description Cheap liveness probe — no DB / Redis touches.
      *
-     *     No authentication required — public surface per §13.1. Returns 404 with
-     *     ``{"detail": "profile not found"}`` when no user owns this handle.
-     *
-     *     The detailed per-dimension longitudinal trail is only returned to the
-     *     profile owner themselves — anonymous and other-user viewers see the
-     *     radar averages but not the trend per session. This avoids leaking a
-     *     fingerprintable skill trajectory of any user by handle.
+     *     Kubernetes / load balancers should hit this every second; the heavier
+     *     DB+Redis check lives at ``/healthz/ready``.
      */
-    get: operations['get_profile_api_v1_profiles__handle__get'];
+    get: operations['healthz_healthz_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1284,7 +1303,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/profiles/me/skills': {
+  '/healthz/ready': {
     parameters: {
       query?: never;
       header?: never;
@@ -1292,15 +1311,37 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Per-failure-mode mastery summary for the logged-in user
-     * @description Return the failure-mode catalog with the user's attempt/pass stats.
+     * Readiness probe
+     * @description Full readiness check with bounded per-probe timeouts.
      *
-     *     The catalog groups the 10 supervision failure modes (one per mission)
-     *     and reports, for each, the user's attempt count, pass count, and
-     *     average + best total score. A "pass" is a session whose score_report
-     *     has ``missed_failure_mode == False``.
+     *     Returns HTTP 200 when the DB, Redis, and sandbox runtime are reachable.
+     *     When any of those three fail we return the same JSON body with HTTP 503
+     *     so load balancers and Kubernetes can de-list the pod. ``s3_ok`` is
+     *     treated as best-effort and does NOT force 503 — object storage is not on
+     *     the request hot-path for every endpoint, and a transient S3 hiccup
+     *     shouldn't take traffic away from the API.
      */
-    get: operations['get_my_skills_api_v1_profiles_me_skills_get'];
+    get: operations['healthz_ready_healthz_ready_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Public status page
+     * @description Aggregated, human-readable system status. Cached for 10s. Mirrors the components probed by ``/healthz/ready`` plus uptime and version.
+     */
+    get: operations['status_status_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1318,11 +1359,25 @@ export interface components {
      * @description One agent reply, including any actions the user can perform on it.
      */
     AgentTurnResponse: {
+      /** Agent Response */
+      agent_response: string;
+      /** Applied Patch */
+      applied_patch?: string | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
       /**
        * Id
        * Format: uuid
        */
       id: string;
+      /** Patch Applied At */
+      patch_applied_at?: string | null;
+      /** Proposed Actions */
+      proposed_actions?: string[];
+      selected_context: components['schemas']['ContextSelection'];
       /**
        * Session Id
        * Format: uuid
@@ -1332,31 +1387,17 @@ export interface components {
       turn_index: number;
       /** User Prompt */
       user_prompt: string;
-      selected_context: components['schemas']['ContextSelection'];
-      /** Agent Response */
-      agent_response: string;
-      /** Proposed Actions */
-      proposed_actions?: string[];
-      /** Applied Patch */
-      applied_patch?: string | null;
-      /** Patch Applied At */
-      patch_applied_at?: string | null;
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string;
     };
     /** CommandBody */
     CommandBody: {
-      /** Command */
-      command: string;
       /**
        * Category
        * @default other
        * @enum {string}
        */
       category: 'test' | 'typecheck' | 'lint' | 'manual' | 'other';
+      /** Command */
+      command: string;
     };
     /**
      * CommandRunResponse
@@ -1367,29 +1408,24 @@ export interface components {
      *     trimmed so the FE can show a hint.
      */
     CommandRunResponse: {
-      /** Id */
-      id: string;
-      /** Session Id */
-      session_id: string;
-      /** Command */
-      command: string;
       /**
        * Category
        * @default other
        * @enum {string}
        */
       category: 'test' | 'typecheck' | 'lint' | 'manual' | 'other';
-      /** Exit Code */
-      exit_code?: number | null;
-      /** Duration Ms */
-      duration_ms?: number | null;
+      /** Command */
+      command: string;
       /** Created At */
       created_at?: string | null;
-      /**
-       * Stdout
-       * @default
-       */
-      stdout: string;
+      /** Duration Ms */
+      duration_ms?: number | null;
+      /** Exit Code */
+      exit_code?: number | null;
+      /** Id */
+      id: string;
+      /** Session Id */
+      session_id: string;
       /**
        * Stderr
        * @default
@@ -1400,21 +1436,26 @@ export interface components {
        * @default false
        */
       stdio_truncated: boolean;
+      /**
+       * Stdout
+       * @default
+       */
+      stdout: string;
     };
     /**
      * ConsentRecord
      * @description Latest persisted consent decision for a single kind.
      */
     ConsentRecord: {
-      /** Granted */
-      granted: boolean;
-      /** Version */
-      version: number;
       /**
        * At
        * Format: date-time
        */
       at: string;
+      /** Granted */
+      granted: boolean;
+      /** Version */
+      version: number;
     };
     /**
      * ConsentState
@@ -1437,27 +1478,27 @@ export interface components {
      *     version) and never trusts a client-supplied version field.
      */
     ConsentUpdate: {
+      /** Granted */
+      granted: boolean;
       /**
        * Kind
        * @enum {string}
        */
       kind: 'analytics' | 'functional' | 'marketing';
-      /** Granted */
-      granted: boolean;
     };
     /**
      * ContextSelection
      * @description The set of artifacts the user has selected as relevant for the turn.
      */
     ContextSelection: {
+      /** Extras */
+      extras?: string[];
       /** Files */
       files?: string[];
       /** Logs */
       logs?: string[];
       /** Tests */
       tests?: string[];
-      /** Extras */
-      extras?: string[];
     };
     /**
      * DataExportRead
@@ -1468,31 +1509,31 @@ export interface components {
      *     real time so the URL's lifetime cannot outlive the export's lifetime.
      */
     DataExportRead: {
+      /** Bytes Total */
+      bytes_total?: number | null;
+      /** Download Url */
+      download_url?: string | null;
+      /** Error */
+      error?: string | null;
+      /** Expires At */
+      expires_at?: string | null;
       /**
        * Id
        * Format: uuid
        */
       id: string;
-      /**
-       * Status
-       * @enum {string}
-       */
-      status: 'queued' | 'running' | 'ready' | 'failed' | 'expired';
+      /** Ready At */
+      ready_at?: string | null;
       /**
        * Requested At
        * Format: date-time
        */
       requested_at: string;
-      /** Ready At */
-      ready_at?: string | null;
-      /** Expires At */
-      expires_at?: string | null;
-      /** Error */
-      error?: string | null;
-      /** Bytes Total */
-      bytes_total?: number | null;
-      /** Download Url */
-      download_url?: string | null;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: 'queued' | 'running' | 'ready' | 'failed' | 'expired';
     };
     /**
      * DeleteAccountRequest
@@ -1519,15 +1560,15 @@ export interface components {
      */
     DeletionLockError: {
       /**
-       * Detail
-       * @description Human-readable detail string. The FE keys off ``code`` for routing decisions; ``detail`` is only surfaced to support.
-       */
-      detail: string;
-      /**
        * Code
        * @constant
        */
       code: 'deletion_scheduled';
+      /**
+       * Detail
+       * @description Human-readable detail string. The FE keys off ``code`` for routing decisions; ``detail`` is only surfaced to support.
+       */
+      detail: string;
       /**
        * Scheduled For
        * Format: date-time
@@ -1590,21 +1631,21 @@ export interface components {
      * @description Badge plus when/where it was earned (from ``user_badges``).
      */
     EarnedBadgeRead: {
-      /** Id */
-      id: string;
-      /** Title */
-      title: string;
       /** Description */
       description: string;
-      /** Icon */
-      icon: string;
       /**
        * Earned At
        * Format: date-time
        */
       earned_at: string;
+      /** Icon */
+      icon: string;
+      /** Id */
+      id: string;
       /** Session Id */
       session_id?: string | null;
+      /** Title */
+      title: string;
     };
     /**
      * EmailChangeConfirm
@@ -1635,10 +1676,16 @@ export interface components {
      *     average score across attempts.
      */
     FailureModeMastery: {
+      /** Avg Score */
+      avg_score?: number | null;
+      /** Best Score */
+      best_score?: number | null;
       /** Failure Mode */
       failure_mode: string;
       /** Failure Mode Title */
       failure_mode_title?: string | null;
+      /** Last Attempted At */
+      last_attempted_at?: string | null;
       /** Mission Ids */
       mission_ids?: string[];
       /** Mission Titles */
@@ -1653,12 +1700,6 @@ export interface components {
        * @default 0
        */
       sessions_passed: number;
-      /** Avg Score */
-      avg_score?: number | null;
-      /** Best Score */
-      best_score?: number | null;
-      /** Last Attempted At */
-      last_attempted_at?: string | null;
     };
     /**
      * FileContent
@@ -1671,11 +1712,6 @@ export interface components {
      *     base64-encoded bytes for binary content (``"base64"``).
      */
     FileContent: {
-      /**
-       * Path
-       * @default
-       */
-      path: string;
       /** Content */
       content: string;
       /**
@@ -1684,6 +1720,11 @@ export interface components {
        * @enum {string}
        */
       encoding: 'utf-8' | 'base64';
+      /**
+       * Path
+       * @default
+       */
+      path: string;
       /**
        * Truncated
        * @default false
@@ -1704,15 +1745,15 @@ export interface components {
       /** Paths */
       paths?: string[];
       /**
-       * Truncated
-       * @default false
-       */
-      truncated: boolean;
-      /**
        * Total
        * @default 0
        */
       total: number;
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
     };
     /** FileRevertBody */
     FileRevertBody: {
@@ -1728,26 +1769,26 @@ export interface components {
      *     field derived from the path basename.
      */
     FileTreeNodeSchema: {
-      /** Path */
-      path: string;
-      /** Name */
-      name: string;
+      /** Children */
+      children?: components['schemas']['FileTreeNodeSchema'][];
       /**
        * Kind
        * @enum {string}
        */
       kind: 'file' | 'directory';
+      /** Name */
+      name: string;
+      /** Path */
+      path: string;
       /** Size */
       size?: number | null;
-      /** Children */
-      children?: components['schemas']['FileTreeNodeSchema'][];
     };
     /** FileWriteBody */
     FileWriteBody: {
-      /** Path */
-      path: string;
       /** Content */
       content: string;
+      /** Path */
+      path: string;
     };
     /**
      * ForceRenderBody
@@ -1824,6 +1865,27 @@ export interface components {
       wait_seconds: number;
     };
     /**
+     * MeRecommendationInline
+     * @description Compact "next mission" surfaced inline on ``GET /auth/me`` (P1-2).
+     *
+     *     Only the three fields the header `[ Resume → ]` chip needs;
+     *     everything else (diagnosis, full top-3, etc.) lives on the
+     *     dedicated ``/me/recommendations`` endpoint. Optional so the
+     *     response stays backwards-compatible — cold-cache or recommendation
+     *     errors degrade to omitting the field, never to a 5xx on auth.me.
+     */
+    MeRecommendationInline: {
+      /**
+       * Language
+       * @enum {string}
+       */
+      language: 'typescript' | 'python' | 'go';
+      /** Mission Id */
+      mission_id: string;
+      /** Title */
+      title: string;
+    };
+    /**
      * MissionDetail
      * @description `GET /missions/{id}` payload.
      *
@@ -1831,20 +1893,11 @@ export interface components {
      *     because the workspace needs it.
      */
     MissionDetail: {
-      /** Id */
-      id: string;
-      /** Title */
-      title: string;
       /**
-       * Short Description
+       * Brief
        * @default
        */
-      short_description: string;
-      /**
-       * Difficulty
-       * @enum {string}
-       */
-      difficulty: 'beginner' | 'intermediate' | 'advanced';
+      brief: string;
       /**
        * Category
        * @enum {string}
@@ -1861,49 +1914,76 @@ export interface components {
         | 'review'
         | 'debugging'
         | 'tutorial';
+      /**
+       * Difficulty
+       * @enum {string}
+       */
+      difficulty: 'beginner' | 'intermediate' | 'advanced';
       /** Estimated Minutes */
       estimated_minutes: number;
-      /** Failure Mode Id */
-      failure_mode_id: string;
-      /** Skills Tested */
-      skills_tested?: string[];
-      /** Repo Pack */
-      repo_pack: string;
-      /** Initial Commit */
-      initial_commit: string;
-      /** Manifest Sha256 */
-      manifest_sha256: string;
-      /**
-       * Version
-       * @default 1
-       */
-      version: number;
-      /**
-       * Published
-       * @default true
-       */
-      published: boolean;
-      /**
-       * Brief
-       * @default
-       */
-      brief: string;
-      /** Language Runtime */
-      language_runtime?: ('node20' | 'python312') | null;
-      /** Visible Tests */
-      visible_tests?: string[];
-      /** Expected Context Required */
-      expected_context_required?: string[];
       /** Expected Context Recommended */
       expected_context_recommended?: string[];
+      /** Expected Context Required */
+      expected_context_required?: string[];
       /** Expected Diff Lines P50 */
       expected_diff_lines_p50?: number | null;
+      /** Failure Mode Id */
+      failure_mode_id: string;
+      /** Id */
+      id: string;
+      /** Initial Commit */
+      initial_commit: string;
       /**
        * Kind
        * @default standard
        * @enum {string}
        */
       kind: 'standard' | 'tutorial';
+      /**
+       * Language
+       * @default typescript
+       * @enum {string}
+       */
+      language: 'typescript' | 'python' | 'go';
+      /** Language Runtime */
+      language_runtime?: ('node20' | 'python312' | 'go122') | null;
+      /** Manifest Sha256 */
+      manifest_sha256: string;
+      /**
+       * Published
+       * @default true
+       */
+      published: boolean;
+      /** Repo Pack */
+      repo_pack: string;
+      /** Repo Pack Id */
+      repo_pack_id?: string | null;
+      /**
+       * Short Description
+       * @default
+       */
+      short_description: string;
+      /** Skills Tested */
+      skills_tested?: string[];
+      /**
+       * Status
+       * @default shipped
+       * @enum {string}
+       */
+      status: 'shipped' | 'coming_soon';
+      /** Tags */
+      tags?: string[];
+      /** Target Release Date */
+      target_release_date?: string | null;
+      /** Title */
+      title: string;
+      /**
+       * Version
+       * @default 1
+       */
+      version: number;
+      /** Visible Tests */
+      visible_tests?: string[];
       your_attempts?: components['schemas']['YourAttempts'] | null;
     };
     /**
@@ -1911,46 +1991,33 @@ export interface components {
      * @description A single graded session entry on a user's profile.
      */
     MissionHistoryItemRead: {
-      /**
-       * Session Id
-       * Format: uuid
-       */
-      session_id: string;
-      /** Mission Id */
-      mission_id: string;
-      /** Mission Title */
-      mission_title: string;
       /** Completed At */
       completed_at?: string | null;
-      /** Score */
-      score?: number | null;
       /**
        * Difficulty
        * @enum {string}
        */
       difficulty: 'beginner' | 'intermediate' | 'advanced';
+      /** Mission Id */
+      mission_id: string;
+      /** Mission Title */
+      mission_title: string;
+      /** Score */
+      score?: number | null;
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
     };
     /**
      * MissionListItem
      * @description Minimal mission card payload for `GET /missions`.
      */
     MissionListItem: {
-      /** Id */
-      id: string;
-      /** Title */
-      title: string;
-      /**
-       * Short Description
-       * @default
-       */
-      short_description: string;
-      /**
-       * Difficulty
-       * @enum {string}
-       */
-      difficulty: 'beginner' | 'intermediate' | 'advanced';
       /**
        * Category
+       * @default debugging
        * @enum {string}
        */
       category:
@@ -1965,47 +2032,86 @@ export interface components {
         | 'review'
         | 'debugging'
         | 'tutorial';
-      /** Estimated Minutes */
+      /**
+       * Difficulty
+       * @default beginner
+       * @enum {string}
+       */
+      difficulty: 'beginner' | 'intermediate' | 'advanced';
+      /**
+       * Estimated Minutes
+       * @default 0
+       */
       estimated_minutes: number;
-      /** Failure Mode Id */
+      /**
+       * Failure Mode Id
+       * @default
+       */
       failure_mode_id: string;
-      /** Skills Tested */
-      skills_tested?: string[];
-      /**
-       * Version
-       * @default 1
-       */
-      version: number;
-      /**
-       * Published
-       * @default true
-       */
-      published: boolean;
+      /** Id */
+      id: string;
       /**
        * Kind
        * @default standard
        * @enum {string}
        */
       kind: 'standard' | 'tutorial';
+      /**
+       * Language
+       * @default typescript
+       * @enum {string}
+       */
+      language: 'typescript' | 'python' | 'go';
+      /**
+       * Published
+       * @default true
+       */
+      published: boolean;
+      /** Repo Pack Id */
+      repo_pack_id?: string | null;
+      /**
+       * Short Description
+       * @default
+       */
+      short_description: string;
+      /** Skills Tested */
+      skills_tested?: string[];
+      /**
+       * Status
+       * @default shipped
+       * @enum {string}
+       */
+      status: 'shipped' | 'coming_soon';
+      /** Tags */
+      tags?: string[];
+      /** Target Release Date */
+      target_release_date?: string | null;
+      /** Title */
+      title: string;
+      /**
+       * Version
+       * @default 1
+       */
+      version: number;
     };
     /** PatchResult */
     PatchResult: {
-      /** Applied */
-      applied: boolean;
-      /** Files Changed */
-      files_changed?: string[];
       /**
        * Added Lines
        * @default 0
        */
       added_lines: number;
+      /** Applied */
+      applied: boolean;
+      /** Error */
+      error?: string | null;
+      /** Files Changed */
+      files_changed?: string[];
       /**
        * Removed Lines
        * @default 0
        */
       removed_lines: number;
-      /** Error */
-      error?: string | null;
     };
     /**
      * PromptBody
@@ -2015,9 +2121,9 @@ export interface components {
      *     supervision prompt and would balloon DB rows + WS event payloads.
      */
     PromptBody: {
+      context?: components['schemas']['ContextSelection'] | null;
       /** Text */
       text: string;
-      context?: components['schemas']['ContextSelection'] | null;
     };
     /**
      * PublicProfile
@@ -2026,56 +2132,128 @@ export interface components {
      *     Public — no auth required, never include PII.
      */
     PublicProfile: {
-      /** Handle */
-      handle: string;
-      /** Display Name */
-      display_name?: string | null;
-      /**
-       * Joined At
-       * Format: date-time
-       */
-      joined_at: string;
-      /** Github Login */
-      github_login?: string | null;
-      /** Github Avatar Url */
-      github_avatar_url?: string | null;
-      /** Github Html Url */
-      github_html_url?: string | null;
-      /** Github Verified At */
-      github_verified_at?: string | null;
       /** Badges */
       badges?: components['schemas']['EarnedBadgeRead'][];
-      /** History */
-      history?: components['schemas']['MissionHistoryItemRead'][];
-      /** Radar Averages */
-      radar_averages?: {
-        [key: string]: number;
-      };
+      /** Best Score */
+      best_score?: number | null;
       /** Dimension History Verified */
       dimension_history_verified?: {
         [key: string]: number;
       } | null;
+      /** Dimension Trends */
+      dimension_trends?: {
+        [key: string]: components['schemas']['DimensionTrendPoint'][];
+      };
+      /** Display Name */
+      display_name?: string | null;
+      /** Github Avatar Url */
+      github_avatar_url?: string | null;
+      /** Github Html Url */
+      github_html_url?: string | null;
+      /** Github Login */
+      github_login?: string | null;
+      /** Github Verified At */
+      github_verified_at?: string | null;
+      /** Handle */
+      handle: string;
       /**
        * Has Verified Attempts
        * @default false
        */
       has_verified_attempts: boolean;
+      /** History */
+      history?: components['schemas']['MissionHistoryItemRead'][];
       /**
-       * Verified Attempts Only
-       * @default false
+       * Joined At
+       * Format: date-time
        */
-      verified_attempts_only: boolean;
-      /** Dimension Trends */
-      dimension_trends?: {
-        [key: string]: components['schemas']['DimensionTrendPoint'][];
+      joined_at: string;
+      /** Radar Averages */
+      radar_averages?: {
+        [key: string]: number;
       };
       /**
        * Total Missions
        * @default 0
        */
       total_missions: number;
-      /** Best Score */
-      best_score?: number | null;
+      /**
+       * Verified Attempts Only
+       * @default false
+       */
+      verified_attempts_only: boolean;
+    };
+    /**
+     * RecommendationItem
+     * @description One ranked recommendation surfaced on the profile / catalog / report.
+     *
+     *     ``why`` is the deterministic per-mission micro-prose generated by
+     *     :mod:`app.recommendations.copy`. ``your_best_score`` is ``None`` when
+     *     the user has never attempted the mission (the FE renders "Not yet
+     *     attempted" in that case); ``your_attempts`` is the count of graded
+     *     submissions against this mission for this user.
+     */
+    RecommendationItem: {
+      /**
+       * Difficulty
+       * @enum {string}
+       */
+      difficulty: 'beginner' | 'intermediate' | 'advanced';
+      /**
+       * Language
+       * @enum {string}
+       */
+      language: 'typescript' | 'python' | 'go';
+      /** Mission Id */
+      mission_id: string;
+      /**
+       * Status
+       * @default shipped
+       * @enum {string}
+       */
+      status: 'shipped' | 'coming_soon';
+      /** Target Release Date */
+      target_release_date?: string | null;
+      /** Title */
+      title: string;
+      /** Why */
+      why: string;
+      /**
+       * Your Attempts
+       * @default 0
+       */
+      your_attempts: number;
+      /** Your Best Score */
+      your_best_score?: number | null;
+    };
+    /**
+     * RecommendationSet
+     * @description Top-level response body — three items + the diagnosis + metadata.
+     */
+    RecommendationSet: {
+      /** Cache Hit */
+      cache_hit: boolean;
+      /**
+       * Computed At
+       * Format: date-time
+       */
+      computed_at: string;
+      /** Diagnosis */
+      diagnosis: string;
+      /** Recommendations */
+      recommendations: components['schemas']['RecommendationItem'][];
+      /** Weakest Dim */
+      weakest_dim?:
+        | (
+            | 'final_correctness'
+            | 'verification'
+            | 'agent_review'
+            | 'prompt_quality'
+            | 'context_selection'
+            | 'safety'
+            | 'diff_minimality'
+          )
+        | null;
     };
     /**
      * ReportRenderRead
@@ -2088,39 +2266,39 @@ export interface components {
      *     only sees this shape during the queued / running / failed lifecycle.
      */
     ReportRenderRead: {
+      /** Bytes */
+      bytes?: number | null;
+      /**
+       * Created At
+       * Format: date-time
+       */
+      created_at: string;
+      /** Error */
+      error?: string | null;
       /**
        * Id
        * Format: uuid
        */
       id: string;
       /**
-       * Submission Id
-       * Format: uuid
-       */
-      submission_id: string;
-      /**
        * Kind
        * @enum {string}
        */
       kind: 'pdf' | 'png';
+      /** Poll After Seconds */
+      poll_after_seconds?: number | null;
+      /** Ready At */
+      ready_at?: string | null;
       /**
        * Status
        * @enum {string}
        */
       status: 'queued' | 'running' | 'ready' | 'failed';
-      /** Bytes */
-      bytes?: number | null;
-      /** Error */
-      error?: string | null;
       /**
-       * Created At
-       * Format: date-time
+       * Submission Id
+       * Format: uuid
        */
-      created_at: string;
-      /** Ready At */
-      ready_at?: string | null;
-      /** Poll After Seconds */
-      poll_after_seconds?: number | null;
+      submission_id: string;
     };
     /**
      * SearchMatch
@@ -2132,16 +2310,16 @@ export interface components {
      *     are byte offsets within the (possibly truncated) ``line_text``.
      */
     SearchMatch: {
-      /** Path */
-      path: string;
       /** Line Number */
       line_number: number;
       /** Line Text */
       line_text: string;
-      /** Match Start */
-      match_start: number;
       /** Match End */
       match_end: number;
+      /** Match Start */
+      match_start: number;
+      /** Path */
+      path: string;
     };
     /**
      * SearchRequest
@@ -2155,103 +2333,67 @@ export interface components {
      *     query can't dump the entire workspace into the API response.
      */
     SearchRequest: {
-      /** Query */
-      query: string;
-      /** Glob */
-      glob?: string | null;
       /**
        * Case Sensitive
        * @default false
        */
       case_sensitive: boolean;
-      /**
-       * Regex
-       * @default false
-       */
-      regex: boolean;
+      /** Glob */
+      glob?: string | null;
       /**
        * Max Results
        * @default 200
        */
       max_results: number;
+      /** Query */
+      query: string;
+      /**
+       * Regex
+       * @default false
+       */
+      regex: boolean;
     };
     /**
      * SearchResponse
      * @description ``POST /sessions/{id}/files/search`` response body.
      */
     SearchResponse: {
+      /**
+       * Duration Ms
+       * @default 0
+       */
+      duration_ms: number;
       /** Matches */
       matches?: components['schemas']['SearchMatch'][];
-      /**
-       * Truncated
-       * @default false
-       */
-      truncated: boolean;
       /**
        * Total
        * @default 0
        */
       total: number;
       /**
-       * Duration Ms
-       * @default 0
+       * Truncated
+       * @default false
        */
-      duration_ms: number;
+      truncated: boolean;
     };
     /** SessionCreate */
     SessionCreate: {
       /** Mission Id */
       mission_id: string;
-      /** Previous Session Id */
-      previous_session_id?: string | null;
       /**
        * Mode
        * @default self_study
        * @enum {string}
        */
       mode: 'self_study' | 'proctored';
+      /** Previous Session Id */
+      previous_session_id?: string | null;
     };
     /**
      * SessionDetail
      * @description `GET /sessions/{id}` response — adds workspace bootstrap material.
      */
     SessionDetail: {
-      /**
-       * Id
-       * Format: uuid
-       */
-      id: string;
-      /**
-       * User Id
-       * Format: uuid
-       */
-      user_id: string;
-      /** Mission Id */
-      mission_id: string;
-      /**
-       * Status
-       * @enum {string}
-       */
-      status: 'provisioning' | 'active' | 'submitting' | 'graded' | 'abandoned' | 'error';
-      /**
-       * Started At
-       * Format: date-time
-       */
-      started_at: string;
-      /** Completed At */
-      completed_at?: string | null;
-      /** Sandbox Id */
-      sandbox_id?: string | null;
-      /**
-       * Sandbox Driver
-       * @default local
-       * @enum {string}
-       */
-      sandbox_driver: 'docker' | 'local';
-      /** Current Commit */
-      current_commit?: string | null;
-      /** Score */
-      score?: number | null;
       /**
        * Agent Turns
        * @default 0
@@ -2262,22 +2404,58 @@ export interface components {
        * @default 1
        */
       attempt_index: number;
-      /** Previous Session Id */
-      previous_session_id?: string | null;
+      /** Completed At */
+      completed_at?: string | null;
+      /** Current Commit */
+      current_commit?: string | null;
       /** Gave Up At */
       gave_up_at?: string | null;
       /**
-       * Mode
-       * @default self_study
-       * @enum {string}
+       * Id
+       * Format: uuid
        */
-      mode: 'self_study' | 'proctored';
+      id: string;
       /**
        * Integrity Signals Count
        * @default 0
        */
       integrity_signals_count: number;
       mission: components['schemas']['MissionDetail'];
+      /** Mission Id */
+      mission_id: string;
+      /**
+       * Mode
+       * @default self_study
+       * @enum {string}
+       */
+      mode: 'self_study' | 'proctored';
+      /** Previous Session Id */
+      previous_session_id?: string | null;
+      /**
+       * Sandbox Driver
+       * @default local
+       * @enum {string}
+       */
+      sandbox_driver: 'docker' | 'local';
+      /** Sandbox Id */
+      sandbox_id?: string | null;
+      /** Score */
+      score?: number | null;
+      /**
+       * Started At
+       * Format: date-time
+       */
+      started_at: string;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: 'provisioning' | 'active' | 'submitting' | 'graded' | 'abandoned' | 'error';
+      /**
+       * User Id
+       * Format: uuid
+       */
+      user_id: string;
       /** Ws Token */
       ws_token: string;
     };
@@ -2287,42 +2465,6 @@ export interface components {
      */
     SessionRead: {
       /**
-       * Id
-       * Format: uuid
-       */
-      id: string;
-      /**
-       * User Id
-       * Format: uuid
-       */
-      user_id: string;
-      /** Mission Id */
-      mission_id: string;
-      /**
-       * Status
-       * @enum {string}
-       */
-      status: 'provisioning' | 'active' | 'submitting' | 'graded' | 'abandoned' | 'error';
-      /**
-       * Started At
-       * Format: date-time
-       */
-      started_at: string;
-      /** Completed At */
-      completed_at?: string | null;
-      /** Sandbox Id */
-      sandbox_id?: string | null;
-      /**
-       * Sandbox Driver
-       * @default local
-       * @enum {string}
-       */
-      sandbox_driver: 'docker' | 'local';
-      /** Current Commit */
-      current_commit?: string | null;
-      /** Score */
-      score?: number | null;
-      /**
        * Agent Turns
        * @default 0
        */
@@ -2332,21 +2474,57 @@ export interface components {
        * @default 1
        */
       attempt_index: number;
-      /** Previous Session Id */
-      previous_session_id?: string | null;
+      /** Completed At */
+      completed_at?: string | null;
+      /** Current Commit */
+      current_commit?: string | null;
       /** Gave Up At */
       gave_up_at?: string | null;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /**
+       * Integrity Signals Count
+       * @default 0
+       */
+      integrity_signals_count: number;
+      /** Mission Id */
+      mission_id: string;
       /**
        * Mode
        * @default self_study
        * @enum {string}
        */
       mode: 'self_study' | 'proctored';
+      /** Previous Session Id */
+      previous_session_id?: string | null;
       /**
-       * Integrity Signals Count
-       * @default 0
+       * Sandbox Driver
+       * @default local
+       * @enum {string}
        */
-      integrity_signals_count: number;
+      sandbox_driver: 'docker' | 'local';
+      /** Sandbox Id */
+      sandbox_id?: string | null;
+      /** Score */
+      score?: number | null;
+      /**
+       * Started At
+       * Format: date-time
+       */
+      started_at: string;
+      /**
+       * Status
+       * @enum {string}
+       */
+      status: 'provisioning' | 'active' | 'submitting' | 'graded' | 'abandoned' | 'error';
+      /**
+       * User Id
+       * Format: uuid
+       */
+      user_id: string;
     };
     /**
      * SessionResetResponse
@@ -2371,15 +2549,15 @@ export interface components {
      * @description Response payload for ``POST /reports/{id}/share``.
      */
     ShareTokenRead: {
-      /** Share Token */
-      share_token: string;
-      /** Share Url */
-      share_url: string;
       /**
        * Expires At
        * Format: date-time
        */
       expires_at: string;
+      /** Share Token */
+      share_token: string;
+      /** Share Url */
+      share_url: string;
     };
     /**
      * SkillsCatalog
@@ -2389,43 +2567,34 @@ export interface components {
       /** Failure Modes */
       failure_modes?: components['schemas']['FailureModeMastery'][];
       /**
-       * Total Missions
-       * @default 0
-       */
-      total_missions: number;
-      /**
        * Total Failure Modes
        * @default 0
        */
       total_failure_modes: number;
+      /**
+       * Total Missions
+       * @default 0
+       */
+      total_missions: number;
     };
     /** SubmissionRead */
     SubmissionRead: {
+      /** Agent Patch Diff */
+      agent_patch_diff?: string | null;
       /**
-       * Id
-       * Format: uuid
+       * Created At
+       * Format: date-time
        */
-      id: string;
-      /**
-       * Session Id
-       * Format: uuid
-       */
-      session_id: string;
+      created_at: string;
+      /** Critical Moments */
+      critical_moments?: {
+        [key: string]: unknown;
+      }[];
       /**
        * Final Diff
        * @default
        */
       final_diff: string;
-      /** Total Score */
-      total_score: number;
-      /** Visible Test Results */
-      visible_test_results?:
-        | {
-            [key: string]: unknown;
-          }[]
-        | {
-            [key: string]: unknown;
-          };
       /** Hidden Test Results */
       hidden_test_results?:
         | {
@@ -2434,6 +2603,30 @@ export interface components {
         | {
             [key: string]: unknown;
           };
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Ideal Solution */
+      ideal_solution?: string | null;
+      /** Ideal Solution Diff */
+      ideal_solution_diff?: string | null;
+      /** Mission Id */
+      mission_id?: string | null;
+      /** Score Cap Reason */
+      score_cap_reason?: 'gave_up' | null;
+      /** Score Report */
+      score_report?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
+      /** Total Score */
+      total_score: number;
       /** Validator Results */
       validator_results?:
         | {
@@ -2442,62 +2635,47 @@ export interface components {
         | {
             [key: string]: unknown;
           };
-      /** Score Report */
-      score_report?: {
-        [key: string]: unknown;
-      };
-      /**
-       * Created At
-       * Format: date-time
-       */
-      created_at: string;
-      /** Ideal Solution */
-      ideal_solution?: string | null;
-      /** Ideal Solution Diff */
-      ideal_solution_diff?: string | null;
-      /** Agent Patch Diff */
-      agent_patch_diff?: string | null;
-      /** Critical Moments */
-      critical_moments?: {
-        [key: string]: unknown;
-      }[];
-      /** Score Cap Reason */
-      score_cap_reason?: 'gave_up' | null;
+      /** Verification Hash */
+      verification_hash?: string | null;
+      /** Verification Signature */
+      verification_signature?: string | null;
       /**
        * Verified
        * @default false
        */
       verified: boolean;
-      /** Mission Id */
-      mission_id?: string | null;
-      /** Verification Hash */
-      verification_hash?: string | null;
-      /** Verification Signature */
-      verification_signature?: string | null;
+      /** Visible Test Results */
+      visible_test_results?:
+        | {
+            [key: string]: unknown;
+          }[]
+        | {
+            [key: string]: unknown;
+          };
     };
     /**
      * SupervisionEventRead
      * @description A single supervision event from the timeline.
      */
     SupervisionEventRead: {
-      /** Id */
-      id: number;
-      /**
-       * Session Id
-       * Format: uuid
-       */
-      session_id: string;
       /** Event Type */
       event_type: string;
-      /** Payload */
-      payload?: {
-        [key: string]: unknown;
-      };
+      /** Id */
+      id: number;
       /**
        * Occurred At
        * Format: date-time
        */
       occurred_at: string;
+      /** Payload */
+      payload?: {
+        [key: string]: unknown;
+      };
+      /**
+       * Session Id
+       * Format: uuid
+       */
+      session_id: string;
     };
     /**
      * TutorialStepBody
@@ -2509,14 +2687,14 @@ export interface components {
      *     grader ignores tutorial events when scoring.
      */
     TutorialStepBody: {
-      /** Step Id */
-      step_id: string;
       /**
        * Action
        * @default completed
        * @enum {string}
        */
       action: 'completed' | 'dismissed';
+      /** Step Id */
+      step_id: string;
     };
     /** UnifiedDiff */
     UnifiedDiff: {
@@ -2526,36 +2704,41 @@ export interface components {
     /** UserRead */
     UserRead: {
       /**
-       * Id
-       * Format: uuid
+       * Created At
+       * Format: date-time
        */
-      id: string;
+      created_at: string;
+      /** Csrf Token */
+      csrf_token: string;
+      /** Deletion Scheduled At */
+      deletion_scheduled_at?: string | null;
+      /** Display Name */
+      display_name?: string | null;
       /**
        * Email
        * Format: email
        */
       email: string;
-      /** Handle */
-      handle?: string | null;
-      /** Display Name */
-      display_name?: string | null;
-      /** Github Login */
-      github_login?: string | null;
       /** Github Avatar Url */
       github_avatar_url?: string | null;
       /** Github Html Url */
       github_html_url?: string | null;
+      /** Github Login */
+      github_login?: string | null;
       /** Github Verified At */
       github_verified_at?: string | null;
+      /** Handle */
+      handle?: string | null;
       /**
-       * Created At
-       * Format: date-time
+       * Id
+       * Format: uuid
        */
-      created_at: string;
+      id: string;
       /** Last Login At */
       last_login_at?: string | null;
-      /** Csrf Token */
-      csrf_token: string;
+      /** Pending Email */
+      pending_email?: string | null;
+      recommendation?: components['schemas']['MeRecommendationInline'] | null;
       /** Tutorial Completed At */
       tutorial_completed_at?: string | null;
       /**
@@ -2563,23 +2746,19 @@ export interface components {
        * @default 0
        */
       tutorial_replay_count: number;
-      /** Pending Email */
-      pending_email?: string | null;
-      /** Deletion Scheduled At */
-      deletion_scheduled_at?: string | null;
     };
     /** ValidationError */
     ValidationError: {
+      /** Context */
+      ctx?: Record<string, never>;
+      /** Input */
+      input?: unknown;
       /** Location */
       loc: (string | number)[];
       /** Message */
       msg: string;
       /** Error Type */
       type: string;
-      /** Input */
-      input?: unknown;
-      /** Context */
-      ctx?: Record<string, never>;
     };
     /**
      * VerifyEnvelopeRead
@@ -2595,41 +2774,41 @@ export interface components {
      *     grade-time state, never the current state of the joined rows.
      */
     VerifyEnvelopeRead: {
-      /** Schema Version */
-      schema_version: number;
-      /**
-       * Submission Id
-       * Format: uuid
-       */
-      submission_id: string;
-      /** Handle */
-      handle: string;
+      /** Attempt Index */
+      attempt_index: number;
+      /** Canonical Url */
+      canonical_url: string;
       /** Display Name */
       display_name?: string | null;
+      /** Effective Max */
+      effective_max: number;
+      /** Graded At */
+      graded_at: string;
+      /** Handle */
+      handle: string;
+      /** Missed Failure Mode */
+      missed_failure_mode: boolean;
       /** Mission Id */
       mission_id: string;
       /** Mission Title */
       mission_title: string;
       /** Mission Version */
       mission_version: number;
-      /** Rubric Version */
-      rubric_version: string;
-      /** Total Score */
-      total_score: number;
-      /** Effective Max */
-      effective_max: number;
-      /** Missed Failure Mode */
-      missed_failure_mode: boolean;
-      /** Score Cap Reason */
-      score_cap_reason?: 'gave_up' | null;
       /** Proctored */
       proctored: boolean;
-      /** Attempt Index */
-      attempt_index: number;
-      /** Graded At */
-      graded_at: string;
-      /** Canonical Url */
-      canonical_url: string;
+      /** Rubric Version */
+      rubric_version: string;
+      /** Schema Version */
+      schema_version: number;
+      /** Score Cap Reason */
+      score_cap_reason?: 'gave_up' | null;
+      /**
+       * Submission Id
+       * Format: uuid
+       */
+      submission_id: string;
+      /** Total Score */
+      total_score: number;
       /** Verification Hash */
       verification_hash: string;
       /** Verification Signature */
@@ -2661,26 +2840,26 @@ export interface components {
      *     `docs/adr/0009-multi-attempt-policy.md`.
      */
     YourAttempts: {
-      /**
-       * Count
-       * @default 0
-       */
-      count: number;
       /** Best Score */
       best_score?: number | null;
       /** Best Submission Id */
       best_submission_id?: string | null;
-      /** Latest Score */
-      latest_score?: number | null;
-      /** Latest Submission Id */
-      latest_submission_id?: string | null;
-      /** Delta */
-      delta?: number | null;
       /**
        * Best Was Gave Up
        * @default false
        */
       best_was_gave_up: boolean;
+      /**
+       * Count
+       * @default 0
+       */
+      count: number;
+      /** Delta */
+      delta?: number | null;
+      /** Latest Score */
+      latest_score?: number | null;
+      /** Latest Submission Id */
+      latest_submission_id?: string | null;
       /** Score History */
       score_history?: number[];
     };
@@ -2693,9 +2872,12 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  healthz_healthz_get: {
+  get_callback_api_v1_auth_callback_get: {
     parameters: {
-      query?: never;
+      query: {
+        /** @description Raw magic-link token from the email URL */
+        token: string;
+      };
       header?: never;
       path?: never;
       cookie?: never;
@@ -2708,14 +2890,21 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
         };
       };
     };
   };
-  healthz_ready_healthz_ready_get: {
+  post_csrf_refresh_api_v1_auth_csrf_refresh_post: {
     parameters: {
       query?: never;
       header?: never;
@@ -2735,7 +2924,7 @@ export interface operations {
       };
     };
   };
-  status_status_get: {
+  get_github_oauth_available_api_v1_auth_github_available_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -2750,255 +2939,21 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': components['schemas']['GithubOAuthAvailability'];
         };
       };
     };
   };
-  status_v1_api_v1_status_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
-        };
-      };
-    };
-  };
-  list_missions_api_v1_missions_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['MissionListItem'][];
-        };
-      };
-    };
-  };
-  get_mission_detail_api_v1_missions__mission_id__get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        mission_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['MissionDetail'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_session_api_v1_sessions_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['SessionCreate'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      202: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SessionRead'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_session_endpoint_api_v1_sessions__session_id__get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SessionDetail'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_ws_token_api_v1_sessions__session_id__ws_token_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['WsTokenRead'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_context_api_v1_sessions__session_id__context_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['ContextSelection'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_tree_api_v1_sessions__session_id__tree_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['FileTreeNodeSchema'][];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_file_api_v1_sessions__session_id__file_get: {
+  get_github_oauth_callback_api_v1_auth_github_callback_get: {
     parameters: {
       query: {
-        /** @description Workspace-relative path to the file */
-        path: string;
+        /** @description GitHub authorization code */
+        code: string;
+        /** @description State value echoed by GitHub */
+        state: string;
       };
       header?: never;
-      path: {
-        session_id: string;
-      };
+      path?: never;
       cookie?: never;
     };
     requestBody?: never;
@@ -3009,7 +2964,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FileContent'];
+          'application/json': unknown;
         };
       };
       /** @description Validation Error */
@@ -3023,247 +2978,14 @@ export interface operations {
       };
     };
   };
-  post_file_api_v1_sessions__session_id__files_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['FileWriteBody'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_revert_api_v1_sessions__session_id__files_revert_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['FileRevertBody'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_reset_api_v1_sessions__session_id__reset_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SessionResetResponse'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_command_api_v1_sessions__session_id__commands_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CommandBody'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['CommandRunResponse'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_diff_api_v1_sessions__session_id__diff_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['UnifiedDiff'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_diff_opened_api_v1_sessions__session_id__events_diff_opened_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: {
-      content: {
-        'application/json': components['schemas']['DiffOpenedBody'] | null;
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_tutorial_step_api_v1_sessions__session_id__events_tutorial_step_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['TutorialStepBody'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_files_list_api_v1_sessions__session_id__files_list_get: {
+  get_github_oauth_start_api_v1_auth_github_start_get: {
     parameters: {
       query?: {
-        /** @description Optional substring filter (case-insensitive). Applied AFTER the listing fetch. */
-        query?: string | null;
-        /** @description Maximum number of paths to return (hard cap 5000). */
-        max?: number;
+        /** @description Optional relative path the callback will redirect to after minting the session cookie. Must start with ``/`` and not with ``//``; otherwise dropped. */
+        return_to?: string | null;
       };
       header?: never;
-      path: {
-        session_id: string;
-      };
+      path?: never;
       cookie?: never;
     };
     requestBody?: never;
@@ -3274,7 +2996,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['FileListResponse'];
+          'application/json': unknown;
         };
       };
       /** @description Validation Error */
@@ -3288,179 +3010,14 @@ export interface operations {
       };
     };
   };
-  post_files_search_api_v1_sessions__session_id__files_search_post: {
+  post_logout_api_v1_auth_logout_post: {
     parameters: {
       query?: never;
       header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['SearchRequest'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SearchResponse'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_timeline_api_v1_sessions__session_id__timeline_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
+      path?: never;
       cookie?: never;
     };
     requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SupervisionEventRead'][];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_submit_api_v1_sessions__session_id__submit_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SubmissionRead'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_give_up_api_v1_sessions__session_id__give_up_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SubmissionRead'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_submission_api_v1_sessions__session_id__submission_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['SubmissionRead'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_integrity_event_api_v1_sessions__session_id__events_integrity_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['IntegrityEventIn'];
-      };
-    };
     responses: {
       /** @description Successful Response */
       204: {
@@ -3468,15 +3025,6 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
       };
     };
   };
@@ -3544,56 +3092,6 @@ export interface operations {
       };
     };
   };
-  get_callback_api_v1_auth_callback_get: {
-    parameters: {
-      query: {
-        /** @description Raw magic-link token from the email URL */
-        token: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_logout_api_v1_auth_logout_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
   get_me_api_v1_auth_me_get: {
     parameters: {
       query?: never;
@@ -3611,6 +3109,13 @@ export interface operations {
         content: {
           'application/json': components['schemas']['UserRead'];
         };
+      };
+      /** @description No session cookie was presented (or the cookie failed verification). Sign in via ``POST /auth/magic-link`` or the GitHub OAuth flow and retry. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };
@@ -3652,46 +3157,6 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_csrf_refresh_api_v1_auth_csrf_refresh_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-    };
-  };
-  post_tutorial_replay_api_v1_auth_me_tutorial_replay_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['UserRead'];
         };
       };
     };
@@ -3743,122 +3208,6 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_me_email_change_api_v1_auth_me_email_change_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['EmailChangeRequest'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['DeletionLockError'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_me_email_confirm_api_v1_auth_me_email_confirm_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['EmailChangeConfirm'];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['UserRead'];
-        };
-      };
-      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['DeletionLockError'];
-        };
-      };
-      /** @description The email change can't be confirmed — either there is no pending change (``no_pending_email``) or the address was claimed by another account before confirm (``email_taken_in_flight``). */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_me_sign_out_all_api_v1_auth_me_sessions_sign_out_all_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      204: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
-      403: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['DeletionLockError'];
         };
       };
     };
@@ -3983,114 +3332,33 @@ export interface operations {
       };
     };
   };
-  get_github_oauth_available_api_v1_auth_github_available_get: {
+  post_me_email_change_api_v1_auth_me_email_change_post: {
     parameters: {
       query?: never;
       header?: never;
       path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['GithubOAuthAvailability'];
-        };
-      };
-    };
-  };
-  get_github_oauth_start_api_v1_auth_github_start_get: {
-    parameters: {
-      query?: {
-        /** @description Optional relative path the callback will redirect to after minting the session cookie. Must start with ``/`` and not with ``//``; otherwise dropped. */
-        return_to?: string | null;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_github_oauth_callback_api_v1_auth_github_callback_get: {
-    parameters: {
-      query: {
-        /** @description GitHub authorization code */
-        code: string;
-        /** @description State value echoed by GitHub */
-        state: string;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': unknown;
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  post_prompt_api_v1_sessions__session_id__prompts_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        session_id: string;
-      };
       cookie?: never;
     };
     requestBody: {
       content: {
-        'application/json': components['schemas']['PromptBody'];
+        'application/json': components['schemas']['EmailChangeRequest'];
       };
     };
     responses: {
       /** @description Successful Response */
-      200: {
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
         headers: {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AgentTurnResponse'];
+          'application/json': components['schemas']['DeletionLockError'];
         };
       };
       /** @description Validation Error */
@@ -4104,13 +3372,173 @@ export interface operations {
       };
     };
   };
-  post_apply_patch_api_v1_sessions__session_id__patches__turn_id__apply_post: {
+  post_me_email_confirm_api_v1_auth_me_email_confirm_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['EmailChangeConfirm'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserRead'];
+        };
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
+        };
+      };
+      /** @description The email change can't be confirmed — either there is no pending change (``no_pending_email``) or the address was claimed by another account before confirm (``email_taken_in_flight``). */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_me_sign_out_all_api_v1_auth_me_sessions_sign_out_all_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Account scheduled for deletion. ``code='deletion_scheduled'`` with ``scheduled_for`` carrying the ISO-8601 grace-end timestamp. Cancel via ``POST /auth/me/delete/cancel`` (the only exempt mutating endpoint). */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeletionLockError'];
+        };
+      };
+    };
+  };
+  post_tutorial_replay_api_v1_auth_me_tutorial_replay_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UserRead'];
+        };
+      };
+    };
+  };
+  get_recommendations_api_v1_me_recommendations_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RecommendationSet'];
+        };
+      };
+      /** @description Authentication required — the recommendation set is per-user. Sign in via the magic-link flow or GitHub OAuth and retry. */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  list_missions_api_v1_missions_get: {
+    parameters: {
+      query?: {
+        /** @description Filter to missions whose ``tags`` contain *any* of the listed values (closed vocabulary; see apps/api/app/missions/manifest.py::_KNOWN_TAGS). */
+        tags?: string[] | null;
+        /** @description Filter to missions whose ``repo_pack_id`` equals this value. */
+        repo_pack?: string | null;
+        /** @description Filter to missions whose repo pack has ``repo_packs.language == language``. Closed vocabulary — unknown values 422 at the edge instead of silently returning an empty list. */
+        language?: ('typescript' | 'python' | 'go') | null;
+        /** @description When set to ``upcoming``, append dated ``coming_soon`` entries from ``apps/api/app/missions/roadmap.yaml`` to the response. */
+        include?: 'upcoming' | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MissionListItem'][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_mission_detail_api_v1_missions__mission_id__get: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        session_id: string;
-        turn_id: string;
+        mission_id: string;
       };
       cookie?: never;
     };
@@ -4122,7 +3550,65 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['PatchResult'];
+          'application/json': components['schemas']['MissionDetail'];
+        };
+      };
+      /** @description No mission with the given id is published (or the id does not exist). Anonymous and signed-in callers see the same shape — the field surface never hints at whether the row exists but is unpublished. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_my_skills_api_v1_profiles_me_skills_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SkillsCatalog'];
+        };
+      };
+    };
+  };
+  get_profile_api_v1_profiles__handle__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        handle: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PublicProfile'];
         };
       };
       /** @description Validation Error */
@@ -4170,7 +3656,7 @@ export interface operations {
       };
     };
   };
-  post_share_api_v1_reports__submission_id__share_post: {
+  get_report_for_print_api_v1_reports__submission_id__print_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -4187,7 +3673,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['ShareTokenRead'];
+          'application/json': components['schemas']['SubmissionRead'];
         };
       };
       /** @description Validation Error */
@@ -4293,12 +3779,476 @@ export interface operations {
       };
     };
   };
-  get_report_for_print_api_v1_reports__submission_id__print_get: {
+  post_share_api_v1_reports__submission_id__share_post: {
     parameters: {
       query?: never;
       header?: never;
       path: {
         submission_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ShareTokenRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_session_api_v1_sessions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SessionCreate'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SessionRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_session_endpoint_api_v1_sessions__session_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SessionDetail'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_command_api_v1_sessions__session_id__commands_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CommandBody'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CommandRunResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_context_api_v1_sessions__session_id__context_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ContextSelection'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_diff_api_v1_sessions__session_id__diff_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UnifiedDiff'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_diff_opened_api_v1_sessions__session_id__events_diff_opened_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        'application/json': components['schemas']['DiffOpenedBody'] | null;
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_integrity_event_api_v1_sessions__session_id__events_integrity_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['IntegrityEventIn'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_tutorial_step_api_v1_sessions__session_id__events_tutorial_step_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TutorialStepBody'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_file_api_v1_sessions__session_id__file_get: {
+    parameters: {
+      query: {
+        /** @description Workspace-relative path to the file */
+        path: string;
+      };
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['FileContent'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_file_api_v1_sessions__session_id__files_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['FileWriteBody'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_files_list_api_v1_sessions__session_id__files_list_get: {
+    parameters: {
+      query?: {
+        /** @description Optional substring filter (case-insensitive). Applied AFTER the listing fetch. */
+        query?: string | null;
+        /** @description Maximum number of paths to return (hard cap 5000). */
+        max?: number;
+      };
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['FileListResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_revert_api_v1_sessions__session_id__files_revert_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['FileRevertBody'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_files_search_api_v1_sessions__session_id__files_search_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SearchRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SearchResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_give_up_api_v1_sessions__session_id__give_up_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
       };
       cookie?: never;
     };
@@ -4320,6 +4270,281 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_apply_patch_api_v1_sessions__session_id__patches__turn_id__apply_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+        turn_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PatchResult'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_prompt_api_v1_sessions__session_id__prompts_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PromptBody'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AgentTurnResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_reset_api_v1_sessions__session_id__reset_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SessionResetResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_submission_api_v1_sessions__session_id__submission_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SubmissionRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  post_submit_api_v1_sessions__session_id__submit_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SubmissionRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_timeline_api_v1_sessions__session_id__timeline_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SupervisionEventRead'][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_tree_api_v1_sessions__session_id__tree_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['FileTreeNodeSchema'][];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_ws_token_api_v1_sessions__session_id__ws_token_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WsTokenRead'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  status_v1_api_v1_status_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            [key: string]: unknown;
+          };
         };
       };
     };
@@ -4355,38 +4580,7 @@ export interface operations {
       };
     };
   };
-  get_profile_api_v1_profiles__handle__get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        handle: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['PublicProfile'];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
-  get_my_skills_api_v1_profiles_me_skills_get: {
+  healthz_healthz_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -4401,7 +4595,51 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SkillsCatalog'];
+          'application/json': {
+            [key: string]: unknown;
+          };
+        };
+      };
+    };
+  };
+  healthz_ready_healthz_ready_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': unknown;
+        };
+      };
+    };
+  };
+  status_status_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            [key: string]: unknown;
+          };
         };
       };
     };

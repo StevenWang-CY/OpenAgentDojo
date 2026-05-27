@@ -1,10 +1,15 @@
 import Link from "next/link";
 import { BrandMark } from "@/components/layout/BrandMark";
+import { PUBLIC_REPO_URL } from "@/lib/repo-url";
 
 // The status page is an in-app route at `/status` that proxies the API's
 // `/status` JSON endpoint and renders it server-side.
 const STATUS_URL = "/status";
-const GITHUB_URL = "https://github.com/StevenWang-CY/OpenAgentDojo";
+// FE-P4 audit fix — previously a personal fork URL was hard-coded here
+// while every other surface (catalog cards, roadmap, profile strip)
+// pulled from the env-driven ``PUBLIC_REPO_URL``. Reading the same
+// constant fixes the drift and keeps deploy overrides consistent.
+const GITHUB_URL = PUBLIC_REPO_URL;
 
 /**
  * Marketing footer for the public landing page. Distinct from the in-app
@@ -39,6 +44,11 @@ export function MarketingFooter() {
 
         <FooterColumn title="Product">
           <FooterLink href="/missions">Missions</FooterLink>
+          {/* P1-1 — public roadmap surface listing the live mission count
+              and dated coming-soon entries. Signed-out friendly so a
+              first-time visitor can see what is shipping next before
+              committing to an account. */}
+          <FooterLink href="/roadmap">Roadmap</FooterLink>
           <FooterLink href="/auth/sign-in">Sign in</FooterLink>
           {/* P0-10 — direct link into the magic-link troubleshooting
               FAQ so users hitting deliverability issues can find help

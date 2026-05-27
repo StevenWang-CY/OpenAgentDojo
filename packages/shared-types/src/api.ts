@@ -29,8 +29,45 @@ type GenAgentTurnResponse = components["schemas"]["AgentTurnResponse"];
 type GenContextSelection = components["schemas"]["ContextSelection"];
 type GenCommandRunResponse = components["schemas"]["CommandRunResponse"];
 
-export type Mission = Omit<GenMissionListItem, "skills_tested"> & {
+/** P1-1 — closed vocabulary of mission catalog languages. Mirrors the
+ *  backend ``MissionLanguage`` Literal and the ``repo_packs.language``
+ *  column. The FE language chip + the ``?language=`` filter both source
+ *  off this. */
+export type MissionLanguage = "typescript" | "python" | "go";
+
+/** P1-1 — shipped vs. coming-soon distinction. Shipped rows render the
+ *  standard catalog card; coming-soon rows are informational placeholders
+ *  appended when the caller passes ``?include=upcoming``. */
+export type MissionStatus = "shipped" | "coming_soon";
+
+export type Mission = Omit<
+  GenMissionListItem,
+  | "skills_tested"
+  | "tags"
+  | "repo_pack_id"
+  | "language"
+  | "status"
+  | "target_release_date"
+> & {
   skills_tested: string[];
+  /** P1-1 — closed-vocabulary failure-mode / skill / language tags. The
+   *  Pydantic field carries a ``default_factory=list`` so the backend
+   *  always serialises the key; re-narrowing to required here means
+   *  callers don't have to thread ``?? []`` through every render. */
+  tags: string[];
+  /** P1-1 — FK to ``repo_packs.id``. ``null`` on ``coming_soon``
+   *  placeholders whose pack hasn't shipped yet. */
+  repo_pack_id: string | null;
+  /** P1-1 — derived from the pack's ``repo_packs.language`` (or the
+   *  roadmap entry's own ``language`` for placeholders). Always present;
+   *  shipped rows default to ``typescript`` when no pack metadata exists. */
+  language: MissionLanguage;
+  /** P1-1 — ``shipped`` for live catalog rows, ``coming_soon`` for
+   *  roadmap placeholders. The FE branches on this to render the
+   *  muted coming-soon card variant (no Start button, dated chip). */
+  status: MissionStatus;
+  /** P1-1 — ISO ``YYYY-MM-DD``. Populated only on coming-soon rows. */
+  target_release_date?: string | null;
 };
 
 export type MissionDetailGen = Omit<
@@ -243,6 +280,21 @@ export type FileKind = FileTreeNode["kind"];
 // generated layer means a backend column rename surfaces at the FE
 // type-check immediately instead of drifting silently.
 export type User = components["schemas"]["UserRead"];
+
+// ── P1-2 — Adaptive next-mission recommendation ─────────────────────────────
+//
+// ``RecommendationItem`` / ``RecommendationSet`` mirror the Pydantic
+// shapes on ``GET /api/v1/me/recommendations``. They are re-exports of the
+// generated component schemas so the FE imports a stable name even if the
+// backend renames the underlying class. ``MeRecommendationInline`` is the
+// compact inline-on-/auth/me shape (just enough for the header chip);
+// ``User`` already carries ``recommendation`` via the regenerated
+// ``UserRead`` schema, so the FE can read ``user.recommendation`` directly
+// without a second roundtrip.
+export type RecommendationItem = components["schemas"]["RecommendationItem"];
+export type RecommendationSet = components["schemas"]["RecommendationSet"];
+export type MeRecommendationInline =
+  components["schemas"]["MeRecommendationInline"];
 
 // ── Mission kind discriminator (P0-1) ──────────────────────────────────────
 

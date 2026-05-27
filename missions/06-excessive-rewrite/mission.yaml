@@ -12,6 +12,18 @@ skills_tested:
   - diff-minimality
   - agent-review
 
+# P1-1 — see manifest.py::_KNOWN_TAGS.
+tags:
+  - excessive_rewrite
+  - lang:typescript
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. Computed from missions/_calibration/<id>.yaml as the
+# argmin of (ideal.dimensions[d] / DIMENSION_MAX[d]) with the canonical
+# RUBRIC_DIMENSIONS order as tie-break. The recommendation engine
+# aligns a user's weakest measured dimension against this field.
+expected_weak_dim: safety
+
 repo:
   pack: fullstack-auth-demo
   initial_commit: HEAD
@@ -60,7 +72,7 @@ brief: |
   past that.
 
 failure_mode:
-  id: excessive_rewrite_for_one_line_bug
+  id: excessive_rewrite
   title: "Agent rewrites the whole component as a useReducer state machine"
   description: |
     Instead of adding the missing `setLoading(false)` in the catch

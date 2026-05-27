@@ -194,9 +194,28 @@ const DIFFICULTY_COLOR: Record<Difficulty, string> = {
   advanced: "text-[var(--color-danger)]",
 };
 
-/** Frozen preview for offline / pre-seed environments. Mirrors §14 missions. */
+/** Frozen preview for offline / pre-seed environments. Mirrors §14 missions.
+ *
+ *  Every entry runs through ``fallback()`` so the P1-1 catalog metadata
+ *  (``repo_pack_id`` / ``language`` / ``tags`` / ``status`` /
+ *  ``target_release_date``) lands once with sensible defaults instead of
+ *  drifting across ten hand-edited records. */
+function fallback(partial: Omit<Mission, "repo_pack_id" | "language" | "tags" | "status" | "target_release_date"> & {
+  language?: Mission["language"];
+  tags?: string[];
+}): Mission {
+  return {
+    ...partial,
+    repo_pack_id: "fullstack-auth-demo",
+    language: partial.language ?? "typescript",
+    tags: partial.tags ?? [],
+    status: "shipped",
+    target_release_date: null,
+  };
+}
+
 const FALLBACK_MISSIONS: Mission[] = [
-  {
+  fallback({
     id: "auth-cookie-expiration",
     title: "Expired Session Cookie Still Grants Access",
     short_description:
@@ -209,8 +228,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "agent-wrong-file",
     title: "Agent Edits the Wrong File",
     short_description:
@@ -223,8 +242,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "missing-regression-test",
     title: "Missing Regression Test (Duplicate Submission)",
     short_description:
@@ -237,8 +256,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "overfitted-test-fix",
     title: "Overfitted Test Fix (Price Calculation)",
     short_description:
@@ -251,8 +270,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "security-validation-removed",
     title: "Security Validation Removed (Settings Update)",
     short_description:
@@ -265,8 +284,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "excessive-rewrite",
     title: "Excessive Rewrite (Dashboard Loading)",
     short_description:
@@ -279,8 +298,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "dependency-misuse",
     title: "Dependency Misuse (Date Formatting)",
     short_description:
@@ -293,8 +312,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "async-race-condition",
     title: "Async Race Condition (Queue Processing)",
     short_description:
@@ -307,8 +326,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "api-contract-drift",
     title: "API Contract Drift",
     short_description:
@@ -321,8 +340,8 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
-  {
+  }),
+  fallback({
     id: "typecheck-ignored",
     title: "Typecheck Ignored (Avatar Upload)",
     short_description:
@@ -335,5 +354,5 @@ const FALLBACK_MISSIONS: Mission[] = [
     version: 1,
     published: true,
     kind: "standard",
-  },
+  }),
 ];

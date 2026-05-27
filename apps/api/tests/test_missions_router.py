@@ -44,6 +44,7 @@ async def test_list_and_detail(client, db_engine) -> None:
                 manifest_sha256="0" * 64,
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         await db.commit()

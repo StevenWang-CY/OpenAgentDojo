@@ -426,6 +426,14 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
         queryKey: ["session", sessionId, "timeline"],
       });
     }
+    // FE-P4 audit fix — a freshly graded session shifts the engine's
+    // weakest-dim picture, so the cached ``/me/recommendations`` set is
+    // stale. Invalidate on the `graded` transition so the catalog chip,
+    // profile strip, and report footer all read the fresh ranking on
+    // their next render.
+    if (status === "graded") {
+      void queryClient.invalidateQueries({ queryKey: ["me-recommendations"] });
+    }
   }, [status, sessionId, queryClient]);
 
   // Sync sandbox driver into the store so the topbar banner can pick it up.

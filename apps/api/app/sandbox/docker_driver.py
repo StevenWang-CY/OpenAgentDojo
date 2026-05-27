@@ -28,6 +28,11 @@ from app.sandbox.driver import (
     SearchMatchDict,
     SearchTimeoutError,
 )
+from app.sandbox.lsp import (
+    DockerLSPProcess,
+    LSPUnavailableError,
+    spawn_docker_lsp,
+)
 from app.sandbox.types import (
     ApplyResult,
     FileTreeNode,
@@ -132,10 +137,23 @@ class DockerSandboxDriver(SandboxDriver):
 
     @staticmethod
     def _image_for(runtime: str) -> str:
-        return {
+        # The mapping must cover every value in
+        # ``app.missions.manifest.LanguageRuntime``. A silent fallback to
+        # node20 used to mask typos (a Python mission would have booted as
+        # Node) — we raise on unknown runtimes so a manifest drift surfaces
+        # at provision time instead of mid-grade.
+        mapping = {
             "node20": "agentarena/node20:1",
             "python312": "agentarena/python312:1",
-        }.get(runtime, "agentarena/node20:1")
+            "go122": "agentarena/go122:1",
+        }
+        try:
+            return mapping[runtime]
+        except KeyError as exc:
+            raise ValueError(
+                f"unknown language_runtime: {runtime!r}; expected one of "
+                f"{sorted(mapping)!r}"
+            ) from exc
 
     # ------------------------------------------------------------- provision
     async def provision(self, mission: Any, session_id: Any) -> SandboxHandle:
@@ -721,6 +739,38 @@ class DockerSandboxDriver(SandboxDriver):
             return bool(client.ping())
 
         return await asyncio.to_thread(_do_ping)
+
+    # ------------------------------------------------------------------ lsp
+    async def spawn_lsp(self, handle: SandboxHandle, language: str) -> DockerLSPProcess:
+        """Launch the LSP inside the user's container via ``docker exec``.
+
+        Wraps the SDK plumbing in :func:`app.sandbox.lsp.spawn_docker_lsp`.
+        The bidirectional socket inherits the container's seccomp profile,
+        memory cap, and ``--network=none`` posture, so no new isolation
+        boundary is needed.
+
+        Lifts SDK/daemon-unreachable errors into
+        :class:`app.sandbox.lsp.LSPUnavailableError` with
+        ``driver_unavailable`` so the WS proxy can fail soft (FE sees a
+        structured ``lsp_error`` frame) instead of returning a 500.
+        """
+        try:
+            client = self._ensure_client()
+            container = client.containers.get(handle.container_id)
+        except RuntimeError as exc:
+            # Docker daemon down / SDK missing — log loudly but don't crash
+            # the WS. The proxy converts this into ``driver_unavailable``
+            # frame so the FE shows a "LSP unavailable" chip and keeps the
+            # editor usable for plain syntax highlighting.
+            logger.warning("lsp[{}]: docker driver unavailable: {}", language, exc)
+            raise LSPUnavailableError("driver_unavailable", language, detail=str(exc)) from exc
+
+        return await spawn_docker_lsp(
+            container,
+            client,
+            language,
+            workdir=str(handle.workdir),
+        )
 
     # -------------------------------------------------------------- destroy
     async def destroy(self, handle: SandboxHandle) -> None:

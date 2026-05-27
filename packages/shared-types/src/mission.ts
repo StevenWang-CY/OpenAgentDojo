@@ -4,7 +4,10 @@
 
 export interface MissionRepoInfo {
   pack: string;
-  language_runtime: "node20" | "python312";
+  // P1-1 — ``go122`` is the third sandbox runtime shipped with the
+  // ``go-orders-service`` repo pack. Kept in lockstep with the backend
+  // ``app.missions.manifest.LanguageRuntime`` Literal.
+  language_runtime: "node20" | "python312" | "go122";
   workdir: string;
   visible_test_commands: {
     unit?: string;
@@ -18,14 +21,4 @@ export interface MissionFailureMode {
   id: string;
   title: string;
   description: string;
-}
-
-export interface MissionScoringWeights {
-  final_correctness: 30;
-  verification: 20;
-  agent_review: 15;
-  prompt_quality: 10;
-  context_selection: 10;
-  safety: 10;
-  diff_minimality: 5;
 }

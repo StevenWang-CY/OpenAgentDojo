@@ -44,6 +44,7 @@ async def test_atomic_claim_only_one_winner(db_engine) -> None:
                 manifest_sha256="0" * 64,
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(
@@ -98,6 +99,7 @@ async def test_claim_no_op_when_status_not_active(db_engine) -> None:
                 manifest_sha256="0" * 64,
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

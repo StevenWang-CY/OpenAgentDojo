@@ -33,11 +33,27 @@ RUN apt-get update \
 RUN corepack enable \
  && corepack prepare pnpm@9.12.0 --activate
 
+# P1-3 — LSP for TypeScript repo packs. typescript-language-server is the
+# canonical server used by VS Code's TS extension and Neovim; pinning the
+# global install at build time keeps cold-start budget under 3 s. The
+# typescript package is a peer dep used to resolve workspace `tsc` correctly.
+RUN npm install -g --no-audit --no-fund \
+        typescript@5.5.4 \
+        typescript-language-server@4.3.3 \
+ && npm cache clean --force
+
 # Non-root user (uid 1000) for sandbox containers — never run repo code as root.
 RUN groupadd --gid 1000 arena \
  && useradd --uid 1000 --gid arena --home-dir /home/arena --create-home --shell /bin/bash arena \
  && mkdir -p /workspace \
  && chown -R arena:arena /workspace /home/arena
+
+# Shared docker runners — the grader expects ``/opt/runners`` to exist on
+# every sandbox image so language-specific bridges (today: Go; future: TS
+# slow-test bridges) live at a stable path. Bundling here keeps the layout
+# consistent across the three base images even when no TS-specific runner
+# exists yet.
+COPY missions/_shared/docker/runners/ /opt/runners/
 
 WORKDIR /workspace
 

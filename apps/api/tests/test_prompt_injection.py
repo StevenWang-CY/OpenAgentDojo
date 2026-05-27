@@ -176,6 +176,7 @@ async def _seed_mission_user_session(
                 manifest_sha256="0" * 64,
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         await db.flush()

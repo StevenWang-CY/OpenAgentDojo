@@ -1465,6 +1465,7 @@ def compute_score(
     agent_turns: list[dict[str, Any]],
     prompt_judgements: dict[str, Any] | None = None,
     completed_mission_ids: list[str] | None = None,
+    engine_recommended_mission_ids: list[str] | None = None,
 ) -> ScoreReport:
     """Compute the full 7-dimension score report.
 
@@ -1523,6 +1524,15 @@ def compute_score(
     # deterministic (no LLM). When the caller supplies ``completed_mission_ids``,
     # already-attempted missions are excluded from the recommendation set
     # — the user shouldn't be sent back to drills they have done.
+    #
+    # P1-2 — ``engine_recommended_mission_ids`` (when present) replaces
+    # the ad-hoc per-dimension static lists with the deterministic
+    # ranking output from :mod:`app.recommendations.engine`. Every
+    # weakness then surfaces the *same* top-3 ids so the report's
+    # "Recommended next mission" affordance and the live
+    # ``/me/recommendations`` endpoint stay in lockstep. The persisted
+    # field is what the P0-11 verify envelope hashes against — keep it
+    # deterministic.
     from app.grading.diagnostics import build_feedback_narrative
 
     feedback_narrative = [
@@ -1530,6 +1540,7 @@ def compute_score(
         for d in build_feedback_narrative(
             dimensions=dimensions,
             completed_mission_ids=completed_mission_ids,
+            engine_recommended_mission_ids=engine_recommended_mission_ids,
         )
     ]
 

@@ -111,6 +111,7 @@ async def _seed_session(session_factory, *, mode: str) -> uuid.UUID:
             manifest_sha256="sha",
             version=1,
             published=True,
+            expected_weak_dim="safety",
         )
         db.add(mission)
         await db.flush()

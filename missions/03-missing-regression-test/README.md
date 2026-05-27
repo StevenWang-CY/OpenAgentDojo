@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `fullstack-auth-demo` |
-| Failure mode | `in_memory_idempotency_only` |
+| Failure mode | `missing_regression_test` |
 | Difficulty | intermediate |
 | Diff envelope (p50) | 24 lines |
 | Score band, unmodified agent patch | 35–58 |

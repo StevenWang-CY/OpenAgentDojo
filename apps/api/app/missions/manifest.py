@@ -1,8 +1,10 @@
 """Strict Pydantic v2 model of the ``mission.yaml`` schema (plan §7.1).
 
 The manifest is the contract between content authors and the runtime. Every
-field is typed; the scoring weights must equal the canonical (30/20/15/10/10/10/5)
-distribution.
+field is typed; the scoring weights must equal the canonical
+(30/15/15/10/10/10/10) distribution sourced from
+:data:`app.grading.dimensions.RUBRIC_DIMENSIONS`. (The original plan numbers
+were 30/20/15/10/10/10/5 — the grader uses the rebalanced distribution.)
 """
 
 from __future__ import annotations
@@ -22,8 +24,73 @@ from pydantic import (
 from app.grading.dimensions import DIMENSION_MAX
 
 Difficulty = Literal["beginner", "intermediate", "advanced"]
-LanguageRuntime = Literal["node20", "python312"]
+# P1-1 — ``go122`` is the third sandbox runtime (Go 1.22 / chi) shipped with
+# the ``go-orders-service`` repo pack. The base image is built off
+# ``golang:1.22-bookworm`` (see ``missions/_shared/docker/go-orders.Dockerfile``)
+# and the grader bridges Go's ``-json`` test events into the same
+# ``{name,status,duration_ms,file}`` envelope the TS/Py runners produce via
+# ``missions/_shared/docker/runners/go-runner.sh``.
+LanguageRuntime = Literal["node20", "python312", "go122"]
 MissionKind = Literal["standard", "tutorial"]
+
+# P1-2 — closed vocabulary for ``MissionManifest.expected_weak_dim``.
+# Each standard mission declares the single dimension it is primarily
+# designed to exercise; the recommendation engine reads this to align
+# the user's weakest dimension against the mission catalogue.
+ExpectedWeakDim = Literal[
+    "final_correctness",
+    "verification",
+    "agent_review",
+    "prompt_quality",
+    "context_selection",
+    "safety",
+    "diff_minimality",
+]
+
+
+# P1-1 — closed vocabulary for ``MissionManifest.tags``. Three families:
+#
+# * Failure-mode tags — exactly one of these must appear on every standard
+#   mission, and it MUST match the manifest's ``failure_mode.id`` so the
+#   catalog filter never drifts from the report copy.
+# * Skill tags (``skill:*``) — optional; let the catalog filter on
+#   underlying skills (concurrency, typing, auth, etc.).
+# * Language tags (``lang:*``) — optional; auto-inferable from the repo
+#   pack but allowed on the manifest for legibility.
+#
+# New tags require an ADR. The vocabulary mirrors
+# ``docs/schemas/mission.schema.json``; keep both in sync.
+_FAILURE_MODE_TAGS: frozenset[str] = frozenset(
+    {
+        "checks_presence_not_expiration",
+        "overfitted_visible_test",
+        "wrong_layer_committed",
+        "missing_regression_test",
+        "race_condition",
+        "context_dropped",
+        "error_wrapped_swallowed",
+        "dependency_misuse",
+        "security_check_removed",
+        "typecheck_ignored",
+        "api_contract_drift",
+        "excessive_rewrite",
+        "goroutine_leak",
+    }
+)
+_SKILL_TAGS: frozenset[str] = frozenset(
+    {
+        "skill:concurrency",
+        "skill:typing",
+        "skill:auth",
+        "skill:http",
+        "skill:sql",
+        "skill:cli",
+    }
+)
+_LANGUAGE_TAGS: frozenset[str] = frozenset(
+    {"lang:typescript", "lang:python", "lang:go"}
+)
+_KNOWN_TAGS: frozenset[str] = _FAILURE_MODE_TAGS | _SKILL_TAGS | _LANGUAGE_TAGS
 
 
 class MissionConfigError(ValueError):
@@ -278,6 +345,23 @@ class MissionManifest(BaseModel):
     # public catalog. Each curated mission must opt in explicitly (P2-B2).
     published: bool = False
 
+    # P1-1 — closed-vocabulary tag list (see ``_KNOWN_TAGS``). Tutorials may
+    # ship empty tags; standard missions MUST carry at least one failure-mode
+    # tag, and that tag MUST equal ``failure_mode.id`` so the catalog filter
+    # never drifts from the report copy. Cap at 8 to keep the catalog filter
+    # readable; unique entries enforced by the ``set(...)`` length check below.
+    tags: list[str] = Field(default_factory=list, max_length=8)
+
+    # P1-2 — the single rubric dimension this mission is *primarily designed
+    # to exercise*. Drives the deterministic recommendation engine: a user
+    # whose weakest dimension is ``agent_review`` is steered toward missions
+    # whose ``expected_weak_dim == "agent_review"``. Required for standard
+    # missions, allowed-but-null for tutorials (the orientation surface does
+    # not appear in the recommendation ladder). The closed vocabulary mirrors
+    # ``apps/api/app/grading/dimensions.py::RUBRIC_DIMENSIONS``; keep both in
+    # lockstep with ``docs/schemas/mission.schema.json``.
+    expected_weak_dim: ExpectedWeakDim | None = None
+
     @model_validator(mode="after")
     def _enforce_kind_invariants(self) -> MissionManifest:
         """Tutorial-vs-standard mission invariants.
@@ -317,6 +401,19 @@ class MissionManifest(BaseModel):
                 f"tutorial mission '{self.id}' must set published=false; "
                 "the FE renders tutorials through the orientation surface."
             )
+        # P1-2 — standard missions must declare the dimension they exercise
+        # so the recommendation engine can align it against the user's
+        # weakest dimension. Tutorials are exempt because the orientation
+        # surface never appears in the recommendation ladder.
+        if self.kind == "standard" and self.expected_weak_dim is None:
+            raise MissionConfigError(
+                f"mission '{self.id}' (kind=standard) is missing the "
+                "``expected_weak_dim`` field. Set it to the single rubric "
+                "dimension this mission primarily exercises (one of "
+                "final_correctness, verification, agent_review, "
+                "prompt_quality, context_selection, safety, "
+                "diff_minimality) — see P1_DESIGN.md §P1-2."
+            )
         return self
 
     @field_validator("expected_files")
@@ -325,6 +422,62 @@ class MissionManifest(BaseModel):
         if len(set(v)) != len(v):
             raise ValueError("expected_files contains duplicates")
         return v
+
+    @field_validator("tags")
+    @classmethod
+    def _tags_in_closed_vocabulary(cls, v: list[str]) -> list[str]:
+        """Reject any tag outside the closed vocabulary (P1-1).
+
+        Surfaces the unknown values directly so authors can see exactly which
+        token tripped the gate — a generic "invalid tag" would force them to
+        diff their manifest against the schema by hand.
+        """
+        if len(set(v)) != len(v):
+            raise ValueError("tags contains duplicate entries")
+        unknown = sorted(set(v) - _KNOWN_TAGS)
+        if unknown:
+            raise ValueError(
+                "tags contains unknown entries "
+                f"{unknown!r}; allowed values are listed in "
+                "apps/api/app/missions/manifest.py::_KNOWN_TAGS "
+                "(failure-mode + skill:* + lang:* families)."
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _failure_mode_tag_matches_manifest(self) -> MissionManifest:
+        """Enforce the failure-mode-tag / ``failure_mode.id`` lockstep (P1-1).
+
+        Standard missions MUST carry exactly one failure-mode tag, and it MUST
+        equal the ``failure_mode.id`` field — otherwise the catalog filter
+        could surface a mission under a different failure-mode label than the
+        report copy uses. Tutorials are exempt: the orientation flow does not
+        live in the catalog grid and is not scored, so a tag list is optional.
+        """
+        present_failure_tags = [t for t in self.tags if t in _FAILURE_MODE_TAGS]
+        if self.kind == "tutorial":
+            return self
+        if not present_failure_tags:
+            raise MissionConfigError(
+                f"mission '{self.id}' (kind=standard) carries no failure-mode "
+                "tag — add the canonical tag matching `failure_mode.id` "
+                f"({self.failure_mode.id!r}) to `tags:`."
+            )
+        if len(present_failure_tags) > 1:
+            raise MissionConfigError(
+                f"mission '{self.id}' carries multiple failure-mode tags "
+                f"{present_failure_tags!r}; exactly one is allowed so the "
+                "catalog filter stays unambiguous."
+            )
+        (mode_tag,) = present_failure_tags
+        if mode_tag != self.failure_mode.id:
+            raise MissionConfigError(
+                f"mission '{self.id}' failure-mode tag {mode_tag!r} does not "
+                f"match `failure_mode.id` {self.failure_mode.id!r}. Update "
+                "the tag or the failure_mode id so they agree (the catalog "
+                "filter and the report copy must use the same key)."
+            )
+        return self
 
     @model_validator(mode="after")
     def _require_test_commands_for_visible_suites(self) -> MissionManifest:

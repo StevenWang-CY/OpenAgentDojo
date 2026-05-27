@@ -6,7 +6,15 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Flag, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { ApiError, createSession, getReport, getTimeline, shareReport } from "@/lib/api";
+import {
+  ApiError,
+  auth,
+  createSession,
+  getMyRecommendations,
+  getReport,
+  getTimeline,
+  shareReport,
+} from "@/lib/api";
 import type { ScoreReport } from "@arena/shared-types";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -65,6 +73,46 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
     queryFn: ({ signal }) => getTimeline(sessionId as string, signal),
     enabled: !!sessionId,
     retry: false,
+  });
+
+  // FE-P4 audit fix — share-token viewers must NEVER trigger a
+  // ``/me/recommendations`` fetch: the call is owner-scoped and will
+  // 401 for anonymous viewers, polluting telemetry and the React
+  // Query cache. Gate the recommendations query behind a fresh
+  // ``/auth/me`` probe and the absence of a share token.
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: ({ signal }) => auth.me(signal),
+    enabled: !effectiveShare,
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 0)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+  });
+  const user = meQuery.data ?? null;
+
+  // P1-2 — live "next mission" recommendation. The legacy fallback
+  // (``nextMissionHref`` reading from the score_report's
+  // ``feedback_narrative[].recommended_mission_ids``) is preserved so a
+  // 401 / network failure here never breaks the report footer CTA.
+  // Anonymous / share-link viewers get the embedded list; owners get
+  // the live engine output that reflects their newer history.
+  const recommendationsQuery = useQuery({
+    queryKey: ["me-recommendations"],
+    queryFn: ({ signal }) => getMyRecommendations(signal),
+    // FE-P4 audit fix — only owners (signed-in, not viewing via a
+    // share token) hit ``/me/recommendations``. Anonymous viewers
+    // and share-link viewers stay on the embedded fallback list,
+    // which lives in the score_report itself.
+    enabled: !effectiveShare && !!user,
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 0)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
   });
 
   // FE-P2 audit fix — dedupe is now keyed by (submissionId, complete) so
@@ -292,12 +340,78 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
               previousSessionId={submission.session_id}
             />
           ) : null}
-          <Button asChild>
-            <Link href={nextMissionHref(report)}>Next mission →</Link>
-          </Button>
+          <NextMissionButton
+            recommendation={recommendationsQuery.data ?? null}
+            fallbackReport={report}
+          />
         </div>
       </footer>
     </main>
+  );
+}
+
+/**
+ * P1-2 — "Next mission →" CTA backed by the live recommendation engine.
+ *
+ * The button prefers the top item from ``/me/recommendations`` (live,
+ * personalised, never stale). When the live fetch fails or returns no
+ * shipped items (401 anonymous viewer, network outage, share-link
+ * viewer), it falls back to the score_report's embedded
+ * ``feedback_narrative[].recommended_mission_ids`` so the CTA always
+ * navigates somewhere meaningful.
+ *
+ * Emits ``recommendation_shown`` + ``recommendation_clicked`` for the
+ * live path only; the legacy fallback is a no-op for the funnel because
+ * its source (the embedded score_report list) doesn't carry the same
+ * deterministic ranking guarantees.
+ */
+function NextMissionButton({
+  recommendation,
+  fallbackReport,
+}: {
+  recommendation: import("@arena/shared-types").RecommendationSet | null;
+  fallbackReport: ScoreReport;
+}) {
+  const liveTop = React.useMemo(() => {
+    if (!recommendation) return null;
+    for (const it of recommendation.recommendations) {
+      if (it.status === "shipped") return it;
+    }
+    return null;
+  }, [recommendation]);
+
+  const href = liveTop
+    ? `/missions/${liveTop.mission_id}`
+    : nextMissionHref(fallbackReport);
+
+  const shownRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!liveTop) return;
+    if (shownRef.current === liveTop.mission_id) return;
+    shownRef.current = liveTop.mission_id;
+    track("recommendation_shown", {
+      kind: "report",
+      weakest_dim: recommendation?.weakest_dim ?? null,
+      mission_ids: [liveTop.mission_id],
+      signed_in: true,
+    });
+  }, [liveTop, recommendation?.weakest_dim]);
+
+  const onClick = React.useCallback(() => {
+    if (!liveTop) return;
+    track("recommendation_clicked", {
+      position: 0,
+      mission_id: liveTop.mission_id,
+      kind: "report",
+    });
+  }, [liveTop]);
+
+  return (
+    <Button asChild>
+      <Link href={href} onClick={onClick} data-testid="report-next-mission">
+        Next mission →
+      </Link>
+    </Button>
   );
 }
 
@@ -416,6 +530,13 @@ function RetryMissionButton({
       queryClient.invalidateQueries({ queryKey: ["mission", missionId] });
       queryClient.invalidateQueries({ queryKey: ["profile"] });
       queryClient.invalidateQueries({ queryKey: ["skills"] });
+      // FE-P4 audit fix — a retry creates a new attempt that may shift
+      // the engine's weakest-dim picture once it grades, so the cached
+      // ``/me/recommendations`` set is stale by definition. Invalidate
+      // here so the catalog chip + profile strip + report footer all
+      // refresh on the next read instead of pinning to the pre-retry
+      // ranking.
+      queryClient.invalidateQueries({ queryKey: ["me-recommendations"] });
       // Land directly in the workspace — the shell handles the
       // provisioning state and transitions to active on its own.
       router.push(`/workspace/${session.id}`);

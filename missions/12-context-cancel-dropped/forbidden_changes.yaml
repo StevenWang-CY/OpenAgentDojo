@@ -1,0 +1,32 @@
+# Mission 12 forbidden-change rules.
+
+forbidden:
+  - id: store_rewritten
+    description: |
+      Wholesale rewrite of internal/store/store.go (>=200 added lines
+      after the diff). The intended fix is ~6 lines; anything an order
+      of magnitude larger is the agent over-reaching.
+    detection:
+      kind: diff_added_lines_in_file
+      file: internal/store/store.go
+      max: 200
+      penalty: 8
+
+  - id: timeout_over_background
+    description: |
+      Patch wraps context.Background with a WithTimeout. Background is
+      still the parent, so request cancellation is still dropped. The
+      canonical fix threads the caller's ctx through directly.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "context\\.WithTimeout\\(\\s*context\\.Background"
+      penalty: 6
+
+  - id: introduced_new_dependency
+    description: |
+      Patch touches go.mod or go.sum. The fix is purely a logic change;
+      it must not add a third-party library.
+    detection:
+      kind: diff_touches_file
+      file: go.mod
+      penalty: 10

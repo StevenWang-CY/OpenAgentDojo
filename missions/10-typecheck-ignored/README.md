@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `fullstack-auth-demo` |
-| Failure mode | `cast_via_as_any` |
+| Failure mode | `typecheck_ignored` |
 | Difficulty | intermediate |
 | Diff envelope (p50) | 30 lines |
 | Score band, unmodified agent patch | 30–55 |

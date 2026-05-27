@@ -5,11 +5,24 @@ import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, RefreshCcw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
-import { ApiError, getFile, revertFile, writeFile } from "@/lib/api";
+import { ApiError, getFile, getWsToken, revertFile, writeFile } from "@/lib/api";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useTheme } from "@/stores/themeStore";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+import {
+  createLSPManager,
+  lspLanguageForMonaco,
+  type LSPManager,
+  type ManagedLSPClient,
+} from "@/lib/lsp/manager";
+import type { LSPLanguage, LSPState } from "@/lib/lsp/client";
+import {
+  completionsToMonaco,
+  diagnosticsToMarkers,
+  hoverToMonaco,
+} from "@/lib/lsp/diagnostics";
+import { trackLspEvent } from "@/lib/telemetry";
 
 const MonacoEditor = dynamic(
   () => import("@monaco-editor/react").then((m) => m.default),
@@ -32,12 +45,67 @@ export interface CodeEditorProps {
   className?: string;
 }
 
+/**
+ * Map an in-app file path (relative or otherwise) to a URI the LSP
+ * recognises. The sandbox mounts the workspace at ``/workspace`` so we
+ * normalise to ``file:///workspace/<path>`` — without a leading slash on
+ * the relative side because LSPs canonicalise URIs themselves.
+ */
+function uriForPath(path: string): string {
+  const stripped = path.replace(/^\/+/, "");
+  return `file:///workspace/${stripped}`;
+}
+
+/** UI-side projection of the LSP client state for the footer chip. */
+interface LSPChipState {
+  visible: boolean;
+  kind: "connecting" | "ready" | "error" | "disconnected";
+  language: LSPLanguage | null;
+  error: string | null;
+}
+
+function stateToChip(state: LSPState): LSPChipState {
+  switch (state.kind) {
+    case "connecting":
+      return {
+        visible: true,
+        kind: "connecting",
+        language: state.language,
+        error: null,
+      };
+    case "ready":
+      return {
+        visible: true,
+        kind: "ready",
+        language: state.language,
+        error: null,
+      };
+    case "error":
+      return {
+        visible: true,
+        kind: "error",
+        language: state.language,
+        error: state.error,
+      };
+    case "disconnected":
+      return {
+        visible: true,
+        kind: "disconnected",
+        language: state.language,
+        error: `close_${state.closeCode ?? "unknown"}`,
+      };
+  }
+}
+
 const LANGUAGE_BY_EXT: Record<string, string> = {
   ts: "typescript",
   tsx: "typescript",
   js: "javascript",
   jsx: "javascript",
   py: "python",
+  // P1-3 — ``go`` joins the supported LSP set; the backend driver
+  // resolves it to ``gopls``. Monaco recognises ``go`` natively.
+  go: "go",
   json: "json",
   md: "markdown",
   yml: "yaml",
@@ -85,6 +153,19 @@ export function CodeEditor({
   // we don't bundle ``monaco-editor`` types in this component and the
   // surface we touch is tiny (``revealLineInCenter`` + ``setPosition``).
   const editorRef = React.useRef<unknown>(null);
+  const monacoRef = React.useRef<unknown>(null);
+
+  // P1-3 — LSP manager. One per editor mount (i.e. one per session in
+  // the workspace shell). Lives across file switches so a second file
+  // in the same language reuses the open WS instead of re-handshaking.
+  const lspManagerRef = React.useRef<LSPManager | null>(null);
+  const lspProvidersDisposedRef = React.useRef<(() => void)[]>([]);
+  const [lspChip, setLspChip] = React.useState<LSPChipState>({
+    visible: false,
+    kind: "connecting",
+    language: null,
+    error: null,
+  });
 
   const fileQuery = useQuery({
     queryKey: ["file", sessionId, path],
@@ -159,6 +240,49 @@ export function CodeEditor({
     []
   );
 
+  // P1-3 — Active LSP client for the currently-open file. The wiring
+  // effect below populates this when the file's language is one of
+  // python|typescript|go; ``handleEditorChange`` fires ``didChange`` via
+  // this ref so we don't have to re-run the effect on every keystroke.
+  const activeLspRef = React.useRef<ManagedLSPClient | null>(null);
+  const docVersionRef = React.useRef(1);
+  // Maps Monaco language id → providers registered with Monaco so we
+  // never double-register. Keys are LSP language ids; values are the
+  // disposer for the provider registration.
+  const monacoProvidersRef = React.useRef<Map<LSPLanguage, () => void>>(
+    new Map()
+  );
+
+  // Spin up the per-session LSP manager once per editor mount.
+  // The manager owns the WS connections and the LRU cap; this component
+  // only consumes its ``acquire`` API. Disposed on unmount so a workspace
+  // tab close tears down every language server.
+  React.useEffect(() => {
+    const mgr = createLSPManager({
+      sessionId,
+      fetchToken: () => getWsToken(sessionId).then((r) => r.token),
+      onStateChange: () => {
+        // Only surface the chip for the file that's currently open —
+        // the wiring effect below sets ``lspChip`` based on the active
+        // language. The manager-level callback is a future hook for
+        // background-language telemetry; today it's intentionally a
+        // no-op so the chip wiring stays in one place.
+      },
+    });
+    lspManagerRef.current = mgr;
+    return () => {
+      mgr.dispose();
+      for (const dispose of lspProvidersDisposedRef.current) {
+        try {
+          dispose();
+        } catch {
+          // ignore
+        }
+      }
+      lspProvidersDisposedRef.current = [];
+    };
+  }, [sessionId]);
+
   function scheduleWrite(targetPath: string, value: string) {
     // A revert is in progress — any value we'd schedule here is by
     // definition stale, so skip it entirely.
@@ -192,6 +316,19 @@ export function CodeEditor({
     const value = next ?? "";
     setActiveFileContent(path, value);
     scheduleWrite(path, value);
+    // P1-3 — push the unsaved buffer to the language server so hover,
+    // completion, and diagnostics use the live text. The LSP picks up
+    // saved files via its own watcher; this just keeps in-memory state
+    // synchronised before save.
+    const lsp = activeLspRef.current;
+    if (lsp) {
+      const nextVersion = ++docVersionRef.current;
+      try {
+        lsp.changeDocument(uriForPath(path), value, nextVersion);
+      } catch {
+        // ignore — best-effort; the next save will resync
+      }
+    }
   }
 
   async function handleRevert() {
@@ -253,6 +390,234 @@ export function CodeEditor({
   // refetch via `file.updated` events. Centralised here so a future event
   // handler doesn't have to re-implement the policy.
 
+  // P1-3 — wire the LSP for the active file. Runs when the file path,
+  // its loaded content, or the manager ref change. The effect resolves:
+  //   1. Detect the LSP language for the file (null → nothing to do).
+  //   2. Acquire (or reuse) a client for that language from the manager.
+  //   3. Fire ``textDocument/didOpen`` with the current buffer.
+  //   4. Register a Monaco completion + hover provider for the language
+  //      (once per language, not per file).
+  //   5. Mirror ``publishDiagnostics`` notifications into Monaco markers.
+  //
+  // Closes the doc on cleanup so the LSP frees its file-scoped state;
+  // the WS client itself stays open (it's owned by the manager LRU).
+  React.useEffect(() => {
+    if (!path) {
+      activeLspRef.current = null;
+      setLspChip({ visible: false, kind: "connecting", language: null, error: null });
+      return;
+    }
+    const content = fileBuffers[path] ?? fileQuery.data?.content;
+    if (content === undefined) return;
+
+    const monacoLang = languageFor(path);
+    const lspLang = lspLanguageForMonaco(monacoLang);
+    if (!lspLang) {
+      activeLspRef.current = null;
+      setLspChip({ visible: false, kind: "connecting", language: null, error: null });
+      return;
+    }
+    const manager = lspManagerRef.current;
+    if (!manager) return;
+
+    let disposed = false;
+    let unsubscribeDiagnostics: (() => void) | null = null;
+    let acquired: ManagedLSPClient | null = null;
+    const fileUri = uriForPath(path);
+    docVersionRef.current = 1;
+
+    setLspChip({
+      visible: true,
+      kind: "connecting",
+      language: lspLang,
+      error: null,
+    });
+
+    void (async () => {
+      const client = await manager.acquire(lspLang);
+      if (disposed) return;
+      if (!client) {
+        // FE-P4 audit fix — ``manager.acquire`` returns null when the
+        // ws-token fetch fails (or the manager is disposed). The
+        // manager already fires ``lsp_error`` with the structured
+        // class; we mirror the state transition into the chip so the
+        // editor footer renders red instead of staying amber forever.
+        setLspChip({
+          visible: true,
+          kind: "error",
+          language: lspLang,
+          error: "ws_token_failed",
+        });
+        return;
+      }
+      acquired = client;
+      activeLspRef.current = client;
+
+      // Pipe the initial state through the chip and re-pipe on every
+      // subsequent transition (the manager-level callback covers
+      // future transitions; we plug into the client's state machine
+      // directly so the chip reflects "ready" the moment the
+      // initialize handshake settles).
+      const updateChip = (state: LSPState): void => {
+        if (disposed) return;
+        setLspChip(stateToChip(state));
+      };
+      updateChip(client.state());
+
+      // Bridge state transitions: there's no public ``onStateChange``
+      // subscribe on the handle, so we cheat with a polling tick that
+      // exits once the state settles to either ``ready`` or ``error``
+      // / ``disconnected``. The poll is cheap (every 250 ms) and only
+      // runs during the cold-start window.
+      const pollTick = (): void => {
+        if (disposed) return;
+        const s = client.state();
+        updateChip(s);
+        if (s.kind === "connecting") {
+          setTimeout(pollTick, 250);
+        }
+      };
+      setTimeout(pollTick, 250);
+
+      // Open the document. ``openDocument`` queues internally if
+      // initialize hasn't completed yet, so this is safe pre-ready.
+      try {
+        client.openDocument(fileUri, content, lspLang);
+      } catch {
+        // ignore
+      }
+
+      // Diagnostics → Monaco markers.
+      unsubscribeDiagnostics = client.onDiagnostics((params) => {
+        if (params.uri !== fileUri) return;
+        const monaco = monacoRef.current as
+          | typeof import("monaco-editor")
+          | null;
+        const ed = editorRef.current as
+          | import("monaco-editor").editor.IStandaloneCodeEditor
+          | null;
+        if (!monaco || !ed) return;
+        const model = ed.getModel();
+        if (!model) return;
+        const markers = diagnosticsToMarkers(
+          params.diagnostics,
+          `lsp:${lspLang}`
+        );
+        try {
+          monaco.editor.setModelMarkers(model, `lsp:${lspLang}`, markers);
+        } catch {
+          // ignore
+        }
+      });
+
+      // Register Monaco completion + hover providers once per language.
+      const monaco = monacoRef.current as typeof import("monaco-editor") | null;
+      if (monaco && !monacoProvidersRef.current.has(lspLang)) {
+        const completionDisposable = monaco.languages.registerCompletionItemProvider(
+          monacoLang,
+          {
+            triggerCharacters: [".", ":", "(", "<", "\"", "'", "/", "@"],
+            provideCompletionItems: async (model, position) => {
+              const current = activeLspRef.current;
+              if (!current || current.language !== lspLang) return null;
+              const word = model.getWordUntilPosition(position);
+              const range = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn,
+              };
+              const list = await current.requestCompletion(
+                uriForPath(model.uri.path),
+                {
+                  line: position.lineNumber - 1,
+                  character: position.column - 1,
+                }
+              );
+              return completionsToMonaco(list, range) ?? undefined;
+            },
+          }
+        );
+        const hoverDisposable = monaco.languages.registerHoverProvider(
+          monacoLang,
+          {
+            provideHover: async (model, position) => {
+              const current = activeLspRef.current;
+              if (!current || current.language !== lspLang) return null;
+              const hover = await current.requestHover(
+                uriForPath(model.uri.path),
+                {
+                  line: position.lineNumber - 1,
+                  character: position.column - 1,
+                }
+              );
+              return hoverToMonaco(hover) ?? undefined;
+            },
+          }
+        );
+        monacoProvidersRef.current.set(lspLang, () => {
+          try {
+            completionDisposable.dispose();
+          } catch {
+            // ignore
+          }
+          try {
+            hoverDisposable.dispose();
+          } catch {
+            // ignore
+          }
+        });
+        // Track on the disposer list too so the manager-level teardown
+        // catches them.
+        lspProvidersDisposedRef.current.push(() => {
+          monacoProvidersRef.current.get(lspLang)?.();
+          monacoProvidersRef.current.delete(lspLang);
+        });
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      if (unsubscribeDiagnostics) {
+        try {
+          unsubscribeDiagnostics();
+        } catch {
+          // ignore
+        }
+      }
+      try {
+        acquired?.closeDocument(fileUri);
+      } catch {
+        // ignore
+      }
+      // Clear the active LSP ref only if it still points at this file's
+      // client — a faster file switch may have already swapped it.
+      if (activeLspRef.current === acquired) {
+        activeLspRef.current = null;
+      }
+      // Clear any LSP markers we set for this file so a follow-up
+      // open doesn't see stale red squiggles.
+      try {
+        const monaco = monacoRef.current as
+          | typeof import("monaco-editor")
+          | null;
+        const ed = editorRef.current as
+          | import("monaco-editor").editor.IStandaloneCodeEditor
+          | null;
+        const model = ed?.getModel();
+        if (monaco && model) {
+          monaco.editor.setModelMarkers(model, `lsp:${lspLang}`, []);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    // We deliberately drop ``fileQuery.data`` and ``fileBuffers`` from
+    // the dep list — only the *path* should re-fire the effect; in-flight
+    // edits are pushed through ``handleEditorChange`` instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, fileQuery.data?.content !== undefined]);
+
   if (!path) {
     return (
       <div
@@ -276,6 +641,7 @@ export function CodeEditor({
           {path}
         </p>
         <div className="flex items-center gap-2 text-[11px]">
+          <LspChip state={lspChip} />
           <SaveBadge
             saving={savingState === "saving"}
             saved={savingState === "saved"}
@@ -325,8 +691,88 @@ export function CodeEditor({
             language={languageFor(path)}
             value={value}
             onChange={handleEditorChange}
-            onMount={(editor) => {
+            onMount={(editor, monaco) => {
               editorRef.current = editor;
+              // P1-3 — stash the monaco namespace so the per-file LSP
+              // effect can register completion / hover providers and
+              // push diagnostics to ``editor.setModelMarkers``. NOTE:
+              // for TypeScript, Monaco's bundled in-browser TS worker
+              // is auto-activated for the ``typescript`` languageId
+              // (and ``javascript``); if our LSP WS fails red, the
+              // user still gets keyword + symbol completion from the
+              // worker. That's the fallback the design called out
+              // ("yes for TypeScript specifically — monaco-typescript
+              // is already shipped as a Monaco bundle"). No extra
+              // wiring needed.
+              monacoRef.current = monaco;
+
+              // FE-P4 audit fix — ``onDidPaste`` was the previous hook
+              // for ``lsp_completion_accepted`` and was wrong on every
+              // axis: a paste from the clipboard is NOT a completion
+              // accept, and a completion accept does NOT fire paste.
+              // The Monaco public API surface for "suggestion accepted"
+              // varies by version; ``editor.contrib.suggestController``
+              // exposes ``model.state`` (0 = Closed, 1 = Open, ...)
+              // and ``acceptSelectedSuggestion`` is fired via the
+              // ``Tab``/``Enter`` keystrokes while the widget is Open.
+              // We listen to keydown and gate on the suggest widget
+              // being visible, falling back to a no-op when Monaco's
+              // contribution surface isn't available (jsdom / future
+              // versions that rename the controller).
+              try {
+                if (typeof (editor as { onKeyDown?: unknown }).onKeyDown !== "function") {
+                  // jsdom path: editor.onKeyDown isn't wired in the
+                  // test bundle. Skip wiring so vitest doesn't blow
+                  // up — telemetry coverage is asserted with a
+                  // synthetic dispatch instead.
+                } else {
+                  const ed = editor as unknown as {
+                    onKeyDown: (cb: (e: { code: string; keyCode?: number }) => void) => {
+                      dispose(): void;
+                    };
+                    getContribution?: (id: string) => unknown;
+                    _contributions?: Record<string, { model?: { state?: number } }>;
+                  };
+                  ed.onKeyDown((e) => {
+                    if (e.code !== "Tab" && e.code !== "Enter") return;
+                    const lsp = activeLspRef.current;
+                    if (!lsp) return;
+                    // Resolve the suggest controller via the public
+                    // ``getContribution`` API first; fall back to the
+                    // private ``_contributions`` bag because some
+                    // Monaco builds drop the public method when the
+                    // contribution is registered lazily.
+                    let widgetOpen = false;
+                    try {
+                      const pub = ed.getContribution?.(
+                        "editor.contrib.suggestController",
+                      ) as { model?: { state?: number } } | undefined;
+                      const priv = ed._contributions?.[
+                        "editor.contrib.suggestController"
+                      ];
+                      const state = pub?.model?.state ?? priv?.model?.state;
+                      // Suggest controller state: 0 = Idle/Closed, 1 = Open.
+                      // Only count an accept when the widget is open;
+                      // otherwise Tab/Enter is plain navigation /
+                      // newline and would over-count.
+                      widgetOpen = state === 1;
+                    } catch {
+                      widgetOpen = false;
+                    }
+                    if (!widgetOpen) return;
+                    try {
+                      trackLspEvent("lsp_completion_accepted", {
+                        language: lsp.language,
+                      });
+                    } catch {
+                      // ignore — telemetry is best-effort
+                    }
+                  });
+                }
+              } catch {
+                // ignore — fallback: completion-accepted events skipped
+              }
+
               // If a search-driven line focus was already queued before the
               // editor mounted, honour it now and clear the store flag.
               if (activeLineFocus && activeLineFocus > 0) {
@@ -418,4 +864,81 @@ function SaveBadge({
     );
   }
   return <span className={baseClass} aria-hidden />;
+}
+
+/**
+ * P1-3 footer chip. Mirrors the three-state design:
+ *   - green: ready ("lsp · python — healthy")
+ *   - amber: connecting (during cold-start)
+ *   - red: error / disconnected with the structured error in a tooltip
+ *
+ * Lives next to ``SaveBadge`` in the editor toolbar so the visual
+ * vocabulary matches the existing patterns. Hidden for files that have
+ * no LSP attached (e.g. markdown, yaml).
+ */
+function LspChip({ state }: { state: LSPChipState }) {
+  if (!state.visible || !state.language) return null;
+  const base =
+    "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] tabular-nums";
+  if (state.kind === "ready") {
+    return (
+      <span
+        className={cn(
+          base,
+          "border-[color-mix(in_oklch,var(--color-success)_30%,transparent)] bg-[color-mix(in_oklch,var(--color-success)_10%,transparent)] text-[var(--color-success)]"
+        )}
+        role="status"
+        aria-live="polite"
+        title={`lsp · ${state.language} — healthy`}
+        data-testid="lsp-chip"
+        data-state="ready"
+      >
+        <span
+          aria-hidden
+          className="inline-block size-1.5 rounded-full bg-[var(--color-success)]"
+        />
+        lsp · {state.language}
+      </span>
+    );
+  }
+  if (state.kind === "connecting") {
+    return (
+      <span
+        className={cn(
+          base,
+          "border-[color-mix(in_oklch,var(--color-warning)_30%,transparent)] bg-[color-mix(in_oklch,var(--color-warning)_10%,transparent)] text-[var(--color-warning)]"
+        )}
+        role="status"
+        aria-live="polite"
+        title={`lsp · ${state.language} — connecting…`}
+        data-testid="lsp-chip"
+        data-state="connecting"
+      >
+        <Loader2 className="size-3 animate-spin" aria-hidden />
+        lsp · {state.language}
+      </span>
+    );
+  }
+  // error or disconnected → red
+  const errorLabel = state.error ?? "unavailable";
+  return (
+    <span
+      className={cn(
+        base,
+        "border-[color-mix(in_oklch,var(--color-danger)_30%,transparent)] bg-[color-mix(in_oklch,var(--color-danger)_10%,transparent)] text-[var(--color-danger)]"
+      )}
+      role="status"
+      aria-live="polite"
+      title={`lsp · ${state.language} — unavailable (${errorLabel})`}
+      data-testid="lsp-chip"
+      data-state="error"
+      data-error={errorLabel}
+    >
+      <span
+        aria-hidden
+        className="inline-block size-1.5 rounded-full bg-[var(--color-danger)]"
+      />
+      lsp · {state.language}
+    </span>
+  );
 }

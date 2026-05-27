@@ -90,6 +90,7 @@ async def test_submit_endpoint_round_trip(client, db_engine, monkeypatch) -> Non
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(
@@ -206,6 +207,7 @@ async def test_submit_endpoint_409_when_already_graded(client, db_engine, monkey
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(
@@ -277,6 +279,7 @@ async def test_submit_endpoint_503_when_no_sandbox(client, db_engine, monkeypatc
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

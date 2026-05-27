@@ -64,6 +64,14 @@ class _FakeDriver(SandboxDriver):
     async def destroy(self, handle):  # type: ignore[override]
         self.destroyed.append(handle.id)
 
+    async def spawn_lsp(self, handle, language):  # type: ignore[override]
+        # P1-3 — pool tests don't exercise the LSP surface but the abstract
+        # base requires the method; surface a typed error so a caller that
+        # somehow lands here gets the same wire-shape as production.
+        from app.sandbox.lsp import LSPUnavailableError
+
+        raise LSPUnavailableError("binary_not_found", language)
+
 
 @pytest.mark.asyncio
 async def test_pool_respects_max_concurrent() -> None:

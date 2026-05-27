@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `fullstack-auth-demo` |
-| Failure mode | `removes_authorization_guard` |
+| Failure mode | `security_check_removed` |
 | Difficulty | advanced |
 | Diff envelope (p50) | 8 lines |
 | Score band, unmodified agent patch | 25–50 |

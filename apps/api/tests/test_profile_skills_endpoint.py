@@ -85,12 +85,15 @@ def _make_mission(*, id_, fm, title) -> Mission:
         difficulty="intermediate",
         category="auth",
         repo_pack="some-pack",
+        repo_pack_id="some-pack",
         initial_commit="deadbeef",
         estimated_minutes=30,
         failure_mode=fm,
         skills_tested=["x"],
+        tags=[],
         manifest_sha256="0" * 64,
         published=True,
+        expected_weak_dim="safety",
     )
 
 
@@ -111,7 +114,7 @@ async def test_skills_aggregates_attempts_and_passes(db_engine) -> None:
         db.add(
             _make_mission(
                 id_="missing-regression-test",
-                fm="in_memory_idempotency_only",
+                fm="missing_regression_test",
                 title="Missing Regression",
             )
         )
@@ -160,7 +163,7 @@ async def test_skills_aggregates_attempts_and_passes(db_engine) -> None:
     assert auth.sessions_passed == 1
     assert auth.best_score == 78
     assert auth.avg_score == 78.0
-    regression = by_fm["in_memory_idempotency_only"]
+    regression = by_fm["missing_regression_test"]
     assert regression.sessions_attempted == 1
     assert regression.sessions_passed == 1
     assert catalog.total_missions == 2
@@ -177,7 +180,7 @@ async def test_skills_lists_failure_modes_without_attempts(db_engine) -> None:
         db.add(
             _make_mission(
                 id_="security-validation-removed",
-                fm="removes_authorization_guard",
+                fm="security_check_removed",
                 title="Security",
             )
         )
@@ -189,7 +192,7 @@ async def test_skills_lists_failure_modes_without_attempts(db_engine) -> None:
 
     assert len(catalog.failure_modes) == 1
     fm = catalog.failure_modes[0]
-    assert fm.failure_mode == "removes_authorization_guard"
+    assert fm.failure_mode == "security_check_removed"
     assert fm.sessions_attempted == 0
     assert fm.sessions_passed == 0
     assert fm.avg_score is None
@@ -206,8 +209,8 @@ async def test_skills_groups_multiple_missions_per_failure_mode(
     user_id = uuid.uuid4()
     async with Session() as db:
         db.add(User(id=user_id, email="m@e.com", handle="m", display_name="M"))
-        db.add(_make_mission(id_="m1", fm="cast_via_as_any", title="M1"))
-        db.add(_make_mission(id_="m2", fm="cast_via_as_any", title="M2"))
+        db.add(_make_mission(id_="m1", fm="typecheck_ignored", title="M1"))
+        db.add(_make_mission(id_="m2", fm="typecheck_ignored", title="M2"))
         await db.commit()
 
     async with Session() as db:

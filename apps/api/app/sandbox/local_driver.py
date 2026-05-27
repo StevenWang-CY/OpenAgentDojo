@@ -32,6 +32,7 @@ from app.sandbox.driver import (
     SearchMatchDict,
     SearchTimeoutError,
 )
+from app.sandbox.lsp import LocalLSPProcess, spawn_local_lsp
 from app.sandbox.repo_pack import RepoPackNotFoundError, load_repo_pack
 from app.sandbox.types import (
     ApplyResult,
@@ -668,6 +669,17 @@ class LocalSandboxDriver(SandboxDriver):
             skipped=skipped,
             timed_out=False,
         )
+
+    async def spawn_lsp(self, handle: SandboxHandle, language: str) -> LocalLSPProcess:
+        """Spawn an LSP host-side subprocess with ``cwd`` pinned at the workdir.
+
+        Delegates the PATH probe + ``asyncio.create_subprocess_exec`` to
+        :func:`app.sandbox.lsp.spawn_local_lsp`. In dev/test environments
+        the language-server binary is frequently absent — :class:`app.sandbox.lsp.LSPUnavailableError`
+        with ``binary_not_found`` is the expected outcome, and the WS proxy
+        translates it into a structured ``lsp_error`` frame.
+        """
+        return await spawn_local_lsp(language, cwd=str(handle.workdir))
 
     async def destroy(self, handle: SandboxHandle) -> None:
         # Close every PTY this handle owns (multi-tab safe).

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `data-api-demo` |
-| Failure mode | `non_transactional_check_then_act` |
+| Failure mode | `race_condition` |
 | Difficulty | advanced |
 | Diff envelope (p50) | 8 lines |
 | Score band, unmodified agent patch | 25–50 |

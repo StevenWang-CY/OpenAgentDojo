@@ -66,6 +66,7 @@ async def _seed_user_and_mission(
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         await db.commit()
@@ -529,6 +530,7 @@ async def test_give_up_blocked_before_window(client_with_db, monkeypatch) -> Non
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         # started_at is right now → no minutes elapsed.
@@ -597,6 +599,7 @@ async def test_give_up_rejected_when_session_not_active(client_with_db) -> None:
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

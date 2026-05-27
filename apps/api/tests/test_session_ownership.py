@@ -43,6 +43,7 @@ async def ownership_setup(db_session):
         manifest_sha256="b" * 64,
         version=1,
         published=True,
+        expected_weak_dim="safety",
     )
     db_session.add_all([user_a, user_b, mission])
     await db_session.flush()

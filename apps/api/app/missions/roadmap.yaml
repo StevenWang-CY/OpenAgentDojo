@@ -1,0 +1,59 @@
+# P1-1 — public roadmap placeholders.
+#
+# Read by the missions router when the client passes ``?include=upcoming``.
+# Each entry surfaces as a ``status: coming_soon`` card with a dated chip
+# in the catalog grid, so a returning user can see what is coming, not
+# just what has shipped.
+#
+# Authoring rules
+# ---------------
+# * Cap the list at ~6 entries — dropping below that reads as "we're done";
+#   stretching past reads as vapour.
+# * Use ISO ``YYYY-MM-DD`` dates set to the 15th of a future month. The
+#   monthly cadence is the load-bearing user signal (see P1_DESIGN §P1-1
+#   open decisions). Past-dated placeholders are caught by the loader
+#   and refused at startup.
+# * Spread across the three languages so the filter strip stays balanced.
+# * Each ``id`` is kebab-case and globally unique against ``missions/*``.
+# * IMPORTANT: a placeholder ``id`` must NOT collide with any shipped
+#   mission id (or its kebab-stem). The roadmap loader cross-checks and
+#   drops the colliding entry at startup with a WARNING — keep that as
+#   a safety net, not a workflow. Use kebab-prefixes the catalog already
+#   does not own (``react-shop-*``, ``python-fastapi-*``, ``go-channel-*``).
+
+placeholders:
+  - id: react-shop-state-desync
+    title: "React shop: state desync vs. server"
+    target_release_date: "2026-07-15"
+    teaser: "Two-way state sync with optimistic UI under network failure."
+    language: typescript
+  - id: typescript-zod-narrowing
+    title: "TypeScript: zod schema parses but type narrowing escapes"
+    target_release_date: "2026-08-15"
+    teaser: "Agent uses ``z.any()`` to make a type error go away; runtime breaks downstream."
+    language: typescript
+  - id: python-pandas-perf-trap
+    title: "Pandas iterrows in a hot loop"
+    target_release_date: "2026-08-15"
+    teaser: "Quadratic on row count; the agent's vectorisation looks correct but is wrong."
+    language: python
+  - id: python-fastapi-pydantic-coercion
+    title: "FastAPI: Pydantic coerces a string into an int silently"
+    target_release_date: "2026-09-15"
+    teaser: "Loose schema lets ``\"42\"`` and ``42`` round-trip differently across endpoints."
+    language: python
+  - id: go-channel-deadlock-on-cancel
+    title: "Go: unbuffered channel deadlocks when context cancels"
+    target_release_date: "2026-10-15"
+    teaser: "Cancellation path leaves a sender blocked on a channel no one drains."
+    language: go
+  - id: python-async-cancel-shielding
+    title: "Python: asyncio.shield used as a graceful-cancel band-aid"
+    target_release_date: "2026-11-15"
+    teaser: "Background task survives the request cancellation it should honour."
+    language: python
+  - id: go-sql-transaction-leak
+    title: "Go: sql.Tx leaked when handler returns early"
+    target_release_date: "2026-12-15"
+    teaser: "Defer-rollback only runs on panics; a plain ``return err`` strands the tx."
+    language: go

@@ -45,6 +45,7 @@ async def _seeded(db_session):
         manifest_sha256="c" * 64,
         version=1,
         published=True,
+        expected_weak_dim="safety",
     )
     db_session.add_all([user, mission])
     await db_session.flush()

@@ -133,6 +133,7 @@ async def _seed_profile(db_engine):
                 manifest_sha256="sha-aaa",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(
@@ -149,6 +150,7 @@ async def _seed_profile(db_engine):
                 manifest_sha256="sha-bbb",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(
@@ -340,6 +342,7 @@ async def test_radar_only_includes_present_dimensions(client, db_engine) -> None
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(
@@ -417,6 +420,7 @@ async def test_best_score_and_total_missions(client, db_engine) -> None:
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         # P0-3 / ADR 0009 — public aggregates now use best-per-mission. With
@@ -528,6 +532,7 @@ async def test_malformed_score_report_excluded_and_counted(client, db_engine) ->
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         now = datetime(2026, 5, 5, tzinfo=UTC)

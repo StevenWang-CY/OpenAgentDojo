@@ -67,6 +67,14 @@ class _RecordingDriver(SandboxDriver):
     async def destroy(self, handle):  # type: ignore[override]
         self.destroyed.append(handle.id)
 
+    async def spawn_lsp(self, handle, language):  # type: ignore[override]
+        # P1-3 — reaper tests don't drive the LSP surface; raise the typed
+        # unavailable error so the abstract contract is satisfied without
+        # pulling a real subprocess into the test path.
+        from app.sandbox.lsp import LSPUnavailableError
+
+        raise LSPUnavailableError("binary_not_found", language)
+
 
 @pytest.mark.asyncio
 async def test_reaper_kills_handle_whose_last_activity_is_stale(monkeypatch) -> None:

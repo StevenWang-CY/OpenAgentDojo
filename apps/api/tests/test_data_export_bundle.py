@@ -64,6 +64,7 @@ async def _seed_world(session_local) -> tuple[uuid.UUID, uuid.UUID]:
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

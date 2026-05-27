@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `fullstack-auth-demo` |
-| Failure mode | `partial_rename_missed_callers` |
+| Failure mode | `api_contract_drift` |
 | Difficulty | intermediate |
 | Diff envelope (p50) | 16 lines |
 | Score band, unmodified agent patch | 30–55 |

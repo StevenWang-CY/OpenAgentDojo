@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
 import type { SupervisionEvent } from "@arena/shared-types";
@@ -52,6 +52,7 @@ export function SubmitDialog({
   isMac,
 }: SubmitDialogProps) {
   const [open, setOpen] = React.useState(false);
+  const queryClient = useQueryClient();
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -70,6 +71,13 @@ export function SubmitDialog({
       // wonders whether the click registered.
       setOpen(false);
       toast.success("Submitted. Grading…", { duration: 7_000 });
+      // FE-P4 audit fix — the engine recomputes ``/me/recommendations``
+      // once the new submission grades. Optimistically invalidate the
+      // cached set so a navigation back to the catalog/profile reads
+      // the fresh ranking instead of the pre-submission one. The
+      // ``graded`` transition in WorkspaceShell follows up with the
+      // same invalidation defensively.
+      queryClient.invalidateQueries({ queryKey: ["me-recommendations"] });
     },
     onError(error) {
       const msg =

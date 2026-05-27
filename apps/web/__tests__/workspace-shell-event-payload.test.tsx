@@ -139,6 +139,11 @@ function buildSession(): SessionDetail {
       expected_context_required: [],
       expected_context_recommended: [],
       expected_diff_lines_p50: 18,
+      repo_pack_id: "fullstack-auth-demo",
+      language: "typescript",
+      tags: [],
+      status: "shipped",
+      target_release_date: null,
     },
   };
 }

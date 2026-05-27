@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Repo pack | `fullstack-auth-demo` |
-| Failure mode | `excessive_rewrite_for_one_line_bug` |
+| Failure mode | `excessive_rewrite` |
 | Difficulty | intermediate |
 | Diff envelope (p50) | 3 lines |
 | Score band, unmodified agent patch | 25–50 |

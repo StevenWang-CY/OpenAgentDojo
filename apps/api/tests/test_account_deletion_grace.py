@@ -188,6 +188,7 @@ async def test_process_deletion_grace_tombstones_account(db_engine) -> None:
                 manifest_sha256="sha",
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         db.add(

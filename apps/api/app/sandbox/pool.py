@@ -146,6 +146,13 @@ class _ActivityTrackedDriver(SandboxDriver):
     async def destroy(self, handle):
         return await self._inner.destroy(handle)
 
+    async def spawn_lsp(self, handle, language: str):
+        # Refresh idle clock — an LSP session is real user activity even
+        # though the underlying transport (WS) doesn't otherwise route
+        # through the driver API surface.
+        _touch(handle)
+        return await self._inner.spawn_lsp(handle, language)
+
     async def ping(self) -> bool:
         # Forward to the inner driver so a Docker daemon outage surfaces here
         # instead of the no-op default from ``SandboxDriver``.

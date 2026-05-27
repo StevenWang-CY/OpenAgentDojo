@@ -22,6 +22,12 @@ const card: Mission = {
   version: 1,
   published: true,
   kind: "standard",
+  // P1-1 — catalog metadata required by the tightened ``Mission`` alias.
+  repo_pack_id: "fullstack-auth-demo",
+  language: "typescript",
+  tags: ["checks_presence_not_expiration", "lang:typescript"],
+  status: "shipped",
+  target_release_date: null,
 };
 
 const detail: MissionDetail = {

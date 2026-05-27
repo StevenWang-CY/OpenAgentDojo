@@ -75,6 +75,7 @@ from app.schemas.user import (
     DisplayNameUpdate,
     EmailChangeConfirm,
     EmailChangeRequest,
+    MeRecommendationInline,
     UserRead,
 )
 
@@ -435,7 +436,12 @@ async def post_logout(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
-def _build_me_response(user: User, request: Request) -> JSONResponse:
+def _build_me_response(
+    user: User,
+    request: Request,
+    *,
+    recommendation: MeRecommendationInline | None = None,
+) -> JSONResponse:
     """Build the /me JSONResponse with CSRF token.
 
     P1-B27: ``/me`` is a *read* endpoint and used to mint a fresh CSRF token
@@ -447,6 +453,12 @@ def _build_me_response(user: User, request: Request) -> JSONResponse:
     the ``UserRead`` model directly) because we still need to ``set_cookie``
     when minting a fresh token — letting FastAPI serialize would discard
     the cookie mutation.
+
+    P1-2 — when ``recommendation`` is provided, the inline top-recommendation
+    chip is surfaced under the ``recommendation`` key. The caller fetches
+    the live recommendation via :func:`_fetch_inline_recommendation` and
+    degrades to ``None`` on any cache/error path so the auth roundtrip
+    never blocks on the recommendation engine.
     """
     settings = get_settings()
     existing_csrf = request.cookies.get(_CSRF_COOKIE_NAME, "")
@@ -475,6 +487,7 @@ def _build_me_response(user: User, request: Request) -> JSONResponse:
             # 7-day deletion countdown on the FE /account page.
             "pending_email": user.pending_email,
             "deletion_scheduled_at": user.deletion_scheduled_at,
+            "recommendation": recommendation,
         }
     )
 
@@ -492,12 +505,59 @@ def _build_me_response(user: User, request: Request) -> JSONResponse:
     return response
 
 
-@router.get("/me", response_model=UserRead, summary="Return the authenticated user")
+async def _fetch_inline_recommendation(
+    db: AsyncSession, user: User
+) -> MeRecommendationInline | None:
+    """Resolve the inline top recommendation for ``GET /auth/me``.
+
+    Wraps :func:`app.recommendations.cache.get_cached_or_compute` with a
+    defensive try/except so any cache miss + recommendation-side fault
+    degrades to ``None`` rather than 5xx'ing the auth roundtrip. The FE
+    renders the header chip only when the field is present.
+    """
+    try:
+        from app.recommendations.cache import get_cached_or_compute
+
+        rec_set = await get_cached_or_compute(db, user.id)
+        if not rec_set.recommendations:
+            return None
+        top = rec_set.recommendations[0]
+        if top.status != "shipped":
+            return None
+        return MeRecommendationInline(
+            mission_id=top.mission_id,
+            title=top.title,
+            language=top.language,
+        )
+    except Exception:  # pragma: no cover — never block /auth/me
+        logger.exception(
+            "[auth.me] inline_recommendation_failed user_id={}",
+            user.id,
+        )
+        return None
+
+
+@router.get(
+    "/me",
+    response_model=UserRead,
+    summary="Return the authenticated user",
+    responses={
+        401: {
+            "description": (
+                "No session cookie was presented (or the cookie failed "
+                "verification). Sign in via ``POST /auth/magic-link`` or "
+                "the GitHub OAuth flow and retry."
+            ),
+        },
+    },
+)
 async def get_me(
     request: Request,
     user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    return _build_me_response(user, request)
+    recommendation = await _fetch_inline_recommendation(db, user)
+    return _build_me_response(user, request, recommendation=recommendation)
 
 
 @router.post(

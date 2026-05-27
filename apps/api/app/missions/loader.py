@@ -34,10 +34,23 @@ class LoadedMission:
             "difficulty": m.difficulty,
             "category": m.category,
             "repo_pack": m.repo.pack,
+            # P1-1 — ``repo_pack_id`` is server-derived: the on-disk manifest
+            # field is ``repo.pack``; we mirror it into the typed FK column so
+            # the catalog endpoint can JOIN against ``repo_packs`` for the
+            # language chip + stack summary.
+            "repo_pack_id": m.repo.pack,
             "initial_commit": m.repo.initial_commit,
             "estimated_minutes": m.estimated_minutes,
             "failure_mode": m.failure_mode.id,
             "skills_tested": list(m.skills_tested),
+            # P1-1 — closed-vocabulary tags (failure-mode + skill + language).
+            "tags": list(m.tags),
+            # P1-2 — the single rubric dimension this mission is designed to
+            # exercise. Standard missions guarantee a non-null value; tutorial
+            # missions surface as ``None`` and the migration's CHECK constraint
+            # tolerates that. The recommendation engine reads this column
+            # directly to align user weakness → mission alignment.
+            "expected_weak_dim": m.expected_weak_dim,
             "manifest_sha256": self.manifest_sha256,
             "version": m.version,
             "published": m.published,
@@ -139,32 +152,47 @@ class MissionLoader:
         if not loaded:
             return 0
 
-        dialect = db.bind.dialect.name if hasattr(db, "bind") and db.bind is not None else None
-        if dialect is None:
-            engine = getattr(db, "get_bind", lambda: None)()
-            if engine is not None:
-                dialect = engine.dialect.name
+        # ``AsyncSession.bind`` is ``None`` for request-scoped sessions —
+        # the engine is registered on the sessionmaker, not the session.
+        # ``Session.get_bind()`` is the portable accessor that works for
+        # both runtime (async) and migration (sync) callers; the
+        # ``db.bind`` fallback covers legacy callers that constructed an
+        # explicitly-bound session.
+        dialect: str | None = None
+        try:
+            engine = db.get_bind()
+        except Exception:
+            engine = None
+        if engine is not None:
+            dialect = getattr(getattr(engine, "dialect", None), "name", None)
+        if dialect is None and hasattr(db, "bind") and db.bind is not None:
+            dialect = db.bind.dialect.name
 
         if dialect in {"postgresql", "sqlite"}:
             sql = text(
                 """
                 INSERT INTO missions
-                  (id, title, difficulty, category, repo_pack, initial_commit,
-                   estimated_minutes, failure_mode, skills_tested,
+                  (id, title, difficulty, category, repo_pack, repo_pack_id,
+                   initial_commit, estimated_minutes, failure_mode,
+                   skills_tested, tags, expected_weak_dim,
                    manifest_sha256, version, published, kind)
                 VALUES
-                  (:id, :title, :difficulty, :category, :repo_pack, :initial_commit,
-                   :estimated_minutes, :failure_mode, :skills_tested,
+                  (:id, :title, :difficulty, :category, :repo_pack, :repo_pack_id,
+                   :initial_commit, :estimated_minutes, :failure_mode,
+                   :skills_tested, :tags, :expected_weak_dim,
                    :manifest_sha256, :version, :published, :kind)
                 ON CONFLICT (id) DO UPDATE SET
                   title             = EXCLUDED.title,
                   difficulty        = EXCLUDED.difficulty,
                   category          = EXCLUDED.category,
                   repo_pack         = EXCLUDED.repo_pack,
+                  repo_pack_id      = EXCLUDED.repo_pack_id,
                   initial_commit    = EXCLUDED.initial_commit,
                   estimated_minutes = EXCLUDED.estimated_minutes,
                   failure_mode      = EXCLUDED.failure_mode,
                   skills_tested     = EXCLUDED.skills_tested,
+                  tags              = EXCLUDED.tags,
+                  expected_weak_dim = EXCLUDED.expected_weak_dim,
                   manifest_sha256   = EXCLUDED.manifest_sha256,
                   version           = EXCLUDED.version,
                   published         = EXCLUDED.published,
@@ -179,12 +207,14 @@ class MissionLoader:
             insert_sql = text(
                 """
                 INSERT INTO missions
-                  (id, title, difficulty, category, repo_pack, initial_commit,
-                   estimated_minutes, failure_mode, skills_tested,
+                  (id, title, difficulty, category, repo_pack, repo_pack_id,
+                   initial_commit, estimated_minutes, failure_mode,
+                   skills_tested, tags, expected_weak_dim,
                    manifest_sha256, version, published, kind)
                 VALUES
-                  (:id, :title, :difficulty, :category, :repo_pack, :initial_commit,
-                   :estimated_minutes, :failure_mode, :skills_tested,
+                  (:id, :title, :difficulty, :category, :repo_pack, :repo_pack_id,
+                   :initial_commit, :estimated_minutes, :failure_mode,
+                   :skills_tested, :tags, :expected_weak_dim,
                    :manifest_sha256, :version, :published, :kind)
                 """
             )
@@ -192,9 +222,11 @@ class MissionLoader:
                 """
                 UPDATE missions SET
                   title=:title, difficulty=:difficulty, category=:category,
-                  repo_pack=:repo_pack, initial_commit=:initial_commit,
-                  estimated_minutes=:estimated_minutes, failure_mode=:failure_mode,
-                  skills_tested=:skills_tested, manifest_sha256=:manifest_sha256,
+                  repo_pack=:repo_pack, repo_pack_id=:repo_pack_id,
+                  initial_commit=:initial_commit, estimated_minutes=:estimated_minutes,
+                  failure_mode=:failure_mode, skills_tested=:skills_tested,
+                  tags=:tags, expected_weak_dim=:expected_weak_dim,
+                  manifest_sha256=:manifest_sha256,
                   version=:version, published=:published, kind=:kind
                 WHERE id=:id
                 """

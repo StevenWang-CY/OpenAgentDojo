@@ -56,6 +56,7 @@ async def _seed_session(factory) -> uuid.UUID:
                 manifest_sha256="0" * 64,
                 version=1,
                 published=True,
+                expected_weak_dim="safety",
             )
         )
         sid = uuid.uuid4()

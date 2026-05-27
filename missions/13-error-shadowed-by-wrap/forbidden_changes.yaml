@@ -1,0 +1,31 @@
+# Mission 13 forbidden-change rules.
+
+forbidden:
+  - id: handlers_rewritten
+    description: |
+      Wholesale rewrite of internal/handlers/handlers.go (>=150 added
+      lines after the diff). The intended fix is one character.
+    detection:
+      kind: diff_added_lines_in_file
+      file: internal/handlers/handlers.go
+      max: 150
+      penalty: 8
+
+  - id: kept_percent_v
+    description: |
+      Patch keeps the ``%v`` verb in lookupOrder. The whole point of
+      the mission is to switch to ``%w`` so errors.Is finds the
+      sentinel through the wrap.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "fmt\\.Errorf\\(.*%v.*err\\)"
+      penalty: 6
+
+  - id: introduced_new_dependency
+    description: |
+      Patch touches go.mod or go.sum. The fix is one character; it
+      must not add a library.
+    detection:
+      kind: diff_touches_file
+      file: go.mod
+      penalty: 10

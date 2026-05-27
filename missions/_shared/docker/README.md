@@ -10,3 +10,23 @@ If you came here looking for the Node 20 Dockerfile, open
 instead. This folder is reserved for mission-specific Docker overrides
 (e.g. additional system packages) that may be needed by future scenarios
 beyond the standard base image. None exist today.
+
+## P1-3 — LSP binaries baked into the sandbox bases
+
+Each runtime base image ships the language server its repo packs need so
+the in-sandbox LSP spawned by `driver.spawn_lsp` (see
+`apps/api/app/sandbox/lsp.py`) launches without a cold install:
+
+| Runtime      | Image                 | LSP installed                            |
+|--------------|-----------------------|------------------------------------------|
+| `node20`     | `agentarena/node20:1` | `typescript-language-server` (+ `typescript`) |
+| `python312`  | `agentarena/python312:1` | `pyright` (primary), `python-lsp-server` (fallback) |
+| `go` (P1-1) | `agentarena/go122:1` (not yet shipped) | `gopls` — add `go install golang.org/x/tools/gopls@latest` |
+
+When the Go base image lands as part of P1-1, the LSP install command for
+that Dockerfile is:
+
+```dockerfile
+RUN go install golang.org/x/tools/gopls@v0.16.2 \
+ && cp /root/go/bin/gopls /usr/local/bin/gopls
+```

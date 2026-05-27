@@ -320,7 +320,7 @@ class GradingRunner:
     # Internal pipeline — no timeout handling at this layer.
     # ------------------------------------------------------------------
 
-    async def _pipeline(
+    async def _pipeline(  # noqa: PLR0915 — pipeline is single-commit; splitting fragments the unit of work
         self,
         db: AsyncSession,
         session: SessionRow,
@@ -449,6 +449,48 @@ class GradingRunner:
         # has already tried.
         completed_mission_ids = await _load_completed_mission_ids(db=db, user_id=session.user_id)
 
+        # P1-2 — compute the deterministic engine ranking *as it would
+        # stand after this submission* so the persisted
+        # ``feedback_narrative[].recommended_mission_ids`` and the live
+        # ``/me/recommendations`` endpoint agree on the same top-3. The
+        # call is local (no LLM, no network); errors here MUST NOT
+        # block the grade. The narrowed except below is *still* broad —
+        # the engine call touches DB, the roadmap loader, and the pure
+        # ranking layer — but the failure path now increments the
+        # narrowed-stage Prometheus counter so operators can alert on a
+        # sustained spike rather than discovering the silent swallow
+        # via missing ``recommended_mission_ids`` in the report.
+        engine_recommended_ids: list[str] | None = None
+        try:
+            from app.recommendations.cache import (
+                _coming_soon_from_roadmap,
+                load_mission_catalogue,
+                load_user_history,
+            )
+            from app.recommendations.engine import recommend
+
+            history_pre = await load_user_history(db, session.user_id)
+            catalogue = await load_mission_catalogue(db)
+            coming_soon = _coming_soon_from_roadmap()
+            rec_set = recommend(
+                user_history=history_pre,
+                mission_catalogue=catalogue,
+                coming_soon=coming_soon,
+            )
+            engine_recommended_ids = [
+                item.mission_id for item in rec_set.recommendations
+            ]
+        except Exception:  # pragma: no cover — never block the grade.
+            from app.observability import recommendation_engine_errors_total
+
+            recommendation_engine_errors_total.labels(stage="pre_grade").inc()
+            logger.exception(
+                "[grader] engine_recommended_mission_ids_failed "
+                "session_id={} user_id={}",
+                session_id,
+                getattr(session, "user_id", None),
+            )
+
         report: ScoreReport = compute_score(
             diff=parsed,
             events=events,
@@ -458,6 +500,7 @@ class GradingRunner:
             agent_turns=agent_turns,
             prompt_judgements=prompt_judgements,
             completed_mission_ids=completed_mission_ids,
+            engine_recommended_mission_ids=engine_recommended_ids,
         )
 
         # P0-4 — apply give-up cap AFTER compute_score so dimension scores
@@ -517,7 +560,7 @@ class GradingRunner:
     # Convenience: run + persist a Submission row + emit submission.graded.
     # ------------------------------------------------------------------
 
-    async def run_and_persist(
+    async def run_and_persist(  # noqa: PLR0915 — orchestrates grading + persistence + envelope + cache invalidation; splitting fragments the single-commit invariant
         self,
         db: AsyncSession,
         session: SessionRow,
@@ -759,6 +802,25 @@ class GradingRunner:
                 len(critical_moments),
                 [m.get("kind") for m in critical_moments],
             )
+
+        # P1-2 — invalidate the user's materialised recommendation row.
+        # The grader is the canonical "new graded submission" event; the
+        # next call to ``GET /api/v1/me/recommendations`` recomputes
+        # against the fresh radar. Failures here MUST NOT block the
+        # grade: a stale recommendation card is recoverable; a missing
+        # submission row is not.
+        try:
+            from app.recommendations.cache import invalidate_for_user
+
+            await invalidate_for_user(db, session.user_id)
+        except Exception:  # pragma: no cover — defensive: never block grading
+            logger.exception(
+                "[grader] recommendation_cache_invalidation_failed "
+                "session_id={} user_id={}",
+                result.session_id,
+                getattr(session, "user_id", None),
+            )
+
         await db.commit()
         return submission, result
 

@@ -285,6 +285,91 @@ workspace_search_total = Counter(
     ["outcome"],  # outcome ∈ {"ok", "invalid_regex", "timeout", "truncated"}
     registry=REGISTRY,
 )
+# P1-3 — LSP (Language Server Protocol) WebSocket proxy instrumentation.
+# Three signals carry the operational story for the in-sandbox language
+# servers:
+#
+#   * ``lsp_sessions_started_total{language}`` — incremented when the proxy
+#     successfully attaches a language client to the spawned LSP. The
+#     language label distinguishes pyright vs ts-language-server vs gopls
+#     so cold-start regressions surface per-language.
+#   * ``lsp_errors_total{language, error_class}`` — incremented when the
+#     proxy fails (LSPUnavailableError, dropped session, etc.). The
+#     ``error_class`` mirrors the discriminator carried by the structured
+#     ``lsp_error`` text frame the FE consumes, so dashboards and FE
+#     alerts share a single vocabulary.
+#
+# The frontend owns the "user accepted a completion" signal because that is
+# a Monaco-side event the API never sees; that counter (``lsp_completion_
+# accepted_total``) lives on the frontend telemetry pipeline (see
+# P1_DESIGN.md §0.2) and is intentionally omitted here.
+lsp_sessions_started_total = Counter(
+    "lsp_sessions_started_total",
+    "LSP WebSocket sessions that successfully attached a language server (P1-3).",
+    ["language"],  # language ∈ {"python", "typescript", "go"}
+    registry=REGISTRY,
+)
+lsp_errors_total = Counter(
+    "lsp_errors_total",
+    "LSP WebSocket sessions terminated by an error (P1-3).",
+    # ``error_class`` mirrors LSPUnavailableError.error_class plus runtime
+    # tear-down classes; e.g. {"binary_not_found", "spawn_failed",
+    # "unsupported_language", "driver_unavailable", "lsp_already_running",
+    # "session_not_active", "session_not_found", "pump_failed",
+    # "dead_entry_evicted", "lsp_crashed"}.
+    ["language", "error_class"],
+    registry=REGISTRY,
+)
+# Sibling counter for *non-terminal* runtime errors emitted by the
+# language-server process wrappers (broken pipe on stdin, exec_inspect
+# failure during shutdown, socket recv hard-timeout, etc.). Distinct
+# from ``lsp_errors_total`` because these don't necessarily kill the
+# session — they're operational signals that a particular driver-
+# adjacent syscall is misbehaving. ``error_class`` is the same closed
+# vocabulary as ``LSPErrorClass`` in ``apps/api/app/sandbox/lsp.py``.
+lsp_runtime_errors_total = Counter(
+    "lsp_runtime_errors_total",
+    "Non-terminal runtime errors inside the LSP driver (P1-3).",
+    ["language", "error_class"],
+    registry=REGISTRY,
+)
+# ---------------------------------------------------------------------------
+# Recommendation engine instrumentation (P1-2).
+# ---------------------------------------------------------------------------
+# ``recommendation_cache_total{outcome}`` captures the hot-path
+# read-through cache for ``/api/v1/me/recommendations``. ``hit`` /
+# ``miss`` are emitted by ``get_cached_or_compute``; ``invalidated`` is
+# emitted by ``invalidate_for_user`` on every newly-graded submission.
+# Dashboards alert on a hit-rate that drops below ~70% — that usually
+# means a rubric rebalance or migration silently invalidated every row.
+recommendation_cache_total = Counter(
+    "recommendation_cache_total",
+    "Recommendation cache outcomes (P1-2).",
+    ["outcome"],  # outcome ∈ {"hit", "miss", "invalidated"}
+    registry=REGISTRY,
+)
+# Wall-clock budget for the deterministic engine call. Used both as an
+# SLO signal (p95 should sit well under 200ms — the cache is the SLO
+# for the hot path, not this) and as a regression detector for the
+# argmin / ranking code (the engine has no I/O, so a histogram tail
+# climbing means a Python-side slowdown).
+recommendation_compute_seconds = Histogram(
+    "recommendation_compute_seconds",
+    "Time spent inside the pure recommendation engine (P1-2).",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+    registry=REGISTRY,
+)
+# Counter for the *swallow* path inside the grading runner where the
+# engine call is wrapped in a fail-soft try/except — a failure here
+# MUST NOT block the grade. The ``stage`` label keeps room for future
+# callsites (e.g. a periodic warm-up job); today we only emit from the
+# pre-grade hook.
+recommendation_engine_errors_total = Counter(
+    "recommendation_engine_errors_total",
+    "Recommendation engine failures swallowed by the grader (P1-2).",
+    ["stage"],  # stage ∈ {"pre_grade"}
+    registry=REGISTRY,
+)
 
 
 def metrics_asgi_app():

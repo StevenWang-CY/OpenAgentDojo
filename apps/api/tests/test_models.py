@@ -43,6 +43,7 @@ async def test_insert_and_query_every_model(db_session) -> None:
         manifest_sha256="a" * 64,
         version=1,
         published=True,
+        expected_weak_dim="safety",
     )
     db_session.add_all([user, mission])
     await db_session.flush()

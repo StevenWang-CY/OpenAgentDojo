@@ -200,9 +200,13 @@ repo:
     unit: "true"
 brief: "A short brief."
 failure_mode:
-  id: test_failure_mode
+  id: overfitted_visible_test
   title: "Test failure mode"
   description: "desc"
+tags:
+  - overfitted_visible_test
+  - lang:typescript
+expected_weak_dim: safety
 expected_files: [src/index.ts]
 expected_context:
   required: [src/a.ts, src/b.ts]
