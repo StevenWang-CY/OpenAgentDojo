@@ -70,7 +70,23 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   const router = useRouter();
   const pathname = usePathname();
   const queryClient = useQueryClient();
-  const store = useWorkspaceStore(sessionId);
+  // P1 — Scratchpad localStorage scoping fix: thread the authenticated
+  // ``user_id`` through ``useWorkspaceStore`` so the persist key is
+  // ``arena:workspace:${userId}:${sessionId}`` instead of the previous
+  // session-only key. A user switch on the same machine no longer reuses
+  // the previous account's slice. The query is keyed on ``["me"]`` so it
+  // shares cache with the existing ``meQuery`` below (no extra round
+  // trip). ``meId`` is ``null`` until the first ``/auth/me`` lands — the
+  // store falls back to ``"anon"`` for that brief window, then snaps to
+  // the user-scoped key on the next render.
+  const meIdQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: ({ signal }) => auth.me(signal),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const meId = meIdQuery.data?.id ?? null;
+  const store = useWorkspaceStore(sessionId, meId);
 
   // Granular selectors — we only re-render this shell on changes to the
   // specific fields we actually use, not on every fileBuffer keystroke.
@@ -244,14 +260,11 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   const tokenQueryEnabled = status === "active" || status === "submitting";
   // Fetch the authenticated user so the "Session ended" terminal view can
   // deep-link to the correct ``/profile/{handle}`` page. Cheap, cached, and
-  // safe to keep mounted — `auth.me()` is a tiny GET that the layout already
-  // primes elsewhere via React Query's shared cache.
-  const meQuery = useQuery({
-    queryKey: ["me"],
-    queryFn: ({ signal }) => auth.me(signal),
-    staleTime: 60_000,
-    retry: false,
-  });
+  // safe to keep mounted — ``auth.me()`` is a tiny GET that the layout
+  // already primes elsewhere via React Query's shared cache. Aliased to
+  // the workspace-store-scoping query above (same ``["me"]`` key → same
+  // cache entry → no extra round trip).
+  const meQuery = meIdQuery;
 
   const tokenQuery = useQuery({
     queryKey: ["ws-token", sessionId],
@@ -834,10 +847,15 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
                   sessionId={sessionId}
                   sessionStatus={status}
                   // P1-4 — mount the scratchpad pane inside the AgentChat
-                  // column. Gated on ``status === "active"`` so terminal
-                  // sessions don't render an editable surface (the pane
-                  // itself defends with the read-only banner if it does).
-                  showScratchpad={status === "active"}
+                  // column as soon as we know the session status. The
+                  // pane itself defends with a read-only banner +
+                  // ``disabled`` textarea when the status is anything
+                  // other than ``active`` (graded / gave_up / abandoned
+                  // / error / submitting), so the user can still review
+                  // their notes on a finished session — previously
+                  // gating on ``status === "active"`` here unmounted the
+                  // pane and made the read-only branch unreachable.
+                  showScratchpad={status !== undefined}
                   onSubmit={(text) =>
                     handleAgentSubmit(
                       sessionId,

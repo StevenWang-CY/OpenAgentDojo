@@ -150,7 +150,42 @@ export function ProfileView({ handle }: ProfileViewProps) {
           rendered only when the viewer's handle matches the profile being
           viewed. The strip sits above the radar so the "what to work on
           next" affordance is the first thing the owner sees on their own
-          profile — it's the load-bearing CTA. */}
+          profile — it's the load-bearing CTA.
+
+          P1 audit fix — previously this surface silently disappeared on
+          5xx / network errors, leaving the owner with no signal that the
+          strip even exists. We now render an inline loading skeleton
+          while the query is in flight and a friendly retry block when
+          the query has errored. The error reason is intentionally NOT
+          surfaced to the DOM (it can carry backend URLs); it stays in
+          ``console.error`` via React Query's default handler. */}
+      {isOwner && recommendationsQuery.isLoading ? (
+        <div
+          data-testid="recommendation-strip-skeleton"
+          aria-hidden
+          className="mt-10"
+        >
+          <Skeleton className="h-32 w-full rounded-lg" />
+        </div>
+      ) : null}
+      {isOwner && recommendationsQuery.isError ? (
+        <div
+          data-testid="recommendation-strip-error"
+          className="mt-10 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 font-mono text-[11px] text-[var(--color-muted-foreground)]"
+          aria-live="polite"
+        >
+          <span>{"// recommendations couldn’t load"}</span>
+          <button
+            type="button"
+            data-testid="recommendation-strip-retry"
+            onClick={() => void recommendationsQuery.refetch()}
+            disabled={recommendationsQuery.isFetching}
+            className="font-mono text-[11px] text-[var(--color-primary)] hover:underline focus-visible:underline focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {recommendationsQuery.isFetching ? "retrying…" : "retry →"}
+          </button>
+        </div>
+      ) : null}
       {isOwner && recommendationsQuery.data ? (
         <RecommendationStrip data={recommendationsQuery.data} />
       ) : null}

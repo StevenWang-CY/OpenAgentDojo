@@ -137,7 +137,25 @@ class _ActivityTrackedDriver(SandboxDriver):
 
     async def apply_diff(self, handle, diff_text):
         _touch(handle)
-        return await self._inner.apply_diff(handle, diff_text)
+        # Bump the per-handle busy counter so the LSP WS proxy can refuse
+        # to attach mid-patch (the workspace tree is being rewritten
+        # underneath us — spawning a long-lived stdio process here races
+        # the writes and the resulting LSP would see a half-applied
+        # working copy). Using a counter (not a bool) keeps semantics
+        # correct under hypothetical re-entrant or overlapping apply
+        # calls; the counter goes back to zero in the ``finally`` regardless
+        # of which path completed first.
+        handle.driver_state["apply_diff_busy_count"] = (
+            int(handle.driver_state.get("apply_diff_busy_count") or 0) + 1
+        )
+        try:
+            return await self._inner.apply_diff(handle, diff_text)
+        finally:
+            remaining = max(
+                0,
+                int(handle.driver_state.get("apply_diff_busy_count") or 0) - 1,
+            )
+            handle.driver_state["apply_diff_busy_count"] = remaining
 
     async def freeze_and_grade(self, handle, mission, **kwargs):
         _touch(handle)
@@ -291,6 +309,26 @@ class SandboxPool:
     def handle_for(self, session_id: uuid.UUID) -> SandboxHandle | None:
         """O(1) lookup of an active handle by ``session_id``."""
         return self._handles_by_session.get(session_id)
+
+    def is_busy(self, handle: SandboxHandle) -> bool:
+        """True iff an exclusive mutation (apply-patch) is in flight on ``handle``.
+
+        Today the only mutation we serialise against is
+        ``_ActivityTrackedDriver.apply_diff``, which bumps a per-handle
+        ``apply_diff_busy_count`` counter inside the driver-state dict
+        for the duration of the call. The LSP WS proxy reads this BEFORE
+        accepting a new attach: spawning a long-lived stdio process
+        mid-patch races the working copy the patch is rewriting, so the
+        attach is refused with 4503 ``sandbox_busy`` and the FE retries
+        once the patch settles.
+        """
+        state = getattr(handle, "driver_state", None)
+        if not isinstance(state, dict):
+            return False
+        try:
+            return int(state.get("apply_diff_busy_count") or 0) > 0
+        except (TypeError, ValueError):  # pragma: no cover — defensive
+            return False
 
     def handles_snapshot(self) -> list[SandboxHandle]:
         """Return a copy of the active handles — safe to iterate concurrently."""

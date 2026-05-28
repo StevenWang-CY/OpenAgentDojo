@@ -246,6 +246,13 @@ export function CodeEditor({
   // this ref so we don't have to re-run the effect on every keystroke.
   const activeLspRef = React.useRef<ManagedLSPClient | null>(null);
   const docVersionRef = React.useRef(1);
+  // P1 — one-shot guard for the Monaco private-API warning. The
+  // suggest-controller resolution path uses ``getContribution`` first
+  // and falls back to ``_contributions[...]``; if both return
+  // ``undefined`` (Monaco renamed the controller in a future bump),
+  // we emit a single dev console.warn so the regression is visible
+  // without spamming the console on every Tab/Enter.
+  const monacoContribWarnedRef = React.useRef(false);
   // Maps Monaco language id → providers registered with Monaco so we
   // never double-register. Keys are LSP language ids; values are the
   // disposer for the provider registration.
@@ -433,51 +440,43 @@ export function CodeEditor({
       error: null,
     });
 
-    void (async () => {
-      const client = await manager.acquire(lspLang);
+    // P1 — event-driven LSP chip. We subscribe to state transitions via
+    // the manager's per-acquire ``onStateChange`` so the chip flips the
+    // moment the underlying client's state machine reports a change,
+    // instead of the previous setTimeout(pollTick, 250) loop. The
+    // subscriber is detached in the effect cleanup below.
+    const onLspState = (state: LSPState): void => {
       if (disposed) return;
+      setLspChip(stateToChip(state));
+    };
+    let unsubscribeFromManager: (() => void) | null = null;
+
+    void (async () => {
+      const client = await manager.acquire(lspLang, {
+        onStateChange: onLspState,
+      });
+      if (disposed) {
+        // Race: a fast file switch tore the effect down before
+        // acquire resolved. Drop the subscriber so we don't leak a
+        // listener pointed at a stale setLspChip closure.
+        manager.unsubscribe(lspLang, onLspState);
+        return;
+      }
+      // Schedule the detach for cleanup. ``acquire`` may have
+      // synchronously fired ``onLspState`` with the initial state
+      // already; the manager seeds it so the chip is correct from
+      // the first tick.
+      unsubscribeFromManager = () => manager.unsubscribe(lspLang, onLspState);
       if (!client) {
         // FE-P4 audit fix — ``manager.acquire`` returns null when the
         // ws-token fetch fails (or the manager is disposed). The
-        // manager already fires ``lsp_error`` with the structured
-        // class; we mirror the state transition into the chip so the
-        // editor footer renders red instead of staying amber forever.
-        setLspChip({
-          visible: true,
-          kind: "error",
-          language: lspLang,
-          error: "ws_token_failed",
-        });
+        // manager already fired ``onStateChange`` with the
+        // ``ws_token_failed`` error class via our subscriber, so the
+        // chip is already red — no extra setLspChip needed here.
         return;
       }
       acquired = client;
       activeLspRef.current = client;
-
-      // Pipe the initial state through the chip and re-pipe on every
-      // subsequent transition (the manager-level callback covers
-      // future transitions; we plug into the client's state machine
-      // directly so the chip reflects "ready" the moment the
-      // initialize handshake settles).
-      const updateChip = (state: LSPState): void => {
-        if (disposed) return;
-        setLspChip(stateToChip(state));
-      };
-      updateChip(client.state());
-
-      // Bridge state transitions: there's no public ``onStateChange``
-      // subscribe on the handle, so we cheat with a polling tick that
-      // exits once the state settles to either ``ready`` or ``error``
-      // / ``disconnected``. The poll is cheap (every 250 ms) and only
-      // runs during the cold-start window.
-      const pollTick = (): void => {
-        if (disposed) return;
-        const s = client.state();
-        updateChip(s);
-        if (s.kind === "connecting") {
-          setTimeout(pollTick, 250);
-        }
-      };
-      setTimeout(pollTick, 250);
 
       // Open the document. ``openDocument`` queues internally if
       // initialize hasn't completed yet, so this is safe pre-ready.
@@ -578,6 +577,24 @@ export function CodeEditor({
 
     return () => {
       disposed = true;
+      if (unsubscribeFromManager) {
+        try {
+          unsubscribeFromManager();
+        } catch {
+          // ignore
+        }
+        unsubscribeFromManager = null;
+      } else {
+        // Detach the subscriber even if the acquire hadn't resolved
+        // yet — covers the synchronous-cleanup path (StrictMode
+        // double-invoke in dev) where the manager already has the
+        // listener registered.
+        try {
+          manager.unsubscribe(lspLang, onLspState);
+        } catch {
+          // ignore
+        }
+      }
       if (unsubscribeDiagnostics) {
         try {
           unsubscribeDiagnostics();
@@ -756,6 +773,31 @@ export function CodeEditor({
                       // otherwise Tab/Enter is plain navigation /
                       // newline and would over-count.
                       widgetOpen = state === 1;
+                      // P1 — fragility canary. If both the public
+                      // ``getContribution`` API AND the private
+                      // ``_contributions`` bag yield no suggest
+                      // controller (or no ``model``), Monaco renamed
+                      // the contribution and ``lsp_completion_accepted``
+                      // will silently stop firing. Emit a one-shot
+                      // dev warning so the regression is visible
+                      // without a runtime crash or telemetry hole.
+                      if (
+                        process.env.NODE_ENV !== "production" &&
+                        !monacoContribWarnedRef.current &&
+                        pub?.model === undefined &&
+                        priv?.model === undefined
+                      ) {
+                        monacoContribWarnedRef.current = true;
+                        if (typeof console !== "undefined") {
+                          console.warn(
+                            "[CodeEditor] suggest controller not found via " +
+                              "getContribution() or _contributions[]; " +
+                              "lsp_completion_accepted telemetry will be " +
+                              "dropped — Monaco may have renamed the " +
+                              "contribution.",
+                          );
+                        }
+                      }
                     } catch {
                       widgetOpen = false;
                     }

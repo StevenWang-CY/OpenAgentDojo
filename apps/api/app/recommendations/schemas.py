@@ -58,13 +58,22 @@ class RecommendationItem(BaseModel):
 
 
 class RecommendationSet(BaseModel):
-    """Top-level response body — three items + the diagnosis + metadata."""
+    """Top-level response body — three items + the diagnosis + metadata.
+
+    ``recommendations`` is constrained to at most 3 entries in steady
+    state. The lower bound is 0 to cover the degenerate empty-catalogue
+    case (the all-graded branch returns an empty list when the catalog
+    has no missions at all) — the FE renders the diagnosis copy + a
+    "nothing recommended right now" line on that path.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     weakest_dim: WeakestDim | None = None
     diagnosis: str
-    recommendations: list[RecommendationItem]
+    recommendations: list[RecommendationItem] = Field(
+        default_factory=list, min_length=0, max_length=3
+    )
     computed_at: datetime
     cache_hit: bool
 

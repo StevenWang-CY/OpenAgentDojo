@@ -23,6 +23,29 @@ module enforces:
     we return ``None``. There is no deterministic fallback for
     coaching — the entire value of the feature is the LLM polish, so a
     "degraded" stub is worse than hiding the section.
+  * **Per-event-type payload allowlist.** ``_summarise_payload`` runs a
+    per-event-type whitelist over the supervision-event payload before
+    any field flows into the Bedrock prompt — ``command.run.command``,
+    ``patch.applied.path``, ``patch.applied.file_path`` and any other
+    free-form text outside the whitelist NEVER reaches the model. A
+    redaction increments :data:`coaching_payload_redacted_total` for
+    the offending event type so the privacy dashboard can verify the
+    matrix is biting in production. The whitelist is intentionally
+    narrow: when in doubt, suppress.
+
+Shared-row privacy posture (account deletion). The coaching cache rows
+are content-addressed (SHA-256 of canonical inputs) and indexed back to
+the originating user via :class:`CoachingCacheUserIndex`. When a user
+hard-deletes, the worker wipes their index rows but PRESERVES any
+underlying ``llm_cache`` row that another user's index still references
+— the cache row carries no user-identifying data, only the prompt output
+keyed by a hash of inputs neither user can reconstruct from the row, and
+deleting it would silently invalidate another (still-active) user's
+cache entry. The :data:`llm_cache_shared_row_retained_total` counter
+makes that retention visible in dashboards. This module is the
+documentation source of truth; the worker lives in
+``apps/api/app/workers/account_deletion.py`` and intentionally does not
+re-state the privacy rationale.
 
 The function is pure async; the route handler wraps it.
 """
@@ -62,6 +85,7 @@ from app.models.session_note import SessionNote
 from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
 from app.models.user import User
+from app.observability import coaching_payload_redacted_total
 
 # The model used for coaching is documented in
 # ``apps/api/app/llm/prompts/scratchpad_coaching.md`` frontmatter. Keep
@@ -196,6 +220,20 @@ async def generate_coaching_reflection(
     The route maps OK → 200, OPTED_OUT / NO_NOTES → 200 with null body,
     LLM_FAILED → 503, INTERNAL_FAILED → 500 (uncaught).
     """
+    # P1 kill switch — when the operator flips ``FEATURE_LLM_COACHING``
+    # to False (e.g. to disable the surface during an incident) we
+    # short-circuit BEFORE loading context. Sits ahead of the existing
+    # opt-out check so the scratchpad body never leaves the database
+    # when the surface is globally disabled. The route still 200s with
+    # a null body — same shape as a per-user opt-out — so the FE
+    # silently hides the section without surfacing a toast.
+    if not getattr(settings, "feature_llm_coaching", True):
+        logger.info(
+            "coaching: feature_llm_coaching=False; skipping (submission_id={})",
+            submission_id,
+        )
+        return CoachingResult(outcome=CoachingOutcome.OPTED_OUT)
+
     try:
         ctx = await _load_context(db, submission_id)
     except Exception as exc:
@@ -543,33 +581,75 @@ def _build_events_timeline(
     return out
 
 
+# Per-event-type allowlist for fields that may flow verbatim (truncated)
+# into the Bedrock prompt. Anything outside this whitelist is suppressed
+# at summary time so user-private text (shell commands, file paths,
+# arbitrary patch summaries) never reaches the model. The map is closed:
+# an unknown event type yields an empty summary.
+#
+# Privacy-sensitive event types are deliberately conservative:
+#   * ``command.run`` — only the integer ``chars`` length is allowed;
+#     the actual command string carries shell secrets / cookies /
+#     filesystem paths and is suppressed.
+#   * ``patch.applied`` — only the model-synthesised ``summary`` is
+#     allowed; ``path`` and ``file_path`` are filesystem paths that may
+#     embed user emails / homedirs and are suppressed.
+#   * ``diff.opened`` — only the ``summary`` is allowed.
+#   * ``submission.requested`` — nothing payload-derived; the route
+#     surfaces the event with just its kind + offset.
+_PAYLOAD_FIELD_ALLOWLIST: dict[str, tuple[str, ...]] = {
+    "prompt.submitted": ("prompt", "text"),
+    "agent.responded": ("response", "text"),
+    "command.run": ("chars",),
+    "patch.applied": ("summary",),
+    "diff.opened": ("summary",),
+    "submission.requested": (),
+}
+
+
 def _summarise_payload(event_type: str, payload: dict[str, Any]) -> str:
     """Return a short, prompt-safe summary of a payload.
 
-    We pull the most coaching-relevant scalar field per event type and
-    truncate hard. Payloads are also generally small (< 1 KiB) but the
-    coach only needs a hint, not the whole text.
+    The allowlist in :data:`_PAYLOAD_FIELD_ALLOWLIST` is consulted per
+    event type — only listed fields are eligible to flow into the
+    Bedrock prompt; everything else is suppressed *before* it leaves
+    this process. Each suppression increments
+    :data:`coaching_payload_redacted_total` so the privacy posture is
+    visible to ops.
+
+    Truncation: the eventual string is hard-capped at
+    :data:`_MAX_EVENT_SUMMARY_CHARS` (240). For ``int`` values we keep
+    the ``field=value`` shape used by the previous helper so timeline
+    consumers don't rely on whether a length came in as a number or a
+    short string.
     """
-    candidate_fields = (
-        "prompt",
-        "response",
-        "command",
-        "path",
-        "file_path",
-        "summary",
-        "description",
-        "text",
-        "chars",
-    )
-    for field in candidate_fields:
+    allowlist = _PAYLOAD_FIELD_ALLOWLIST.get(event_type)
+    if allowlist is None:
+        # Unknown event type — surface keys only (no values) so the
+        # model knows the shape but never sees user-private text.
+        if payload:
+            coaching_payload_redacted_total.labels(event_type=event_type).inc()
+        keys = sorted(payload.keys())[:6]
+        return f"keys=[{', '.join(keys)}]" if keys else ""
+
+    # If the payload carries fields the allowlist does NOT permit, that
+    # is the load-bearing redaction signal — bump the counter exactly
+    # once per event regardless of how many fields were suppressed.
+    suppressed_keys = [
+        k for k in payload.keys() if isinstance(k, str) and k not in allowlist
+    ]
+    if suppressed_keys:
+        coaching_payload_redacted_total.labels(event_type=event_type).inc()
+
+    for field in allowlist:
         val = payload.get(field)
         if isinstance(val, str) and val.strip():
             return val.strip()[:_MAX_EVENT_SUMMARY_CHARS]
         if isinstance(val, int):
             return f"{field}={val}"
-    # Fallback — surface keys so the model at least knows the shape.
-    keys = sorted(payload.keys())[:6]
-    return f"keys=[{', '.join(keys)}]" if keys else ""
+    # Empty allowlist OR no allowed field present — fall back to the
+    # event type itself so the model still has a coarse hint.
+    return ""
 
 
 def _canonical_json_bytes(payload: Any) -> bytes:

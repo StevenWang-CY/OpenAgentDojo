@@ -134,11 +134,27 @@ type StoreFactory = ReturnType<typeof makeWorkspaceStore>;
  * dev sessions or tests that mount many sessions. We evict the oldest store
  * once we go over `MAX_STORES`; eviction is best-effort because Zustand
  * factories are cheap to recreate.
+ *
+ * Keyed by ``${userId}:${sessionId}`` so a user-switch on the same machine
+ * (e.g. sign-out → sign-in as someone else) doesn't reuse the previous
+ * user's persisted slice — that would have leaked workspace state across
+ * accounts. ``"anon"`` is the conservative default when the caller hasn't
+ * threaded a user id through yet.
  */
 const MAX_STORES = 16;
 const stores = new Map<string, StoreFactory>();
 
-function makeWorkspaceStore(sessionId: string) {
+function storeKey(userId: string | null | undefined, sessionId: string): string {
+  return `${userId ?? "anon"}:${sessionId}`;
+}
+
+function makeWorkspaceStore(sessionId: string, userId: string | null | undefined) {
+  // P1 — Scratchpad localStorage scoping fix: include ``userId`` in the
+  // persist name so two accounts on the same machine don't share the
+  // workspace slice. Default ``"anon"`` matches ``storeKey`` so the
+  // un-authed FE bootstrap and the eventual signed-in mount agree on a
+  // single, stable key.
+  const persistName = `arena:workspace:${userId ?? "anon"}:${sessionId}`;
   return create<WorkspaceState>()(
     persist(
       (set) => ({
@@ -304,7 +320,7 @@ function makeWorkspaceStore(sessionId: string) {
         },
       }),
       {
-        name: `arena:workspace:${sessionId}`,
+        name: persistName,
         storage: createJSONStorage(() => localStorage),
         // Don't persist the full event stream — it's reloadable from the server.
         partialize: (state) => ({
@@ -326,9 +342,21 @@ function makeWorkspaceStore(sessionId: string) {
   );
 }
 
-/** Get (or create) the persisted store for a session id. */
-export function useWorkspaceStore(sessionId: string): StoreFactory {
-  let existing = stores.get(sessionId);
+/**
+ * Get (or create) the persisted store for a session id.
+ *
+ * ``userId`` (optional) scopes the localStorage key so a user switch on
+ * the same browser doesn't reuse the previous account's slice. Callers
+ * that don't yet have the authenticated id (e.g. tests, the brief
+ * unauth bootstrap window) omit it and inherit the ``"anon"`` default —
+ * once the real id arrives the next call returns a freshly-keyed store.
+ */
+export function useWorkspaceStore(
+  sessionId: string,
+  userId?: string | null,
+): StoreFactory {
+  const key = storeKey(userId, sessionId);
+  let existing = stores.get(key);
   if (!existing) {
     // Bound the factory cache. Map preserves insertion order so the first
     // key is the least-recently-created — a reasonable LRU proxy.
@@ -337,19 +365,31 @@ export function useWorkspaceStore(sessionId: string): StoreFactory {
       if (firstKey === undefined) break;
       stores.delete(firstKey);
     }
-    existing = makeWorkspaceStore(sessionId);
-    stores.set(sessionId, existing);
+    existing = makeWorkspaceStore(sessionId, userId);
+    stores.set(key, existing);
   } else {
     // Touch ordering so this session moves to the tail of the LRU.
-    stores.delete(sessionId);
-    stores.set(sessionId, existing);
+    stores.delete(key);
+    stores.set(key, existing);
   }
   return existing;
 }
 
-/** Drop a store factory once its session is fully graded. Exported for tests. */
-export function evictStore(sessionId: string): void {
-  stores.delete(sessionId);
+/**
+ * Drop a store factory once its session is fully graded. Exported for tests.
+ *
+ * ``userId`` is optional for backward compat — when omitted we evict
+ * every cached entry whose tail matches the session id (covers the
+ * un-authed bootstrap and the eventual signed-in mount in one go).
+ */
+export function evictStore(sessionId: string, userId?: string | null): void {
+  if (userId !== undefined) {
+    stores.delete(storeKey(userId, sessionId));
+    return;
+  }
+  for (const k of Array.from(stores.keys())) {
+    if (k.endsWith(`:${sessionId}`)) stores.delete(k);
+  }
 }
 
 function dedupe<T>(arr: T[]): T[] {

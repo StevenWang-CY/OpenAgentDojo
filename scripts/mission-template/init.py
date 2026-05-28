@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -337,6 +338,76 @@ def scaffold(
     return target
 
 
+def _invoke_llm_draft(
+    *,
+    mission_dir: Path,
+    repo_pack_id: str,
+    failure_mode_title: str,
+    seed_outline_file: Path,
+) -> int:
+    """Shell out to ``python -m app.llm.cli mission-authoring-draft``.
+
+    The init.py script intentionally does NOT import ``app.llm.cli``
+    directly — a contributor on the docs side often runs this scaffolder
+    from a checkout without the API venv installed, and a bare
+    ``import app.llm.cli`` would raise a noisy ``ModuleNotFoundError``.
+    Shelling out lets us route around that: we add ``apps/api`` to
+    ``PYTHONPATH`` so the import resolves when the API package IS on
+    disk (the common dev path), and the subprocess's stderr surfaces the
+    operator-actionable instruction otherwise.
+
+    Returns the subprocess exit code (0 on success, non-zero on any
+    failure). The init.py main path swallows the non-zero exit and
+    prints a clean instruction rather than crashing — the mission
+    skeleton has already been scaffolded; the LLM draft is opt-in
+    augmentation.
+    """
+    repo_root = _repo_root()
+    api_dir = repo_root / "apps" / "api"
+    cmd = [
+        sys.executable,
+        "-m",
+        "app.llm.cli",
+        "mission-authoring-draft",
+        "--mission-dir",
+        str(mission_dir),
+        "--repo-pack-id",
+        repo_pack_id,
+        "--failure-mode-title",
+        failure_mode_title,
+        "--seed-outline-file",
+        str(seed_outline_file),
+    ]
+    # Build PYTHONPATH so the ``app`` package resolves. We DO NOT mutate
+    # the parent ``os.environ`` in-place — credentials and other env
+    # vars must continue to flow to the subprocess unchanged.
+    import os
+
+    env = os.environ.copy()
+    existing_pp = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{api_dir}{os.pathsep}{existing_pp}" if existing_pp else str(api_dir)
+    )
+    try:
+        result = subprocess.run(  # noqa: S603 — sys.executable + fixed argv
+            cmd,
+            env=env,
+            check=False,
+        )
+    except FileNotFoundError:
+        # ``sys.executable`` should always exist; this is paranoia.
+        print(
+            "[init] could not invoke python; run this manually:\n"
+            f"  python -m app.llm.cli mission-authoring-draft "
+            f"--mission-dir {mission_dir} --repo-pack-id {repo_pack_id} "
+            f"--failure-mode-title {failure_mode_title!r} "
+            f"--seed-outline-file {seed_outline_file}",
+            file=sys.stderr,
+        )
+        return 127
+    return int(result.returncode)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="mission-template-init",
@@ -353,7 +424,45 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Collect inputs but don't write anything to disk.",
     )
+    # P1-1 — LLM-assisted draft flags. Off by default; opt-in so a
+    # contributor without LLM credentials still gets the deterministic
+    # skeleton. The seed outline lives in a file rather than on the
+    # CLI so authors can hand-craft a long-form brief without quoting.
+    parser.add_argument(
+        "--with-llm-draft",
+        action="store_true",
+        help=(
+            "After scaffolding, also invoke the mission-authoring-draft "
+            "LLM CLI to seed ``_draft/`` with model-generated artefacts. "
+            "Requires --llm-failure-mode-title and --llm-seed-outline-file."
+        ),
+    )
+    parser.add_argument(
+        "--llm-failure-mode-title",
+        default=None,
+        help=(
+            "Human-readable failure-mode title for the LLM draft (e.g. "
+            "'Race condition between login and profile fetch')."
+        ),
+    )
+    parser.add_argument(
+        "--llm-seed-outline-file",
+        type=Path,
+        default=None,
+        help="Path to a UTF-8 file containing the seed outline for the LLM draft.",
+    )
     args = parser.parse_args(argv)
+
+    if args.with_llm_draft:
+        missing: list[str] = []
+        if not args.llm_failure_mode_title:
+            missing.append("--llm-failure-mode-title")
+        if not args.llm_seed_outline_file:
+            missing.append("--llm-seed-outline-file")
+        if missing:
+            parser.error(
+                "--with-llm-draft requires: " + ", ".join(missing)
+            )
 
     inputs = collect_inputs()
     if args.dry_run:
@@ -366,12 +475,49 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         display = target
     print(f"[init] scaffolded {display}")
+
+    if args.with_llm_draft:
+        assert args.llm_seed_outline_file is not None  # narrowed by parser.error above
+        print(
+            "[init] invoking LLM mission-authoring-draft "
+            f"(repo_pack={inputs.repo_pack}, model=claude-opus-4-7)"
+        )
+        rc = _invoke_llm_draft(
+            mission_dir=target,
+            repo_pack_id=inputs.repo_pack,
+            failure_mode_title=args.llm_failure_mode_title or "",
+            seed_outline_file=args.llm_seed_outline_file,
+        )
+        if rc != 0:
+            print(
+                "[init] LLM draft step exited non-zero — the deterministic "
+                "skeleton is intact at the path above. To regenerate after "
+                "fixing credentials, run:\n"
+                f"  cd apps/api && python -m app.llm.cli "
+                "mission-authoring-draft "
+                f"--mission-dir {target} "
+                f"--repo-pack-id {inputs.repo_pack} "
+                f"--failure-mode-title {args.llm_failure_mode_title!r} "
+                f"--seed-outline-file {args.llm_seed_outline_file}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "[init] LLM draft written to "
+                f"{target / '_draft'} — hand-promote each artefact into the "
+                "canonical mission layout, then delete ``_draft/`` before "
+                "the mission can load (the catalog loader refuses any "
+                "folder that still carries ``_draft/``)."
+            )
+
     print("[init] next steps:")
     print("  1. Fill in mission.yaml (brief, validators, scoring weights).")
     print("  2. Write the agent_patch.diff that produces the failure mode.")
     print("  3. Add hidden tests under hidden_tests/.")
     print("  4. Author missions/_calibration/<id>.yaml so the grader has a baseline.")
     print("  5. Bump apps/api/alembic/versions/0003_seed_missions if the seed list changes.")
+    if args.with_llm_draft:
+        print("  6. Hand-promote ``_draft/`` artefacts and delete the directory.")
     return 0
 
 

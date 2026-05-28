@@ -6,28 +6,59 @@ on the frontend speaks LSP JSON-RPC over the open socket. This module is a
 session's sandbox — it never parses JSON-RPC, never caches anything, and
 never spawns more than one LSP per ``(session, language)`` pair.
 
+Single-worker / sticky-session assumption
+-----------------------------------------
+
+The in-process :data:`_active_lsp` registry below is intentionally
+process-local. It enforces "one LSP per (session, language)" without
+coordinating across replicas, which is correct iff:
+
+* the API runs with ``WEB_CONCURRENCY == 1`` (one uvicorn worker), OR
+* the load balancer pins a session's WS upgrades to the same worker
+  (sticky session by session_id).
+
+Running multiple workers without sticky sessions breaks the dedup
+guarantee — two upgrades for the same ``(session, language)`` could
+land on different workers, and each would happily spawn its own LSP
+inside the sandbox container. We log a WARNING from the route handler
+when ``WEB_CONCURRENCY != "1"`` so operators see the regression at
+first use rather than at the next P3 audit. Fixing this properly means
+storing the registry in Redis (keyed by ``(session_id, language)``,
+with a TTL that aligns to the LSP heartbeat); P1 deliberately ships the
+process-local cut and defers the distributed registry to a follow-on.
+
 Architecture (mirrors :mod:`app.ws.terminal`)
 ---------------------------------------------
 
-* Auth: short-lived HMAC token validated via :func:`app.ws.auth.verify_ws_token`.
+* Auth: short-lived HMAC token validated via :func:`app.ws.auth.verify_ws_token`,
+  PLUS an ``Origin`` allow-list check via :func:`app.ws.auth.is_allowed_origin`
+  (matches ``settings.cors_origins``; ``*`` = dev mode).
 * Lifecycle:
     1. Verify the session exists and is in ``active`` status.
     2. Resolve the sandbox handle from :class:`app.sandbox.pool.SandboxPool`.
-    3. Spawn an LSP via ``driver.spawn_lsp(handle, language)`` — bound to
+    3. Refuse the upgrade if an exclusive mutation (apply-patch) is in
+       flight on the handle — 4503 / ``sandbox_busy``.
+    4. Spawn an LSP via ``driver.spawn_lsp(handle, language)`` — bound to
        one per ``(session_id, language)``; a second WS attempt for the same
        pair is closed with code 4409 / reason ``lsp_already_running``.
-    4. Run two bidirectional pump tasks (WS↔LSP). Bytes are forwarded raw.
-    5. Tear everything down on either side's close.
+    5. Run two bidirectional pump tasks (WS↔LSP). Bytes are forwarded raw.
+    6. Tear everything down on either side's close. An exit code in
+       :data:`app.sandbox.lsp.LSP_OOM_EXIT_CODES` upgrades the close to
+       ``lsp_oom`` (structured frame + 4503) so the FE can distinguish a
+       memory-cap reap from a generic crash.
 * Errors:
     * :class:`app.sandbox.lsp.LSPUnavailableError` → emit one structured
       ``lsp_error`` text frame, increment ``lsp_errors_total``, close.
     * Unknown session → 4404 / ``session_not_found``.
     * Inactive session → 4404 / ``session_not_active``.
+    * Sandbox mid-mutation → 4503 / ``sandbox_busy``.
+    * Origin not on allow-list → 4403 / ``origin_forbidden``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 
@@ -39,13 +70,14 @@ from app.db.session import AsyncSessionLocal
 from app.models.session import SessionRow
 from app.observability import lsp_errors_total, lsp_sessions_started_total
 from app.sandbox.lsp import (
+    LSP_OOM_EXIT_CODES,
     SUPPORTED_LANGUAGES,
     LSPErrorClass,
     LSPProcess,
     LSPUnavailableError,
 )
 from app.schemas.lsp import LSPErrorFrame
-from app.ws.auth import verify_ws_token
+from app.ws.auth import is_allowed_origin, verify_ws_token
 
 router = APIRouter(tags=["ws"])
 
@@ -58,6 +90,38 @@ _WS_CLOSE_SESSION_NOT_FOUND = 4404
 _WS_CLOSE_SESSION_NOT_ACTIVE = 4404  # same code, different reason string
 _WS_CLOSE_LSP_ALREADY_RUNNING = 4409
 _WS_CLOSE_LSP_UNAVAILABLE = 4503
+_WS_CLOSE_SANDBOX_BUSY = 4503  # same as unavailable; distinct error_class
+_WS_CLOSE_ORIGIN_FORBIDDEN = 4403
+
+
+# One-shot guard so the multi-worker warning logs once per process, not on
+# every WS upgrade. The registry assumption only matters if it's violated;
+# a single log line at first use is enough to alert ops.
+_WEB_CONCURRENCY_WARNED = False
+
+
+def _maybe_warn_multi_worker() -> None:
+    """Log a one-shot warning if the process looks like it's running multi-worker.
+
+    See the module docstring for why the in-process LSP registry breaks
+    under ``WEB_CONCURRENCY > 1`` without sticky sessions. We can't
+    *assert* here (the API may legitimately run multi-worker for the
+    REST surface and just accept the LSP soft-degradation), so the
+    posture is: warn loudly once, let ops decide.
+    """
+    global _WEB_CONCURRENCY_WARNED
+    if _WEB_CONCURRENCY_WARNED:
+        return
+    _WEB_CONCURRENCY_WARNED = True
+    workers = (os.environ.get("WEB_CONCURRENCY") or "1").strip()
+    if workers != "1":
+        logger.warning(
+            "lsp ws: WEB_CONCURRENCY={!r} but the LSP registry is "
+            "process-local; the 'one LSP per (session, language)' "
+            "invariant only holds with sticky sessions or workers=1. "
+            "See app.ws.lsp module docstring.",
+            workers,
+        )
 
 # Bytes per pump-loop read from the WS side. Generous — JSON-RPC LSP frames
 # can easily run to several KB when the server returns a completion list
@@ -215,6 +279,31 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
     """WS proxy that pumps JSON-RPC bytes between Monaco and the sandbox LSP."""
     sid_str = str(session_id)
 
+    # One-shot diagnostic so a misconfigured deployment (multi-worker without
+    # sticky sessions) surfaces in the API logs the first time someone tries
+    # to attach an LSP. See module docstring for the full reasoning.
+    _maybe_warn_multi_worker()
+
+    # 0) Origin allow-list. Closes BEFORE accept so a malicious cross-site
+    # WS upgrade never even sees the handshake completed. Browsers always
+    # ship Origin; non-browser clients (no Origin header) pass through to
+    # the token check below per the shared helper's contract.
+    if not is_allowed_origin(websocket):
+        try:
+            # Try to surface a structured frame too, but the socket
+            # hasn't been accepted yet — Starlette doesn't allow a text
+            # frame before ``accept``. Close-with-reason is what
+            # downstream tooling can observe.
+            await websocket.close(
+                code=_WS_CLOSE_ORIGIN_FORBIDDEN, reason="origin_forbidden"
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            logger.debug("lsp ws: origin-forbidden close failed: {}", exc)
+        lsp_errors_total.labels(
+            language=(language or "unknown"), error_class="origin_forbidden"
+        ).inc()
+        return
+
     # 1) Auth. Bad token → 1008 (policy violation) per the terminal WS contract.
     if not verify_ws_token(token, sid_str):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="bad token")
@@ -274,6 +363,35 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
         )
         lsp_errors_total.labels(language=norm_lang, error_class="no_sandbox").inc()
         return
+
+    # 5.5) Sandbox busy check (P1-3 audit fix).
+    #
+    # If an apply-patch (or any other exclusive mutation) is in flight on
+    # this handle, we MUST refuse the LSP attach: the patch is rewriting
+    # workspace files underneath us, and spawning a long-lived stdio
+    # process here would either race the writes (LSP indexes a
+    # half-applied tree) or extend the apply-patch lock window
+    # unpredictably. The FE retries on close-code 4503 with backoff, so
+    # the user-visible effect is just "LSP cold-starts a beat later".
+    is_busy_fn = getattr(pool, "is_busy", None)
+    if callable(is_busy_fn):
+        try:
+            busy = bool(is_busy_fn(handle))
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("lsp ws: pool.is_busy raised: {}", exc)
+            busy = False
+        if busy:
+            await _send_lsp_error_and_close(
+                websocket,
+                language=norm_lang,
+                error="sandbox_busy",
+                detail="apply-patch in flight; retry after the patch settles",
+                close_code=_WS_CLOSE_SANDBOX_BUSY,
+            )
+            lsp_errors_total.labels(
+                language=norm_lang, error_class="sandbox_busy"
+            ).inc()
+            return
 
     # 6) Single-LSP-per-(session,language) registry. The lock guards the
     # check-then-insert race between two concurrent upgrades for the same
@@ -423,17 +541,61 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
         # observed EOF without a prior shutdown request.
         crashed = bool(crashed_flag[0]) if "crashed_flag" in locals() else False
         if crashed:
-            lsp_errors_total.labels(
-                language=norm_lang, error_class="lsp_crashed"
-            ).inc()
-            try:
-                # ``client_state`` / ``application_state`` aren't part of
-                # the public WebSocket surface in older Starlettes; the
-                # close call below is itself idempotent so we just try
-                # and swallow the AttributeError + ConnectionClosed.
-                await websocket.close(code=1011, reason="lsp_crashed")
-            except Exception:  # pragma: no cover — best-effort
-                pass
+            # OOM-killer detection: if the process exited with one of the
+            # cgroup-OOM exit codes (137 / -9 / 9), upgrade the close to a
+            # structured ``lsp_oom`` frame so the FE can show
+            # "memory cap hit, falling back to syntax-only" instead of the
+            # generic "language server crashed" copy. We read the cached
+            # exit code off the LSPProcess subclass (Docker caches via
+            # ``exec_inspect``, Local forwards ``Process.returncode``).
+            exit_code: int | None = None
+            if lsp is not None:
+                try:
+                    exit_code = lsp.exit_code
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.debug(
+                        "lsp[{}] exit_code lookup failed: {}", norm_lang, exc
+                    )
+
+            if exit_code is not None and exit_code in LSP_OOM_EXIT_CODES:
+                lsp_errors_total.labels(
+                    language=norm_lang, error_class="lsp_oom"
+                ).inc()
+                # Best-effort: emit the structured frame BEFORE the close
+                # so the FE's discriminated-union narrowing has something
+                # to switch on. The frame may be dropped if the WS is
+                # already half-closed; that's fine — the close reason
+                # below carries the same signal.
+                try:
+                    frame = LSPErrorFrame(
+                        type="lsp_error",
+                        error="lsp_oom",
+                        language=norm_lang,
+                        detail=f"language server reaped by OOM killer (exit={exit_code})",
+                    )
+                    await websocket.send_text(frame.model_dump_json())
+                except Exception as exc:  # pragma: no cover — best-effort
+                    logger.debug(
+                        "lsp[{}] lsp_oom frame send failed: {}", norm_lang, exc
+                    )
+                try:
+                    await websocket.close(
+                        code=_WS_CLOSE_LSP_UNAVAILABLE, reason="lsp_oom"
+                    )
+                except Exception:  # pragma: no cover — best-effort
+                    pass
+            else:
+                lsp_errors_total.labels(
+                    language=norm_lang, error_class="lsp_crashed"
+                ).inc()
+                try:
+                    # ``client_state`` / ``application_state`` aren't part of
+                    # the public WebSocket surface in older Starlettes; the
+                    # close call below is itself idempotent so we just try
+                    # and swallow the AttributeError + ConnectionClosed.
+                    await websocket.close(code=1011, reason="lsp_crashed")
+                except Exception:  # pragma: no cover — best-effort
+                    pass
         else:
             try:
                 # Idempotent — Starlette tracks WS state internally.

@@ -105,6 +105,41 @@ export function HelpOverlay({ open, onOpenChange }: HelpOverlayProps) {
             <li>Verify your fix — re-run tests after the agent patches.</li>
           </ul>
         </section>
+        <section
+          aria-labelledby="help-overlay-lsp"
+          data-testid="help-overlay-lsp"
+          className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-elevated)] p-3"
+        >
+          <h3
+            id="help-overlay-lsp"
+            className="font-mono text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
+          >
+            // lsp
+          </h3>
+          <ul className="mt-1.5 list-none space-y-0.5 pl-0 font-mono text-xs text-[var(--color-foreground)]">
+            <li>
+              <span className="text-[var(--color-muted-foreground)]">// chip</span>{" "}
+              <span className="text-[var(--color-success)]">green</span> ready ·{" "}
+              <span className="text-[var(--color-warning)]">amber</span> connecting
+              · <span className="text-[var(--color-danger)]">red</span> error
+            </li>
+            <li>
+              <span className="text-[var(--color-muted-foreground)]">
+                // languages
+              </span>{" "}
+              python · typescript · go
+            </li>
+            <li>
+              <span className="text-[var(--color-muted-foreground)]">// notes</span>{" "}
+              goto-definition is save-driven; unsaved buffers don&rsquo;t cross
+              files until you save.
+            </li>
+            <li>
+              <span className="text-[var(--color-muted-foreground)]">// limit</span>{" "}
+              two LSPs run concurrently per session; a third evicts the oldest.
+            </li>
+          </ul>
+        </section>
         <label className="mt-2 flex items-center gap-2 text-xs text-[var(--color-muted-foreground)]">
           <input
             type="checkbox"

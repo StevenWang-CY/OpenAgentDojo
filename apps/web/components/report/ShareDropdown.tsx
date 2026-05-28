@@ -29,6 +29,7 @@ import {
   FileImage,
   FileText,
   Loader2,
+  RotateCw,
   ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -67,6 +68,7 @@ type ReplayErrorClass =
   | "network_error"
   | "not_found"
   | "not_graded"
+  | "verify_secret_unavailable"
   | "unknown";
 
 function classifyReplayError(err: unknown): ReplayErrorClass {
@@ -87,6 +89,13 @@ function classifyReplayError(err: unknown): ReplayErrorClass {
       }
       return "not_found";
     }
+    // FE remediation — explicit bucket for 503s from the verify-secret
+    // dependency. Previously these compressed into ``unknown`` and the
+    // funnel couldn't tell a one-off backend dip from a sustained
+    // outage. The backend returns 503 from the replay endpoint when the
+    // ``REPLAY_VERIFY_SECRET`` env wiring is missing (the artefact
+    // can't be signed) or when its KMS dependency is unreachable.
+    if (err.status === 503) return "verify_secret_unavailable";
   }
   return "unknown";
 }
@@ -143,40 +152,22 @@ export function ShareDropdown({
     if (replayJsonBusy) return;
     setReplayJsonBusy(true);
     track("replay_export_requested", { submission_id: submissionId, kind: "json" });
-    const filename = `arena-replay-${submissionId.slice(0, 8)}.json`;
-    // Build the work as a promise we (a) hand to toast.promise for the
-    // loading→success/error UX and (b) await directly so our own
-    // catch-block can fire the ``replay_export_failed`` telemetry. The two
-    // consumers settle on the same promise so the toast and the telemetry
-    // observe the same outcome.
+    // FE remediation — ``downloadReplayJson`` now performs the file save
+    // itself and returns ``{bytes, filename}`` so the on-wire bytes match
+    // what hit disk. We deliberately do NOT re-stringify a parsed JS
+    // object here — that destroyed the canonical key ordering / whitespace
+    // the backend serialises with and broke replay-hash verification for
+    // anyone who downloaded the file and compared it byte-for-byte.
     const work: Promise<string> = (async () => {
-      const payload = await downloadReplayJson(submissionId, {
+      const result = await downloadReplayJson(submissionId, {
         share: share ?? undefined,
       });
-      // Serialise once so (a) the bytes count reflects the on-the-wire size
-      // approximation and (b) the same string is reused for the file save.
-      const serialised = JSON.stringify(payload);
-      const blob = new Blob([serialised], { type: "application/json" });
-      if (typeof document !== "undefined" && typeof URL.createObjectURL === "function") {
-        const objectUrl = URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = objectUrl;
-        anchor.download = filename;
-        anchor.rel = "noopener";
-        anchor.style.display = "none";
-        document.body.appendChild(anchor);
-        anchor.click();
-        window.setTimeout(() => {
-          anchor.remove();
-          URL.revokeObjectURL(objectUrl);
-        }, 0);
-      }
       track("replay_export_succeeded", {
         submission_id: submissionId,
         kind: "json",
-        bytes: serialised.length,
+        bytes: result.bytes,
       });
-      return filename;
+      return result.filename;
     })();
     toast.promise(work, {
       loading: "Preparing replay JSON…",
@@ -685,10 +676,16 @@ function RenderItem({
       <button
         type="button"
         title="Force re-render"
+        aria-label={`Force re-render ${kind.toUpperCase()}`}
+        data-testid={`force-rerender-${kind}`}
         onClick={() => void forceRerender()}
         className="mr-1 inline-flex size-6 items-center justify-center rounded-md text-[var(--color-muted-foreground)] hover:bg-[var(--color-muted)]"
       >
-        <Loader2 className="size-3" aria-hidden />
+        {/* FE remediation — was Loader2 (a spinner), which read as "render
+            is in progress" rather than "re-trigger the render". RotateCw
+            is the standard refresh affordance and matches the lucide-react
+            set already pulled in for this file. */}
+        <RotateCw className="size-3" aria-hidden />
       </button>
     </div>
   );

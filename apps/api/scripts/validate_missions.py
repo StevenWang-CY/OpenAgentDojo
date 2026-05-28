@@ -42,6 +42,7 @@ import re
 
 from app.missions.acceptance import load_acceptance
 from app.missions.loader import LoadedMission, MissionLoader
+from app.missions.roadmap import RoadmapPastDatedError, load_roadmap
 
 
 def _check_seed_contains(seed_path: Path, mission_id: str) -> bool:
@@ -306,12 +307,38 @@ def _resolve_seed_path(root: Path) -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _validate_roadmap_strict() -> list[str]:
+    """Strict-mode load of the public roadmap as part of the CI gate.
+
+    The runtime loader (``strict=False``) silently drops past-dated
+    placeholders so a stale roadmap can't take the catalog endpoint
+    down. CI runs in ``strict=True`` so the same drift surfaces as a
+    build failure instead — authors are expected to refresh or remove
+    the entry before merge. Returns a list of human-readable errors
+    (empty on success) so the caller can fold the result into the same
+    ``failures`` accounting the per-mission checks use.
+    """
+    try:
+        load_roadmap(strict=True)
+    except RoadmapPastDatedError as exc:
+        return [f"roadmap.yaml: {exc}"]
+    except Exception as exc:  # noqa: BLE001 — surface any roadmap parse fault
+        return [f"roadmap.yaml: failed to load in strict mode: {exc}"]
+    return []
+
+
 def validate_root(root: Path) -> int:
     loader = MissionLoader(root)
+    # ``validate_all`` is the strict variant of :meth:`MissionLoader.scan` —
+    # it raises an aggregated error when ANY mission folder fails to load,
+    # including the P1-1 ``_draft/`` rejection in the loader's per-mission
+    # path. That guarantees CI catches an un-promoted LLM-assisted draft
+    # before the catalog ever upserts it; a silent skip would let
+    # generator output ship unreviewed.
     try:
-        missions = loader.scan()
+        missions = loader.validate_all()
     except Exception as exc:
-        print(f"FAIL parse error in {root}: {exc}", file=sys.stderr)
+        print(f"FAIL mission load failures in {root}: {exc}", file=sys.stderr)
         return 2
 
     if not missions:
@@ -330,6 +357,19 @@ def validate_root(root: Path) -> int:
                 print(f"  - {e}", file=sys.stderr)
         else:
             print(f"OK   [{m.manifest.id}] v{m.manifest.version}")
+
+    # Strict roadmap check — counted as one extra "failure" if it trips so
+    # the existing exit-code 2 path lights up.
+    roadmap_errors = _validate_roadmap_strict()
+    if roadmap_errors:
+        failures += 1
+        print(
+            f"FAIL [roadmap.yaml] {len(roadmap_errors)} error(s):", file=sys.stderr
+        )
+        for e in roadmap_errors:
+            print(f"  - {e}", file=sys.stderr)
+    else:
+        print("OK   [roadmap.yaml] strict mode")
 
     if failures:
         print(f"\n{failures} mission(s) failed validation", file=sys.stderr)

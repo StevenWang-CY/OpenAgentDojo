@@ -123,14 +123,43 @@ export const ThreeWayDiff = React.forwardRef<
   // The sync hook respects ``disabled`` so single-pane / legacy renders skip
   // wiring entirely.
   const syncDisabled = !v2Enabled || !haveUser || !haveIdeal;
-  useSynchronisedDiffScroll(userPaneRef, idealPaneRef, anchorMap, {
-    disabled: syncDisabled,
-    onPartnerScrolled: ({ direction, anchorCount }) => {
+
+  // FE remediation — the telemetry call is debounced per ``direction`` on
+  // a 1-second window so a long drag-scroll emits one event instead of
+  // ~60 (one per scroll tick). The actual scroll-sync UX is NOT debounced
+  // — the partner pane still tracks the drag in real time. Only the
+  // ``track()`` call is throttled here.
+  const lastTrackedRef = React.useRef<Record<string, number>>({});
+  const onPartnerScrolled = React.useCallback(
+    ({
+      direction,
+      anchorCount,
+    }: {
+      direction: "user_to_ideal" | "ideal_to_user";
+      anchorCount: number;
+    }) => {
+      const now = Date.now();
+      const last = lastTrackedRef.current[direction] ?? 0;
+      // 1s window — anything closer than 1000ms to the previous emit
+      // for the same direction is suppressed so the funnel sees one
+      // event per drag rather than a per-frame storm.
+      if (now - last < 1000) {
+        // Refresh the timestamp so a continuous drag keeps suppressing.
+        lastTrackedRef.current[direction] = now;
+        return;
+      }
+      lastTrackedRef.current[direction] = now;
       track("three_way_diff_synced_scroll", {
         direction,
         anchor_count: anchorCount,
       });
     },
+    [],
+  );
+
+  useSynchronisedDiffScroll(userPaneRef, idealPaneRef, anchorMap, {
+    disabled: syncDisabled,
+    onPartnerScrolled,
   });
 
   if (!haveUser && !haveIdeal) {

@@ -320,3 +320,79 @@ async def _load_epoch_async(user_id: str) -> int | None:
 def clear_epoch_cache() -> None:
     """Test helper — drop the in-process epoch cache."""
     _EPOCH_CACHE.clear()
+
+
+# ---------------------------------------------------------------------------
+# Origin allow-list check (P1-3 audit fix)
+# ---------------------------------------------------------------------------
+#
+# The browser's WebSocket upgrade ships an ``Origin: https://app.example.com``
+# header on every connect attempt. The default Starlette/FastAPI WS stack
+# does NOT enforce a Same-Origin policy — by the time ``verify_ws_token``
+# runs we've already accepted bytes from any origin that has a valid token.
+# In practice that's only catastrophic when someone leaks a token AND has a
+# cooperating third-party page, but P1 still requires belt-and-braces:
+# every WS endpoint (terminal, events, lsp) MUST gate the upgrade on
+# ``Origin in settings.cors_origins`` so a stolen token from a non-allowed
+# origin cannot complete the handshake.
+#
+# This helper centralises the check so a future tweak (subdomain wildcards,
+# port normalisation, etc.) only touches one body. The two non-LSP WS
+# endpoints (terminal, events) call this helper from inside the same
+# module slice; the lsp WS calls it explicitly. Tests stub the settings
+# accessor via the standard ``get_settings`` dependency injection.
+
+
+def is_allowed_origin(websocket: object) -> bool:
+    """Return True iff the WS ``Origin`` header is on the CORS allow-list.
+
+    Treats a missing Origin header as ALLOWED — non-browser clients
+    (curl, python ``websockets``, internal health probes, anything that
+    speaks the WS protocol without the browser's same-origin machinery)
+    don't send one and we don't want to lock them out. Browsers always
+    send Origin on a WS upgrade, so the only "missing Origin" path in
+    production is the deliberate non-browser path.
+
+    If ``settings.cors_origins`` contains ``"*"`` we treat the
+    allow-list as wide-open (dev mode) and pass everything. Production
+    deployments MUST list explicit origins.
+    """
+    try:
+        headers = getattr(websocket, "headers", None) or {}
+        origin = headers.get("origin") if hasattr(headers, "get") else None
+    except Exception:  # pragma: no cover — defensive
+        return False
+
+    if not origin:
+        # Non-browser client; same posture as the existing HTTP CORS
+        # middleware which only enforces on requests that ship the
+        # header. Other auth layers (token, session cookie) still gate
+        # the connection.
+        return True
+
+    try:
+        allowed = list(get_settings().cors_origins)
+    except Exception as exc:  # pragma: no cover — settings shouldn't raise
+        # Fail closed — a settings outage MUST NOT silently broaden the
+        # allow-list. The same posture covers the malformed-allowlist
+        # case (e.g. someone set ``cors_extra_origins`` to garbage).
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "ws origin check: settings.cors_origins lookup failed: %s", exc
+        )
+        return False
+
+    if "*" in allowed:
+        # Dev mode wildcard — the HTTP CORS middleware already accepts
+        # any origin here, so the WS layer matches.
+        return True
+
+    # Exact, case-insensitive match. We deliberately don't normalise
+    # trailing slashes or default ports — production origins are
+    # configured by hand and any drift should fail loud.
+    origin_lc = origin.strip().rstrip("/").lower()
+    for allowed_origin in allowed:
+        if allowed_origin.strip().rstrip("/").lower() == origin_lc:
+            return True
+    return False

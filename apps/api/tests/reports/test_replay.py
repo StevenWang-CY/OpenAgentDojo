@@ -653,8 +653,10 @@ def test_redaction_safe_event_types_covers_known_schema() -> None:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     enum = set(schema["properties"]["event_type"]["enum"])
 
-    # Per audit item 14, these are deliberately omitted from the
-    # safe-list because their payloads carry free-form user content.
+    # Per audit item 14 (+ P1 follow-up), these are deliberately omitted
+    # from the safe-list because their payloads carry free-form user
+    # content OR leak the size / timing dynamics of the user's private
+    # scratchpad (``note.edited`` / ``note.viewed_during_prompt``).
     must_be_redacted = {
         "prompt.submitted",
         "agent.responded",
@@ -662,12 +664,14 @@ def test_redaction_safe_event_types_covers_known_schema() -> None:
         "validator.flag",
         "session.errored",
         "submission.failed",
+        "note.edited",
+        "note.viewed_during_prompt",
     }
     for etype in must_be_redacted:
         assert etype in enum, f"schema drift: {etype} no longer in schema"
         assert etype not in REDACTION_SAFE_EVENT_TYPES, (
             f"{etype} must NOT be in the safe-list — its payload can leak "
-            "free-form user/agent text or credentials"
+            "free-form user/agent text or the scratchpad's size + dynamics"
         )
 
     # And these MUST be in the safe-list because their payload is
@@ -678,7 +682,6 @@ def test_redaction_safe_event_types_covers_known_schema() -> None:
         "test.run",
         "tab.blurred",
         "tab.focused",
-        "note.edited",
     }
     for etype in must_be_safe:
         assert etype in enum, f"schema drift: {etype} no longer in schema"

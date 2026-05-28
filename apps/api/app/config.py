@@ -154,6 +154,14 @@ class Settings(BaseSettings):
     # secret rotation so verification signatures on PDFs already in the
     # wild keep verifying for a year.
     verify_secret: str | None = None
+    # P0-11 / P1 — comma-separated list of *retired* verify secrets.
+    # Verification tries ``verify_secret`` (current) first, then each
+    # entry in this list in order. Signing always uses the current secret.
+    # Use this to rotate ``VERIFY_SECRET`` without invalidating PDFs
+    # already in the wild: promote the active value into the previous
+    # list, set a fresh ``VERIFY_SECRET``, and roll the deployment.
+    # Format: comma-separated. Empty strings between commas are ignored.
+    verify_secret_previous: str = ""
     # P0-11 — soft cap on force re-renders per submission per day. The
     # default keeps a user from cycling the cached PDF; tune via env if
     # power users hit the limit legitimately.
@@ -180,6 +188,25 @@ class Settings(BaseSettings):
 
     # --- features ---
     feature_llm_narration: bool = False
+    # P1 — coaching reflection kill switch. When False the coaching
+    # generator short-circuits before touching the LLM (and before
+    # hashing the user's scratchpad notes) and the route returns 200
+    # with ``reflection=null``. Used to disable a single LLM surface
+    # without disabling the whole stack.
+    feature_llm_coaching: bool = True
+    # P1 — recommendation prose kill switch. Read by the recommendation
+    # diagnosis / why prose generators (P1-2). Like ``feature_llm_coaching``
+    # this defaults True; flip to False to roll the LLM-augmented prose
+    # back to its deterministic fallback without redeploying.
+    feature_llm_recommendation_prose: bool = True
+
+    # --- LLM prompt version ---
+    # Bump on prompt-template edits. Invalidates every llm_cache row
+    # across every domain (same discipline as ``RUBRIC_VERSION``). The
+    # constant ``app.llm.domains.PROMPT_VERSION`` reads this value at
+    # import time; rolling forward via env keeps the cache invalidation
+    # gesture in operator hands.
+    prompt_version: int = Field(default=1, ge=1)
 
     # --- workers ---
     # When True (default) provisioning runs in the API process so the resulting
@@ -243,6 +270,8 @@ class Settings(BaseSettings):
         "allow_dev_auth",
         "provision_in_process",
         "feature_llm_narration",
+        "feature_llm_coaching",
+        "feature_llm_recommendation_prose",
         "smtp_start_tls",
         "smtp_verify_certs",
         mode="before",
@@ -259,6 +288,20 @@ class Settings(BaseSettings):
     # hosts. Wildcard ``*`` is allowed in development only — production /
     # staging must list each origin explicitly.
     cors_extra_origins: str = ""
+
+    @property
+    def verify_secret_previous_list(self) -> list[str]:
+        """Parse ``VERIFY_SECRET_PREVIOUS`` (comma-separated) into a list.
+
+        Empty entries (e.g. trailing commas) are stripped so an operator
+        rotating between values doesn't accidentally pass through an
+        empty-string "secret" that would silently match an unsigned
+        envelope.
+        """
+        raw = (self.verify_secret_previous or "").strip()
+        if not raw:
+            return []
+        return [s.strip() for s in raw.split(",") if s.strip()]
 
     @property
     def cors_origins(self) -> list[str]:

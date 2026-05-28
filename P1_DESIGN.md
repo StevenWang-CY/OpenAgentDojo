@@ -1124,23 +1124,36 @@ Acceptable trade-off; documented in the help overlay.
 One new WS endpoint:
 
 ```
-WS /api/v1/sessions/{session_id}/lsp
+WS /ws/sessions/{session_id}/lsp
+  (Note: lives under /ws/ alongside the terminal and event WebSocket
+   endpoints, NOT under /api/v1/. Same mount as
+   /ws/sessions/{id}/terminal and /ws/sessions/{id}/events.)
+
   Subprotocols: ['lsp.openagentdojo.v1']
   Query: ?language=python   (one of: python, typescript, go)
-  Auth: same as the workspace WS (session cookie + CSRF on the
-        handshake; identical to the existing event WS at
-        apps/api/app/sessions/ws.py).
+         &token=<short-lived HMAC bound to (session_id, user_id, epoch)>
+  Auth: short-lived HMAC token (apps/api/app/ws/auth.py:verify_ws_token),
+        PLUS an ``Origin`` allow-list check against
+        ``settings.cors_origins``. Same posture as the terminal +
+        events WS endpoints.
   Lifecycle:
     1. on open: API spawns the LSP process in the sandbox via
        driver.spawn_lsp(language). One LSP per (session_id, language).
     2. while open: framed JSON-RPC bytes forwarded both ways.
     3. on close (or sandbox reap): API sends shutdown LSP message,
        waits 2 s, kills the process.
-  Errors:
-    409 if a language server for this (session, language) is already
-        running on a different WS (prevents double-spawn).
-    404 if session is not active.
-    503 if the sandbox is busy (apply-patch in flight).
+  Errors (close codes):
+    4403 origin_forbidden — Origin not on cors_origins allow-list.
+    4404 session_not_found / session_not_active.
+    4409 lsp_already_running — another WS for this (session, language)
+         is already attached (prevents double-spawn).
+    4503 sandbox_busy — apply-patch in flight; retry after settle.
+    4503 no_sandbox / driver_unavailable / spawn_failed / binary_not_found
+         — surfaced via LSPErrorFrame.
+    1011 lsp_crashed — language server died mid-stream.
+    4503 lsp_oom — language server reaped by kernel OOM killer
+         (per-language memory budget: python=256 MiB, typescript=512 MiB,
+         go=384 MiB; see app.sandbox.lsp.LSP_MEMORY_BUDGETS_MB).
 ```
 
 The driver gains:

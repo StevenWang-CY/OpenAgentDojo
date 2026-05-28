@@ -202,10 +202,16 @@ export function MissionGrid() {
     // failure-mode filter (placeholders carry no tags yet). The category
     // filter is shipped-only by design — placeholders haven't been
     // bucketed into a category band yet.
-    if (activeFailureMode !== "all") return [];
+    //
+    // P1 audit fix — previously this row collapsed to empty whenever a
+    // failure-mode filter was active. That hid the roadmap from anyone
+    // narrowing by failure mode, which is a discoverability regression.
+    // We now always show the upcoming row when there are upcoming
+    // entries; the active-filter hint chip below clarifies that
+    // placeholders aren't yet tagged with failure modes.
     if (activeLanguage === "all") return upcoming;
     return upcoming.filter((m) => m.language === activeLanguage);
-  }, [upcoming, activeLanguage, activeFailureMode]);
+  }, [upcoming, activeLanguage]);
 
   // FE-P4 audit fix — surface a banner when the top recommendation
   // exists but has been filtered out by the active language / failure
@@ -386,6 +392,14 @@ export function MissionGrid() {
               watch repo ↗
             </a>
           </div>
+          {activeFailureMode !== "all" ? (
+            <p
+              data-testid="mission-grid-upcoming-filter-hint"
+              className="mt-2 font-mono text-[11px] text-[var(--color-muted-foreground)]"
+            >
+              {"// upcoming missions don’t have failure-mode tags yet"}
+            </p>
+          ) : null}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {filteredUpcoming.map((mission) => (
               <ComingSoonCard key={mission.id} mission={mission} />

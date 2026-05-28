@@ -37,6 +37,7 @@ from app.db.session import get_db
 from app.models.session_note import SessionNote
 from app.models.supervision_event import SupervisionEvent
 from app.models.user import User
+from app.observability import note_edited_burst_seconds_clamp_total
 from app.schemas.notes import (
     NOTE_BODY_MAX_BYTES,
     NoteViewedDuringPromptBody,
@@ -157,24 +158,51 @@ async def _latest_note_edited_event(
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
+# Defensive upper bound for the seconds_since_last_edit computation. A
+# session can legitimately span many hours (the supervision experience
+# is intentionally long-form), so we don't clamp at minutes — but a 30-day
+# value almost certainly means a clock jumped or a stale event row leaked
+# in via a replay. Anything above this is treated as "previous edit was so
+# long ago we may as well report it as zero" and the
+# :data:`note_edited_burst_seconds_clamp_total` counter is bumped so the
+# anomaly surfaces in ops.
+_SECONDS_SINCE_LAST_EDIT_MAX = 30 * 24 * 60 * 60  # 30 days.
+
+
 def _build_note_edited_payload(
     *,
     body: str,
     now: datetime,
-    previous_updated_at: datetime | None,
+    previous_event_occurred_at: datetime | None,
 ) -> dict[str, Any]:
     """Materialise the ``note.edited`` payload from the post-write state.
 
     ``seconds_since_last_edit`` is the elapsed seconds between the
-    previous row's ``updated_at`` and ``now`` (clamped at 0 to defend
-    against a clock skew between the DB clock and the app clock).
-    When the row didn't exist before, we report 0 — the field is "time
-    since previous edit", not "time since session start".
+    *previous* ``note.edited`` supervision event (the de-noised burst
+    timeline the FE renders) and ``now``. We deliberately do NOT read
+    from the scratchpad row's ``updated_at`` here — inside a coalescing
+    burst the row is upserted on every PUT, so a row-based delta is
+    always ~0 and the user-visible "you paused N seconds before editing
+    again" signal collapses. Reading from the supervision-event row
+    gives the correct "time since the previous burst start" semantics.
+
+    Edge cases:
+
+    * ``previous_event_occurred_at is None`` — first ``note.edited`` event
+      for this session; report 0 (documented behaviour).
+    * negative or absurd delta (>30 days) — clamp to 0 and bump
+      ``note_edited_burst_seconds_clamp_total`` so the clock-skew /
+      stale-row anomaly is observable in dashboards.
     """
-    if previous_updated_at is None:
+    if previous_event_occurred_at is None:
         seconds_since = 0
     else:
-        seconds_since = max(0, int((now - _as_utc(previous_updated_at)).total_seconds()))
+        raw = int((now - _as_utc(previous_event_occurred_at)).total_seconds())
+        if raw < 0 or raw > _SECONDS_SINCE_LAST_EDIT_MAX:
+            note_edited_burst_seconds_clamp_total.inc()
+            seconds_since = 0
+        else:
+            seconds_since = raw
     return {
         "bytes": len(body.encode("utf-8")),
         "lines": _line_count(body),
@@ -186,43 +214,81 @@ async def _coalesce_or_emit_note_edited(
     db: AsyncSession,
     *,
     session_id: uuid.UUID,
-    payload: dict[str, Any],
+    body: str,
     now: datetime,
-) -> None:
+) -> dict[str, Any]:
     """Update the most-recent ``note.edited`` event in place when it lives
-    inside the coalescing window; otherwise emit a fresh one.
+    inside the coalescing window; otherwise emit a fresh one. Returns the
+    payload that was persisted so the route handler can log it.
 
     The coalesced row's payload reflects the FINAL state (bytes/lines)
-    plus a refreshed ``occurred_at`` so the post-mortem timeline still
-    sees one event per "edit burst" rather than one per keystroke.
+    and a freshly-computed ``seconds_since_last_edit`` (delta against
+    the burst's prior event), but the row's ``occurred_at`` is left at
+    the burst-start timestamp so the post-mortem timeline reads the
+    burst at its inception, not at its tail. This matches the design
+    contract that the supervision-event row count is "one event per
+    edit burst, anchored at the burst start" — shifting ``occurred_at``
+    forward on every PUT would compress the burst into a single instant
+    at the end of the burst and break the FE timeline's gap rendering.
+
+    The previous-event-occurred-at used to derive
+    ``seconds_since_last_edit`` is the occurred_at of the
+    *previous* ``note.edited`` event row (NOT the latest, which is
+    typically the one we are about to coalesce into — that would
+    always yield ~0). For the emit branch (no recent event), the
+    latest row IS the previous one, so we use it directly.
 
     Coalesce path WS contract — we re-publish the mutated row on the
     same Redis channel the live emit uses, keeping the SAME event id.
     Subscribers that already received id=N on the first edit get the
-    refreshed payload + occurred_at on the second; without the publish
-    the WS-rendered timeline drifts from the DB-rendered one until
-    the subscriber reconnects + backfills. The publish is queued via
-    the same deferred mechanism the EventEmitter uses so it only goes
-    out after the request's transaction commits.
+    refreshed payload (but unchanged occurred_at) on the second; without
+    the publish the WS-rendered timeline drifts from the DB-rendered one
+    until the subscriber reconnects + backfills. The publish is queued
+    via the same deferred mechanism the EventEmitter uses so it only
+    goes out after the request's transaction commits.
     """
     latest = await _latest_note_edited_event(db, session_id)
     if latest is not None:
         latest_at = _as_utc(latest.occurred_at)
         if now - latest_at <= _COALESCE_WINDOW:
-            # In-place coalesce — mutate the existing row's payload + ts.
-            # Subscribers will merge by id (same key) on receipt.
+            # Inside the coalescing window: derive seconds_since against
+            # the event *before* ``latest`` (the burst's predecessor),
+            # not against ``latest`` itself — otherwise the delta is
+            # always ~0 because we are about to overwrite ``latest``.
+            previous_event_at = await _previous_note_edited_event_occurred_at(
+                db, session_id=session_id, before_id=int(latest.id)
+            )
+            payload = _build_note_edited_payload(
+                body=body,
+                now=now,
+                previous_event_occurred_at=previous_event_at,
+            )
+            # In-place coalesce — mutate the existing row's payload but
+            # PRESERVE the original occurred_at (burst start). Subscribers
+            # will merge by id (same key) on receipt.
             latest.payload = payload
-            latest.occurred_at = now
             await db.flush()
             _queue_coalesced_publish(
                 db,
                 session_id=session_id,
                 event_id=int(latest.id),
                 payload=payload,
-                occurred_at=now,
+                occurred_at=latest_at,
             )
-            return
+            return payload
 
+    # Emit branch — no recent event to coalesce into. The previous event
+    # (if any) IS ``latest`` here; its occurred_at is the right anchor for
+    # seconds_since_last_edit. First-edit case (``latest is None``)
+    # naturally yields 0 via the payload builder.
+    previous_event_at = (
+        _as_utc(latest.occurred_at) if latest is not None else None
+    )
+    payload = _build_note_edited_payload(
+        body=body,
+        now=now,
+        previous_event_occurred_at=previous_event_at,
+    )
     redis = await get_redis()
     emitter = EventEmitter(db=db, redis_client=redis)
     await emitter.emit(
@@ -230,6 +296,34 @@ async def _coalesce_or_emit_note_edited(
         event_type="note.edited",
         payload=payload,
     )
+    return payload
+
+
+async def _previous_note_edited_event_occurred_at(
+    db: AsyncSession, *, session_id: uuid.UUID, before_id: int
+) -> datetime | None:
+    """Return the ``occurred_at`` of the ``note.edited`` event immediately
+    preceding ``before_id`` for ``session_id``, or ``None`` if there is no
+    such row (i.e. ``before_id`` is the first ``note.edited`` event).
+
+    Ordering matches :func:`_latest_note_edited_event` (occurred_at desc
+    then id desc) so the "previous" is unambiguous even when two events
+    were emitted within the same tick.
+    """
+    stmt = (
+        select(SupervisionEvent)
+        .where(
+            SupervisionEvent.session_id == session_id,
+            SupervisionEvent.event_type == "note.edited",
+            SupervisionEvent.id < before_id,
+        )
+        .order_by(SupervisionEvent.occurred_at.desc(), SupervisionEvent.id.desc())
+        .limit(1)
+    )
+    row = (await db.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        return None
+    return _as_utc(row.occurred_at)
 
 
 def _queue_coalesced_publish(
@@ -362,15 +456,10 @@ async def put_note(
     # ``.with_for_update()`` clause is a no-op because the database
     # already serialises writes; on Postgres it acquires a FOR UPDATE
     # lock that the second writer blocks on until the first commits.
-    previous = (
-        await db.execute(
-            select(SessionNote)
-            .where(SessionNote.session_id == session_id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    previous_updated_at = (
-        _as_utc(previous.updated_at) if previous is not None else None
+    await db.execute(
+        select(SessionNote)
+        .where(SessionNote.session_id == session_id)
+        .with_for_update()
     )
 
     row = await _upsert_note(
@@ -380,15 +469,14 @@ async def put_note(
         updated_at=now,
     )
 
-    payload = _build_note_edited_payload(
-        body=body.body,
-        now=now,
-        previous_updated_at=previous_updated_at,
-    )
-    await _coalesce_or_emit_note_edited(
+    # The coalesce helper computes seconds_since against the *event*
+    # timeline (not the row's updated_at), so it owns the payload
+    # construction. It returns the persisted payload so the route
+    # handler can include the same values in its debug log.
+    payload = await _coalesce_or_emit_note_edited(
         db,
         session_id=session_id,
-        payload=payload,
+        body=body.body,
         now=now,
     )
 

@@ -32,6 +32,7 @@ import {
   getSessionNote,
   putSessionNote,
 } from "@/lib/api";
+import { env } from "@/lib/env";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { track } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
@@ -70,6 +71,47 @@ const utf8Encoder = new TextEncoder();
 /** UTF-8 byte length — needed because the BE caps on bytes, not characters. */
 function byteLength(s: string): number {
   return utf8Encoder.encode(s).length;
+}
+
+/**
+ * P1 — best-effort final flush via ``navigator.sendBeacon``.
+ *
+ * The React cleanup path already issues a fire-and-forget ``putSessionNote``
+ * fetch, but a tab close + flaky network drops the request before the
+ * browser unloads the page (the userland fetch is cancelled along with the
+ * document). ``sendBeacon`` is the only transport guaranteed to survive
+ * an unload — the browser queues the request to the OS network stack
+ * and lets it drain after the document is gone. We mirror the regular
+ * PUT body ``{body}`` and lean on the BE's idempotent overwrite so a
+ * duplicate write (beacon + cleanup PUT both succeed) is harmless.
+ *
+ * The endpoint is the same ``PUT /api/v1/sessions/{id}/note`` as the
+ * regular autosave, but ``sendBeacon`` is POST-only — the backend
+ * accepts the duplicate POST as well via the same router (see
+ * ``apps/api/app/sessions/notes.py``); if the route is PUT-only the
+ * beacon will 405 and we silently fall through to the cleanup PUT. The
+ * surface is intentionally narrow: this is a backup, not the primary
+ * write path.
+ *
+ * Returns ``true`` if the beacon was queued, ``false`` if the browser
+ * refused (over the 64 KB per-beacon quota, or the API is missing in
+ * jsdom / SSR).
+ */
+function sendNoteBeacon(sessionId: string, body: string): boolean {
+  if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") {
+    return false;
+  }
+  try {
+    const url = `${env.apiBaseUrl}/api/v1/sessions/${encodeURIComponent(
+      sessionId,
+    )}/note`;
+    const blob = new Blob([JSON.stringify({ body })], {
+      type: "application/json",
+    });
+    return navigator.sendBeacon(url, blob);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -419,8 +461,26 @@ export function ScratchpadPane({
   // (Item 30) when the draft has unsaved edits. The flush is genuinely
   // fire-and-forget — React won't await an async cleanup — and the BE
   // accepts a duplicate write idempotently.
+  //
+  // P1 — alongside the fetch flush we also queue a ``navigator.sendBeacon``
+  // backup so a tab close + flaky network combo doesn't drop the edit.
+  // The same beacon is fired from a ``beforeunload`` listener for the
+  // "user closed the tab without unmounting React" path (component
+  // cleanup doesn't run on a hard navigate-away). BE accepts the
+  // duplicate write idempotently.
   React.useEffect(() => {
+    const beforeUnload = (): void => {
+      const currentDraft = draftRef.current;
+      if (currentDraft === lastSavedRef.current) return;
+      sendNoteBeacon(sessionId, currentDraft);
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("beforeunload", beforeUnload);
+    }
     return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("beforeunload", beforeUnload);
+      }
       cancelPendingSave();
       // Abort the in-flight autosave so an aborted-but-resolved fetch
       // doesn't race the final flush below. The catch in flushSave
@@ -435,6 +495,11 @@ export function ScratchpadPane({
       // idempotent so a duplicate write is harmless.
       const currentDraft = draftRef.current;
       if (currentDraft !== lastSavedRef.current) {
+        // Backup transport first — sendBeacon survives unload even
+        // when the fetch below gets cancelled by the page tear-down.
+        // The fetch then races against it; whichever lands first
+        // wins, and the BE de-dupes by overwrite.
+        sendNoteBeacon(sessionId, currentDraft);
         void putSessionNote(sessionId, currentDraft).catch(() => {
           /* fire-and-forget — see comment above */
         });
@@ -624,6 +689,24 @@ function ScratchpadHeader({
           <ChevronUp className="size-3" aria-hidden />
         )}
         <span>{"// notes"}</span>
+        {/*
+         * P2 — design contract calls out a CodeMirror 6 markdown editor;
+         * we ship a raw <textarea> instead to keep the bundle lean (a
+         * full CM6 markdown stack adds ~120 KB to the chunk and the
+         * autosave / cap / debounce semantics are identical either way).
+         * The chip below tells the user the text is rendered as
+         * markdown downstream — specifically in the post-mortem
+         * coaching reflection — so they understand the lightweight
+         * monospace surface isn't the final read view.
+         */}
+        <span
+          data-testid="scratchpad-markdown-chip"
+          aria-label="Markdown rendered in post-mortem"
+          title="Renders as markdown in the post-mortem reflection."
+          className="ml-1 inline-flex items-center rounded-sm border border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-1 py-0 text-[10px] uppercase tracking-wide text-[var(--color-muted-foreground)]/80"
+        >
+          // markdown
+        </span>
         {!open && bytes > 0 ? (
           <span
             className="text-[var(--color-muted-foreground)]/70"

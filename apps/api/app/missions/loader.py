@@ -120,12 +120,31 @@ class MissionLoader:
         a hard mission invariant fails (e.g. visible tests declared with no
         matching ``test_commands``) — surfacing the violation at load time
         rather than letting it leak free points into the grading engine.
+
+        P1-1 — refuses to load a mission whose folder still contains a
+        ``_draft/`` subdirectory. The LLM-assisted authoring scaffold writes
+        candidate diffs / hidden tests / prompts into ``_draft/`` and the
+        author must hand-promote them into canonical locations before the
+        mission can ship. Letting an un-promoted draft load would silently
+        ship un-reviewed generator output into the public catalog.
         """
         raw_bytes = manifest_path.read_bytes()
         sha = hashlib.sha256(raw_bytes).hexdigest()
         data = yaml.safe_load(raw_bytes.decode("utf-8"))
         if not isinstance(data, dict):
             raise ValueError(f"{manifest_path} did not parse to a mapping")
+        mission_folder = manifest_path.parent
+        draft_dir = mission_folder / "_draft"
+        if draft_dir.is_dir():
+            mission_id = data.get("id", mission_folder.name)
+            raise MissionConfigError(
+                f"{manifest_path}: mission {mission_id!r} carries an un-promoted "
+                "`_draft/` directory — the LLM-assisted authoring scaffold left "
+                "candidate artefacts there for hand-review. Promote the files "
+                "into their canonical locations (agent_patch.diff, "
+                "ideal_solution.{md,diff}, prompts/response.md, hidden_tests/) "
+                "and then delete `_draft/` before shipping."
+            )
         try:
             manifest = MissionManifest.model_validate(data)
         except MissionConfigError as exc:
@@ -133,7 +152,7 @@ class MissionLoader:
             # one-line, copy-pasteable pointer rather than a stack trace
             # without context.
             raise MissionConfigError(f"{manifest_path}: {exc}") from exc
-        return LoadedMission(manifest=manifest, folder=manifest_path.parent, manifest_sha256=sha)
+        return LoadedMission(manifest=manifest, folder=mission_folder, manifest_sha256=sha)
 
     # Back-compat alias for the historical private name.
     _load_one = load_manifest
@@ -236,6 +255,30 @@ class MissionLoader:
                 exists = (await db.execute(select_sql, {"id": row["id"]})).first()
                 await db.execute(update_sql if exists else insert_sql, row)
         await db.commit()
+
+        # P4.1 audit fix — a freshly upserted catalog can change the
+        # recommendation engine's top-3 (a new mission may outrank a
+        # cached entry; a rebalanced expected_weak_dim shifts
+        # alignment). Stamp every materialised ``user_recommendations``
+        # row as invalidated so the next ``/me/recommendations`` call
+        # recomputes against the live catalog. Failure here is counted
+        # but MUST NOT roll back the upsert — the catalog write is the
+        # source of truth.
+        try:
+            from app.recommendations.cache import bulk_invalidate_all
+
+            stale = await bulk_invalidate_all(db)
+            await db.commit()
+            if stale:
+                logger.info(
+                    "mission loader: invalidated {} user_recommendations rows "
+                    "after catalog upsert", stale,
+                )
+        except Exception as exc:
+            logger.warning(
+                "mission loader: bulk recommendation invalidation failed "
+                "(catalog upsert succeeded): {}", exc,
+            )
         return len(loaded)
 
 

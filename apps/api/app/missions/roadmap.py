@@ -23,6 +23,8 @@ import yaml
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.observability import roadmap_past_dated_dropped_total
+
 # The roadmap lives next to ``manifest.py`` so editors find it without
 # hunting through ``apps/api/app``. The deployed image bundles
 # ``apps/api/app/missions/roadmap.yaml`` as a sibling resource.
@@ -74,20 +76,55 @@ class Roadmap(BaseModel):
 _ROADMAP_CACHE: list[tuple[float, Roadmap]] = []
 
 
-def load_roadmap(path: Path | None = None) -> Roadmap:
+class RoadmapPastDatedError(ValueError):
+    """Raised by :func:`load_roadmap` in ``strict=True`` mode when a
+    placeholder's ``target_release_date`` is in the past.
+
+    Strict mode is used by the CI gate (``scripts/validate_missions.py``) so
+    a forgotten placeholder fails the build instead of silently dropping
+    at runtime. Lenient mode (the default) drops the entry with a WARNING
+    and bumps :data:`roadmap_past_dated_dropped_total` so operators can
+    spot drift in dashboards.
+    """
+
+
+def load_roadmap(path: Path | None = None, *, strict: bool = False) -> Roadmap:
     """Read and validate the roadmap YAML.
 
-    Caches by mtime so the parsed model is reused across requests. The
-    loader returns an empty roadmap (no placeholders) when the file is
-    missing, so a freshly-bootstrapped environment with no curated
-    upcoming list still serves the rest of the catalog.
+    Caches by mtime so the parsed model is reused across requests in
+    lenient mode. The loader returns an empty roadmap (no placeholders)
+    when the file is missing, so a freshly-bootstrapped environment with
+    no curated upcoming list still serves the rest of the catalog.
+
+    Modes:
+
+    * ``strict=False`` (default; used by the API runtime) — past-dated
+      placeholders are dropped with a WARNING and the
+      ``roadmap_past_dated_dropped_total{mission_id=...}`` counter is
+      bumped per dropped entry. A pre-filter collapse (the kept-list
+      was previously non-empty and is now empty) is logged at WARNING
+      so the dashboards highlight a roadmap that has gone fully stale.
+    * ``strict=True`` (used by CI in ``scripts/validate_missions.py``)
+      — past-dated placeholders raise :class:`RoadmapPastDatedError`,
+      failing the gate. The strict path also disables the mtime cache
+      so successive CI invocations always re-parse against the current
+      clock (the lenient cache is intentionally process-local and
+      mtime-keyed; calling strict mode does not poison the cache).
     """
     target = path or _ROADMAP_PATH
     if not target.exists():
         return Roadmap(placeholders=[])
 
     mtime = target.stat().st_mtime
-    if path is None and _ROADMAP_CACHE and _ROADMAP_CACHE[0][0] == mtime:
+    # Strict mode bypasses the cache — the date check is wall-clock-
+    # dependent, and a cached pass from yesterday could mask a date that
+    # just slipped past midnight in CI's TZ.
+    if (
+        not strict
+        and path is None
+        and _ROADMAP_CACHE
+        and _ROADMAP_CACHE[0][0] == mtime
+    ):
         return _ROADMAP_CACHE[0][1]
 
     try:
@@ -107,6 +144,7 @@ def load_roadmap(path: Path | None = None) -> Roadmap:
     # (missing teaser, bad language) still surfaces.
     today = datetime.now(UTC).date()
     raw_entries = data.get("placeholders")
+    raw_count = len(raw_entries) if isinstance(raw_entries, list) else 0
     if isinstance(raw_entries, list):
         kept: list[Any] = []
         for entry in raw_entries:
@@ -114,14 +152,35 @@ def load_roadmap(path: Path | None = None) -> Roadmap:
                 raw_date = entry.get("target_release_date")
                 parsed_date = _coerce_date(raw_date)
                 if parsed_date is not None and parsed_date < today:
+                    entry_id = entry.get("id")
+                    entry_id_label = entry_id if isinstance(entry_id, str) else "<unknown>"
+                    if strict:
+                        raise RoadmapPastDatedError(
+                            f"roadmap.yaml: past-dated placeholder id={entry_id_label!r} "
+                            f"date={parsed_date.isoformat()} — refresh or remove."
+                        )
                     logger.warning(
                         "roadmap.yaml: dropping past-dated placeholder "
                         "id={} date={}",
-                        entry.get("id"),
+                        entry_id_label,
                         parsed_date.isoformat(),
                     )
+                    roadmap_past_dated_dropped_total.labels(
+                        mission_id=entry_id_label
+                    ).inc()
                     continue
             kept.append(entry)
+        # Detect a *full* collapse from past-dated drops: the source list
+        # had entries before, the kept list is now empty. This is the
+        # "roadmap silently became empty" failure mode the audit flagged
+        # and is louder than the per-entry WARNING.
+        if raw_count > 0 and not kept:
+            logger.warning(
+                "roadmap.yaml: roadmap collapsed to empty after past-dated "
+                "filter ({} entries dropped); the upcoming section will "
+                "render blank until roadmap.yaml is refreshed.",
+                raw_count,
+            )
         data = {**data, "placeholders": kept}
 
     try:
@@ -131,12 +190,14 @@ def load_roadmap(path: Path | None = None) -> Roadmap:
         # entry (missing required field, bad enum) would historically
         # raise on the catalog endpoint. We log loudly and degrade to
         # an empty roadmap so the rest of the catalog still renders.
+        if strict:
+            raise
         logger.warning(
             "roadmap.yaml at {} failed Pydantic validation: {}", target, exc
         )
         return Roadmap(placeholders=[])
 
-    if path is None:
+    if path is None and not strict:
         _ROADMAP_CACHE.clear()
         _ROADMAP_CACHE.append((mtime, roadmap))
     return roadmap
@@ -201,6 +262,7 @@ def _coerce_date(value: Any) -> date | None:
 __all__ = [
     "Roadmap",
     "RoadmapLanguage",
+    "RoadmapPastDatedError",
     "RoadmapPlaceholder",
     "filter_collisions",
     "load_roadmap",

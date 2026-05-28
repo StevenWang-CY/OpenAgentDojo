@@ -239,14 +239,82 @@ def canonical_json(envelope: dict[str, Any]) -> bytes:
     a downstream verifier porting this primitive to another language
     (Go, Rust, JS) would compute a different SHA-256 against bytes
     that look identical when pretty-printed.
+
+    ``allow_nan=False`` rejects ``float('nan')`` / ``inf`` / ``-inf``
+    at serialisation time. None of these are valid JSON; the historical
+    Python default of emitting the literal token ``NaN`` would round-
+    trip through a Python decoder but produce un-parseable bytes for
+    every other JSON parser on earth. We sanitise the input through
+    :func:`_clamp_non_finite_floats` first so a numerical accident
+    upstream produces a ``null`` (and a metrics bump) instead of an
+    unsigned envelope.
     """
+    sanitised = _clamp_non_finite_floats(envelope)
     return json.dumps(
-        envelope,
+        sanitised,
         sort_keys=True,
         separators=(",", ":"),
         default=str,
         ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
+
+
+def _clamp_non_finite_floats(value: Any) -> Any:
+    """Replace ``nan`` / ``inf`` / ``-inf`` with ``None`` recursively.
+
+    JSON has no representation for non-finite floats; without this pass
+    :func:`canonical_json` (which sets ``allow_nan=False``) would raise
+    ``ValueError`` mid-sign. We surface the clamp via a Prometheus
+    counter so dashboards can spot the upstream numerical drift, but the
+    envelope still hashes — the canonical posture for a credentialing
+    artefact is "honest about the bad input" rather than "refuse to
+    sign anything".
+    """
+    import math
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        _bump_nan_clamp_counter()
+        return None
+    if isinstance(value, dict):
+        return {k: _clamp_non_finite_floats(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_clamp_non_finite_floats(v) for v in value]
+    return value
+
+
+# Lazy single-instance counter so we don't double-register on hot-reload.
+# Lives at module load and survives across calls. Defined inline because
+# ``app.observability`` is in another agent's slice for this P1 wave.
+_NAN_CLAMP_COUNTER: Any = None
+
+
+def _bump_nan_clamp_counter() -> None:
+    """Bump the canonical_json NaN-clamp counter, lazily registering it.
+
+    The counter is registered on the default Prometheus REGISTRY so it
+    surfaces in ``/metrics`` like the rest of the observability suite.
+    Wrapped in a try/except so a missing prometheus_client (or a double
+    registration during a hot-reload) does not break signing.
+    """
+    global _NAN_CLAMP_COUNTER
+    try:
+        if _NAN_CLAMP_COUNTER is None:
+            from prometheus_client import Counter as _Counter
+
+            _NAN_CLAMP_COUNTER = _Counter(
+                "canonical_json_nan_clamped_total",
+                "Non-finite float (NaN / Inf) values clamped to null while "
+                "serialising a canonical JSON artefact (verification / replay).",
+            )
+        _NAN_CLAMP_COUNTER.inc()
+    except Exception:
+        # Never let metrics surface as a signing fault.
+        pass
 
 
 def compute_hash(envelope: dict[str, Any]) -> str:
@@ -304,6 +372,51 @@ def verify_secret(settings: Any) -> str:
     )
 
 
+def verify_secret_resolve_all(settings: Any) -> list[str]:
+    """Return ``[current_secret, *retired_secrets]`` for verification.
+
+    Signing ALWAYS uses the first entry (``verify_secret(settings)``);
+    verification iterates the list in order and accepts the first
+    secret that matches. The retired list comes from
+    ``VERIFY_SECRET_PREVIOUS`` (comma-separated). Use this when
+    rotating ``VERIFY_SECRET`` without invalidating credentials already
+    in the wild — promote the active value into
+    ``VERIFY_SECRET_PREVIOUS`` before setting a fresh ``VERIFY_SECRET``
+    and recompute the active signature lazily on the next render.
+    """
+    secrets: list[str] = [verify_secret(settings)]
+    previous = getattr(settings, "verify_secret_previous_list", None)
+    if isinstance(previous, list):
+        for prev in previous:
+            if isinstance(prev, str) and prev.strip() and prev not in secrets:
+                secrets.append(prev)
+    return secrets
+
+
+def verify_signature_with_rotation(
+    envelope_hash: str,
+    persisted_signature: str,
+    settings: Any,
+) -> bool:
+    """Return True when ``persisted_signature`` matches any active secret.
+
+    Tries the current secret first, then each retired secret in the
+    order they appear in ``VERIFY_SECRET_PREVIOUS``. Uses
+    :func:`hmac.compare_digest` for every comparison to keep the path
+    constant-time and side-channel-quiet. A False return means the
+    credential was minted under a secret that is no longer in the
+    rotation list — the caller should either re-sign (owner-initiated)
+    or 410 GONE the surface.
+    """
+    if not isinstance(persisted_signature, str) or not persisted_signature:
+        return False
+    for candidate in verify_secret_resolve_all(settings):
+        recomputed = compute_signature(envelope_hash, candidate)
+        if hmac.compare_digest(recomputed, persisted_signature):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Public helpers for callers that just want "hash + signature in one go".
 # ---------------------------------------------------------------------------
@@ -324,6 +437,8 @@ __all__ = [
     "compute_signature",
     "stamp",
     "verify_secret",
+    "verify_secret_resolve_all",
+    "verify_signature_with_rotation",
 ]
 
 

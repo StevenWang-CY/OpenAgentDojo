@@ -37,7 +37,10 @@ from app.models.repo_pack import RepoPack
 from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.user_recommendation import UserRecommendation
-from app.observability import recommendation_cache_total
+from app.observability import (
+    recommendation_cache_total,
+    recommendation_engine_errors_total,
+)
 from app.recommendations.engine import (
     MissionCandidate,
     UserHistory,
@@ -173,12 +176,33 @@ async def load_user_history(db: AsyncSession, user_id: uuid.UUID) -> UserHistory
                 score=int(row.score) if row.score is not None else 0,
                 dimensions=dims,
                 graded_at=row.completed_at,
+                effective_max=_extract_effective_max(report),
             )
 
     return UserHistory(
         best_attempts=best,
         per_mission_attempt_count=attempts_count,
     )
+
+
+def _extract_effective_max(score_report: Any) -> int:
+    """Pull the per-submission ``effective_max`` from a score_report.
+
+    Returns ``100`` on a malformed / missing report so the engine's
+    pass-threshold check stays sensible against legacy rows. Mirrors
+    the same defensive coercion used by
+    :mod:`app.profiles.router` (which also defaults missing values to
+    100 — the canonical uncapped denominator).
+    """
+    if not isinstance(score_report, dict):
+        return 100
+    raw = score_report.get("effective_max")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return 100
+    raw_int = int(raw)
+    if raw_int <= 0:
+        return 100
+    return raw_int
 
 
 def _extract_dimensions(score_report: Any) -> dict[str, int]:
@@ -290,15 +314,24 @@ async def get_cached_or_compute(
         and existing.invalidated_at is None
         and _ensure_utc(existing.computed_at) >= cutoff
     ):
-        catalogue = await load_mission_catalogue(db)
-        rec_set = await _rebuild_from_cache(
-            db=db,
-            user_id=user_id,
-            cached=existing,
-            catalogue=catalogue,
-        )
-        recommendation_cache_total.labels(outcome="hit").inc()
-        return rec_set
+        # P4.1 audit fix — malformed/missing ``extras`` is treated as a
+        # stale cache rather than silently recomputing alignment against
+        # the live (possibly drifted) catalogue. Stamping
+        # ``invalidated_at`` here forces the recompute to take the
+        # miss path below, which writes a canonical ``extras`` payload.
+        if not _is_well_formed_extras(existing.extras):
+            existing.invalidated_at = current
+            await db.flush()
+        else:
+            catalogue = await load_mission_catalogue(db)
+            rec_set = await _rebuild_from_cache(
+                db=db,
+                user_id=user_id,
+                cached=existing,
+                catalogue=catalogue,
+            )
+            recommendation_cache_total.labels(outcome="hit").inc()
+            return rec_set
 
     recommendation_cache_total.labels(outcome="miss").inc()
     history = await load_user_history(db, user_id)
@@ -309,6 +342,16 @@ async def get_cached_or_compute(
         mission_catalogue=catalogue,
         coming_soon=coming_soon,
         now=current,
+    )
+    # P1-2 §0.4 — read-through LLM polish for diagnosis + per-mission
+    # ``why``. Falls back to the deterministic copy on the feature flag
+    # OFF / LLM-down path; never blocks the engine output on a model
+    # error.
+    fresh = await _apply_prose_polish(
+        db=db,
+        rec_set=fresh,
+        history=history,
+        catalogue=catalogue,
     )
     ids = [item.mission_id for item in fresh.recommendations]
     # Persist the per-item alignment alongside the id list so a cache
@@ -535,32 +578,230 @@ async def invalidate_for_user(db: AsyncSession, user_id: uuid.UUID) -> None:
     SQLite (the test harness's UUID column is stored as TEXT, so a
     raw-SQL UPDATE with a UUID bind parameter errors at the driver
     boundary).
+
+    P4.1 audit fix — failures here are counted on
+    ``recommendation_engine_errors_total{stage="invalidate"}`` instead
+    of silently bubbling. The caller (grader) wraps this with its own
+    fail-soft guard so the grade still lands; the counter gives ops a
+    signal when the cache is silently leaking stale rows.
     """
+    from loguru import logger
+
     now = datetime.now(UTC).replace(microsecond=0)
-    dialect = _dialect_name(db)
-    if dialect == "postgresql":
-        await db.execute(
-            text(
-                "UPDATE user_recommendations SET invalidated_at = :now "
-                "WHERE user_id = :uid"
-            ),
-            {"now": now, "uid": str(user_id)},
-        )
+    try:
+        dialect = _dialect_name(db)
+        if dialect == "postgresql":
+            await db.execute(
+                text(
+                    "UPDATE user_recommendations SET invalidated_at = :now "
+                    "WHERE user_id = :uid"
+                ),
+                {"now": now, "uid": str(user_id)},
+            )
+            recommendation_cache_total.labels(outcome="invalidated").inc()
+            return
+        existing = (
+            await db.execute(
+                select(UserRecommendation).where(UserRecommendation.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            return
+        existing.invalidated_at = now
+        await db.flush()
         recommendation_cache_total.labels(outcome="invalidated").inc()
-        return
-    existing = (
-        await db.execute(
-            select(UserRecommendation).where(UserRecommendation.user_id == user_id)
+    except Exception as exc:
+        recommendation_engine_errors_total.labels(stage="invalidate").inc()
+        logger.exception(
+            "recommendation cache invalidate failed (user_id={}): {}",
+            user_id,
+            exc,
         )
-    ).scalar_one_or_none()
-    if existing is None:
-        return
-    existing.invalidated_at = now
-    await db.flush()
-    recommendation_cache_total.labels(outcome="invalidated").inc()
+        # Re-raise so the calling site can decide; the grader's wrapper
+        # logs + swallows so the grade itself never fails.
+        raise
+
+
+async def bulk_invalidate_all(db: AsyncSession) -> int:
+    """Stamp every ``user_recommendations`` row as invalidated.
+
+    Used by the new-mission-published / rubric-rebalance one-shot
+    invalidation paths (CLI in ``scripts/invalidate_recommendations.py``
+    + the loader's post-upsert hook). Returns the count of rows
+    affected so the operator gets a sanity check on the scope of the
+    invalidation.
+
+    Failures here are counted on
+    ``recommendation_engine_errors_total{stage="bulk_invalidate"}``
+    rather than silently swallowed; callers (CLI / loader) decide
+    whether to bubble or log.
+    """
+    from loguru import logger
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    try:
+        dialect = _dialect_name(db)
+        if dialect == "postgresql":
+            result = await db.execute(
+                text(
+                    "UPDATE user_recommendations SET invalidated_at = :now "
+                    "WHERE invalidated_at IS NULL"
+                ),
+                {"now": now},
+            )
+            await db.flush()
+            count = result.rowcount or 0
+        else:
+            rows = (
+                await db.execute(
+                    select(UserRecommendation).where(
+                        UserRecommendation.invalidated_at.is_(None)
+                    )
+                )
+            ).scalars().all()
+            for row in rows:
+                row.invalidated_at = now
+            await db.flush()
+            count = len(rows)
+        recommendation_cache_total.labels(outcome="invalidated").inc()
+        return int(count)
+    except Exception as exc:
+        recommendation_engine_errors_total.labels(stage="bulk_invalidate").inc()
+        logger.exception(
+            "recommendation cache bulk_invalidate_all failed: {}", exc
+        )
+        raise
+
+
+def _is_well_formed_extras(extras: Any) -> bool:
+    """Return True when the persisted ``extras`` payload is shaped right.
+
+    Today the only key we read is ``items`` — a list of
+    ``{"mission_id": str, "alignment": number}`` dicts. A row missing
+    that shape can't honestly rehydrate the original "why" copy, so the
+    caller treats the row as stale and forces a recompute.
+    """
+    if not isinstance(extras, dict):
+        return False
+    items = extras.get("items")
+    if not isinstance(items, list):
+        return False
+    for entry in items:
+        if not isinstance(entry, dict):
+            return False
+        if not isinstance(entry.get("mission_id"), str):
+            return False
+        align = entry.get("alignment")
+        if isinstance(align, bool) or not isinstance(align, (int, float)):
+            return False
+    return True
+
+
+async def _apply_prose_polish(
+    *,
+    db: AsyncSession,
+    rec_set: Any,
+    history: UserHistory,
+    catalogue: list[MissionCandidate],
+) -> Any:
+    """Return ``rec_set`` with diagnosis + per-item ``why`` polished.
+
+    The polish layer routes through :mod:`app.recommendations.prose`,
+    which itself wraps :func:`app.llm.cache.get_or_generate`. Any
+    failure path returns the deterministic copy the engine already
+    produced — so this function is fail-soft by construction. Errors
+    here are counted on ``recommendation_engine_errors_total{stage="prose"}``
+    so dashboards can spot a silent degradation to fallback copy.
+    """
+    from loguru import logger
+
+    from app.recommendations.prose import generate_diagnosis, generate_why
+
+    if not rec_set.recommendations and rec_set.weakest_dim is None:
+        # Cold-start / empty catalogue — nothing to polish.
+        return rec_set
+
+    by_id = {c.mission_id: c for c in catalogue}
+    weakest_dim = rec_set.weakest_dim
+    ids = [item.mission_id for item in rec_set.recommendations]
+
+    try:
+        diagnosis = await generate_diagnosis(
+            db,
+            weakest_dim=weakest_dim,
+            recommended_mission_ids=ids,
+            weakest_dim_attempts=_weakest_dim_attempts(history, weakest_dim),
+            user_history=history,
+        )
+    except Exception as exc:  # pragma: no cover — defensive double-guard
+        recommendation_engine_errors_total.labels(stage="prose").inc()
+        logger.exception(
+            "recommendation prose diagnosis raised; keeping fallback: {}", exc
+        )
+        diagnosis = rec_set.diagnosis
+
+    polished_items = []
+    for item in rec_set.recommendations:
+        cand = by_id.get(item.mission_id)
+        if cand is None or item.status != "shipped":
+            polished_items.append(item)
+            continue
+        try:
+            why = await generate_why(
+                db,
+                mission_id=item.mission_id,
+                weakest_dim=weakest_dim,
+                failure_mode=_failure_mode_for(cand),
+                expected_weak_dim=cand.expected_weak_dim,
+                alignment=_alignment_for_mission_id(
+                    item.mission_id, catalogue, weakest_dim
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — defensive double-guard
+            recommendation_engine_errors_total.labels(stage="prose").inc()
+            logger.exception(
+                "recommendation prose why raised for mission_id={}: {}",
+                item.mission_id,
+                exc,
+            )
+            why = item.why
+        polished_items.append(item.model_copy(update={"why": why}))
+
+    return rec_set.model_copy(
+        update={
+            "diagnosis": diagnosis,
+            "recommendations": polished_items,
+        }
+    )
+
+
+def _weakest_dim_attempts(history: UserHistory, weakest_dim: str | None) -> int:
+    """Return how many graded submissions touched ``weakest_dim``."""
+    if weakest_dim is None:
+        return 0
+    count = 0
+    for attempt in history.best_attempts.values():
+        if weakest_dim in attempt.dimensions:
+            count += 1
+    return count
+
+
+def _failure_mode_for(cand: MissionCandidate) -> str | None:
+    """Pull a failure-mode tag from the candidate's ``tags`` tuple.
+
+    The first non-``skill:`` / ``language:`` prefixed tag wins — those
+    namespaces carry the failure-mode title in our manifest schema.
+    Falls back to ``None`` so the prose helper renders a neutral
+    placeholder.
+    """
+    for tag in cand.tags:
+        if isinstance(tag, str) and ":" not in tag:
+            return tag
+    return None
 
 
 __all__ = [
+    "bulk_invalidate_all",
     "get_cached_or_compute",
     "invalidate_for_user",
     "load_mission_catalogue",

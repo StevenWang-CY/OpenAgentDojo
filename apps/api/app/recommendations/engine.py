@@ -61,9 +61,37 @@ RUBRIC_VERSION: Final[int] = 1
 
 # Pass threshold: a mission whose best score is at or above this is
 # considered "passed" and excluded from the recommendation set unless the
-# user has graded *everything*. 70 is the rounded-up canonical hidden-test
-# pass threshold from the scoring engine (P0-1 §11.1).
+# user has graded *everything*. We compare against ``70% of the effective
+# max for that submission`` — the same percent-of-effective-max semantics
+# used by :func:`app.profiles.router._best_per_mission` so the radar
+# aggregator and the engine treat the same submission as
+# "passed" vs "still needs work". The raw int below is kept as a
+# back-compat constant (some callers / re-exports rely on it) but the
+# load-bearing test is :func:`_passed`.
 PASS_THRESHOLD: Final[int] = 70
+_PASS_FRACTION: Final[float] = 0.7
+
+
+def _passed(score: int, effective_max: int) -> bool:
+    """Return True when ``score`` clears the canonical pass threshold.
+
+    Centralises the ``score >= max(1, int(effective_max * 0.7))``
+    semantics used at the mastery surface. Two upstream call-sites
+    historically diverged — one applied the percent rule, the other
+    compared against the raw integer 70 — so a 35/50-capped submission
+    appeared "not passed" by the engine while the profile counted it
+    as a pass. Centralising the math here eliminates that drift.
+    """
+    if not isinstance(score, int):
+        return False
+    if not isinstance(effective_max, int) or effective_max <= 0:
+        # Defensive: a missing / zero effective_max means we have no
+        # signal to compare against. Treat as not-passed so the mission
+        # stays eligible — false negatives recover on the next attempt;
+        # a false positive would silently demote a mission.
+        return False
+    threshold = max(1, int(effective_max * _PASS_FRACTION))
+    return score >= threshold
 
 # Cold-start ladder (mission ids 01, 02, 03 in the canonical numbering).
 # A user with zero graded submissions is shown these as the introductory
@@ -143,6 +171,13 @@ class _BestAttempt:
     score: int
     dimensions: dict[str, int] = field(default_factory=dict)
     graded_at: datetime | None = None
+    # P4.1 audit fix — effective_max is the per-submission denominator
+    # the engine uses to decide "passed". Defaults to 100 so older test
+    # fixtures (which omit the field) keep behaving like uncapped
+    # scoring. When the cache loader has the report it threads the live
+    # value through so the engine and the profile mastery surface treat
+    # the same submission identically.
+    effective_max: int = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +226,14 @@ class MissionCandidate:
     kind: Literal["standard", "tutorial"]
     expected_weak_dim: str | None
     tags: tuple[str, ...]
+    # P1-2 freshness signal. ``created_at`` is the catalog row's
+    # creation timestamp; when present we compare it against the user's
+    # last graded-at timestamp to decide if the mission is "new since
+    # they last played" (the freshness signal in the ranking table).
+    # ``None`` falls back to the hardcoded :data:`FRESH_MISSION_IDS`
+    # set so legacy callers / tests that don't carry the column still
+    # produce a stable ranking.
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,11 +316,12 @@ def _recommend_inner(
             computed_at=computed_at,
         )
 
+    last_graded_at = user_history.last_graded_at
     scored: list[tuple[float, MissionCandidate, float, float, float, float]] = []
     for candidate in candidates:
         dim_alignment = _dim_alignment_score(candidate, weakest_dim)
         difficulty_match = _difficulty_match_score(candidate, user_band)
-        freshness = 1.0 if candidate.mission_id in FRESH_MISSION_IDS else 0.0
+        freshness = _freshness_score(candidate, last_graded_at)
         novelty_bonus = (
             0.5
             if user_history.per_mission_attempt_count.get(candidate.mission_id, 0) == 0
@@ -298,6 +342,7 @@ def _recommend_inner(
             alignment=tup[2],
             weakest_dim=weakest_dim,
             user_history=user_history,
+            freshness_fresh=_is_fresh(tup[1], last_graded_at),
         )
         for tup in top
     ]
@@ -431,13 +476,14 @@ def _eligible_candidates(
 ) -> list[MissionCandidate]:
     """Return the missions the user hasn't passed yet.
 
-    "Passed" = best uncapped score >= ``PASS_THRESHOLD``. Missions the
-    user has never attempted are always eligible.
+    "Passed" = the submission's ``score`` clears 70% of its
+    ``effective_max`` (see :func:`_passed`). Missions the user has
+    never attempted are always eligible.
     """
     out: list[MissionCandidate] = []
     for cand in catalogue:
         best = user_history.best_attempts.get(cand.mission_id)
-        if best is None or best.score < PASS_THRESHOLD:
+        if best is None or not _passed(best.score, best.effective_max):
             out.append(cand)
     return out
 
@@ -509,6 +555,42 @@ def _dim_alignment_score(
     return 0.0
 
 
+def _freshness_score(
+    candidate: MissionCandidate, last_graded_at: datetime | None
+) -> float:
+    """Return the freshness signal for ``candidate``.
+
+    Preferred path: a typed ``created_at`` is threaded through from the
+    catalog loader. We score the mission as fresh (1.0) when its
+    creation timestamp is strictly after the user's most-recent graded
+    timestamp — i.e. it landed *since they last played* and is genuinely
+    new to them.
+
+    Fallback path: when ``created_at`` is ``None`` we fall back to the
+    hardcoded :data:`FRESH_MISSION_IDS` set so the engine keeps a
+    stable signal during the migration window. Once every catalog
+    loader threads ``created_at`` the constant can be retired.
+    """
+    if candidate.created_at is not None:
+        if last_graded_at is None:
+            # The user has graded *something* (we're past the cold-start
+            # branch) but no usable timestamp survived — treat the
+            # mission as not-fresh to avoid double-counting against
+            # novelty_bonus.
+            return 0.0
+        return 1.0 if candidate.created_at > last_graded_at else 0.0
+    # Legacy fallback while older callers / tests still populate
+    # MissionCandidate without a ``created_at``.
+    return 1.0 if candidate.mission_id in FRESH_MISSION_IDS else 0.0
+
+
+def _is_fresh(
+    candidate: MissionCandidate, last_graded_at: datetime | None
+) -> bool:
+    """Boolean form of :func:`_freshness_score` used by the copy layer."""
+    return _freshness_score(candidate, last_graded_at) > 0.0
+
+
 def _difficulty_match_score(
     candidate: MissionCandidate, user_band: RecommendationDifficulty
 ) -> float:
@@ -551,11 +633,15 @@ def _build_item(
     """
     best = user_history.best_attempts.get(candidate.mission_id)
     attempts = user_history.per_mission_attempt_count.get(candidate.mission_id, 0)
-    is_fresh = (
-        freshness_fresh
-        if freshness_fresh is not None
-        else candidate.mission_id in FRESH_MISSION_IDS
-    )
+    if freshness_fresh is not None:
+        is_fresh = freshness_fresh
+    elif candidate.created_at is not None:
+        # Caller didn't pre-compute the flag but the candidate carries
+        # a typed timestamp; the freshness check needs ``last_graded_at``
+        # to compare against.
+        is_fresh = _is_fresh(candidate, user_history.last_graded_at)
+    else:
+        is_fresh = candidate.mission_id in FRESH_MISSION_IDS
     why = override_why or why_for_mission(
         mission_id=candidate.mission_id,
         expected_weak_dim=candidate.expected_weak_dim,

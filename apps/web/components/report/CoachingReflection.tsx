@@ -166,6 +166,37 @@ export function CoachingReflection({
     );
   }
 
+  // FE remediation — when the BE returned 503 ``llm_unavailable``,
+  // ``getCoachingReflection`` translates the error into a null-payload
+  // tagged with ``unavailable_reason``. Render a small, calm "// coaching
+  // unavailable" line so the user sees that the section deliberately did
+  // not load — distinct from the silent hide we use when the user opted
+  // out or hadn't taken notes.
+  if (
+    query.data &&
+    query.data.reflection === null &&
+    query.data.unavailable_reason === "llm_unavailable"
+  ) {
+    return (
+      <section
+        aria-label="Coaching reflection"
+        data-testid="coaching-reflection-unavailable"
+        className="rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+      >
+        {sentinel}
+        <p
+          className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
+          data-testid="coaching-reflection-unavailable-copy"
+        >
+          {"// coaching unavailable — Bedrock is offline right now."}
+        </p>
+        <p className="mt-1.5 font-mono text-[11px] text-[var(--color-muted-foreground)]/80">
+          {"Section will reload when service returns."}
+        </p>
+      </section>
+    );
+  }
+
   // Errors that we don't translate to a "hide me" (network, 5xx
   // other than llm_unavailable) — still render nothing so the
   // post-mortem stays calm. The error is reported via the React

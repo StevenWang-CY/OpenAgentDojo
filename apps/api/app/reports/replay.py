@@ -98,6 +98,17 @@ REPLAY_KIND: str = "openagentdojo.replay.v1"
 #     OMITTED — their ``detail`` field carries free-form error text
 #     that may surface filesystem paths or environment-leaked
 #     identifiers.
+#
+# Notes on scratchpad events (audit fix):
+#   * ``note.edited`` and ``note.viewed_during_prompt`` are
+#     INTENTIONALLY OMITTED. Their payloads (``bytes`` / ``lines`` /
+#     ``seconds_since`` / ``bytes_at_view``) leak the size and dynamics
+#     of the user's private scratchpad — a share-token holder peeking
+#     at the timeline could infer "they typed 312 chars across 4
+#     edits between minute 6 and minute 9" without ever reading the
+#     prose. The scratchpad body itself never leaves the DB for
+#     share-token holders; the metadata about it must follow the same
+#     rule.
 REDACTION_SAFE_EVENT_TYPES: frozenset[str] = frozenset(
     {
         "session.started",
@@ -126,8 +137,6 @@ REDACTION_SAFE_EVENT_TYPES: frozenset[str] = frozenset(
         "paste.large",
         "focus.lost",
         "proctored.violation",
-        "note.edited",
-        "note.viewed_during_prompt",
     }
 )
 
@@ -170,13 +179,26 @@ def _normalise_for_canonical(value: Any) -> Any:
     semantically-identical scores like ``0.1 + 0.2`` vs ``0.3`` would
     produce different bytes. Non-float types pass through untouched.
 
+    Non-finite floats (``nan`` / ``inf`` / ``-inf``) are clamped to
+    ``None`` and a Prometheus counter is bumped so dashboards can
+    surface upstream numerical drift. Allowing them through would
+    either round-trip through Python as the non-JSON ``NaN`` token
+    (with ``allow_nan=True``) or raise ``ValueError`` inside
+    :func:`json.dumps` (with ``allow_nan=False``) — either way the
+    signed bytes would be wrong.
+
     Note: ``bool`` is a subclass of ``int`` in Python; we explicitly
     keep booleans as booleans (they would otherwise survive ``round``
     unchanged, but matching on ``int`` first avoids any confusion).
     """
+    import math
+
     if isinstance(value, bool):
         return value
     if isinstance(value, float):
+        if not math.isfinite(value):
+            _bump_nan_clamp_counter()
+            return None
         # ``round`` is well-defined and identical across CPython builds
         # and platforms (it implements IEEE-754 round-half-to-even on
         # the binary float, then we re-bind to a fresh float). The
@@ -187,6 +209,43 @@ def _normalise_for_canonical(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_normalise_for_canonical(v) for v in value]
     return value
+
+
+# Lazy single-instance counter; defined inline (rather than in
+# ``app.observability``) so this module remains self-contained for the
+# downstream third-party verifier port.
+_NAN_CLAMP_COUNTER: Any = None
+
+
+def _bump_nan_clamp_counter() -> None:
+    """Bump the replay NaN-clamp counter; lazily registers it.
+
+    Same posture as :func:`app.reports.verification._bump_nan_clamp_counter`
+    — try/except wraps the metrics path so a missing prometheus_client
+    or a double registration never breaks signing.
+    """
+    global _NAN_CLAMP_COUNTER
+    try:
+        if _NAN_CLAMP_COUNTER is None:
+            from prometheus_client import REGISTRY as _REGISTRY
+            from prometheus_client import Counter as _Counter
+
+            # Share the verification module's counter where possible so
+            # ``/metrics`` exposes a single series for both surfaces.
+            existing = getattr(_REGISTRY, "_names_to_collectors", {}).get(
+                "canonical_json_nan_clamped_total"
+            )
+            if existing is not None:
+                _NAN_CLAMP_COUNTER = existing
+            else:
+                _NAN_CLAMP_COUNTER = _Counter(
+                    "canonical_json_nan_clamped_total",
+                    "Non-finite float (NaN / Inf) values clamped to null while "
+                    "serialising a canonical JSON artefact (verification / replay).",
+                )
+        _NAN_CLAMP_COUNTER.inc()
+    except Exception:
+        pass
 
 
 def canonical_json(payload: Any) -> bytes:
@@ -217,6 +276,13 @@ def canonical_json(payload: Any) -> bytes:
         separators=(",", ":"),
         default=str,
         ensure_ascii=False,
+        # Per audit: ``json.dumps`` defaults to emitting ``NaN`` /
+        # ``Infinity`` literals that no other JSON parser accepts.
+        # ``_normalise_for_canonical`` clamps non-finite floats to
+        # ``None`` upstream of this call; ``allow_nan=False`` is the
+        # belt-and-braces guard that fails loud if a future caller
+        # bypasses the normaliser.
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -432,8 +498,12 @@ def _serialise_event(event: SupervisionEvent, *, redact_payloads: bool) -> dict[
         except Exception:
             # ``canonical_json`` should never fail on a JSONB-loaded
             # dict, but if it does we still want the artefact to emit
-            # — fall back to a literal "unknown" marker.
-            byte_count = 0
+            # — fall back to a SENTINEL marker (``-1``) so an upstream
+            # consumer cannot mistake "we could not measure the
+            # payload" for "the original payload was zero bytes".
+            # Returning ``0`` here would silently look identical to a
+            # share-token holder peeking at an empty event.
+            byte_count = -1
             logger.warning(
                 "[replay] could not canonicalise payload for event {} type={}",
                 event.id,
@@ -528,7 +598,15 @@ async def build_replay(
     # captured it from ``git diff --no-color --no-ext-diff --no-renames``
     # between the mission's initial_commit and the session's final
     # tree. Replay is read-only; no sandbox reach-back here.
-    final_diff: str = submission.final_diff or ""
+    #
+    # Privacy posture (audit fix): the verbatim diff is owner-only.
+    # Share-token holders see ``final_diff: null`` + a sibling
+    # ``final_diff_byte_count`` so they still know the magnitude of the
+    # change without the source bytes. The previous behaviour leaked
+    # the entire patch — including any pasted credentials or local
+    # paths the user happened to commit — to anyone who held a share
+    # URL. Owners keep verbatim access for the post-mortem walkthrough.
+    final_diff_raw: str = submission.final_diff or ""
 
     mission_pointer = _manifest_pointer(
         mission_row=mission_row,
@@ -538,13 +616,24 @@ async def build_replay(
 
     score_report: dict[str, Any] = submission.score_report or {}
 
+    if redact_payloads:
+        final_diff_field: str | None = None
+        final_diff_byte_count: int = len(final_diff_raw.encode("utf-8"))
+        final_diff_redacted = True
+    else:
+        final_diff_field = final_diff_raw
+        final_diff_byte_count = len(final_diff_raw.encode("utf-8"))
+        final_diff_redacted = False
+
     artefact: dict[str, Any] = {
         "envelope": envelope,
         "envelope_signature": envelope_signature,
         "events": serialised_events,
         "exported_at": _coerce_event_iso(exported_at or datetime.now(UTC)),
         "exported_at_omitted_from_signature": True,
-        "final_diff": final_diff,
+        "final_diff": final_diff_field,
+        "final_diff_byte_count": final_diff_byte_count,
+        "final_diff_redacted": final_diff_redacted,
         "kind": REPLAY_KIND,
         "mission_pointer": mission_pointer,
         "schema_version": REPLAY_SCHEMA_VERSION,

@@ -1147,13 +1147,24 @@ async function readErrorBody(response: Response): Promise<ApiErrorBody | null> {
 }
 
 /**
- * Download the replay artefact for a graded submission.
+ * Trigger a browser download of the replay JSON artefact for a graded
+ * submission.
  *
- * Returns the raw parsed JSON (an opaque ``ReplayArtifact`` per
- * ``docs/schemas/replay.schema.json``). The wire shape is intentionally not
- * typed here — the artefact is a snapshot of supervision events + the score
- * report, and a typed contract here would be the wrong layer (the canonical
- * source is the backend builder + the JSON Schema).
+ * Mirrors ``downloadReplayZip``'s side-effect (anchor-click + revoke) so
+ * the JSON variant ends up on disk byte-identical to the backend
+ * response. Specifically: we read the response as a ``Blob`` and pipe
+ * that blob directly into the temporary anchor. We deliberately do NOT
+ * parse via ``response.json()`` and re-stringify, because
+ * ``JSON.parse → JSON.stringify`` is not a stable round-trip — key
+ * ordering and whitespace are lost, and the JSON the backend canonicalises
+ * (sorted keys, no extra whitespace) is the source of truth that the
+ * ``replay.schema.json`` validator + the verification hash in the
+ * accompanying ZIP both depend on.
+ *
+ * Returns ``{bytes, filename}`` so the caller can fire its
+ * ``replay_export_succeeded`` telemetry with the on-the-wire byte count
+ * (``blob.size``), not a recomputed length from a re-serialisation that
+ * would diverge from what the user actually saved.
  *
  * Behaviour:
  *  - owner (cookie auth): full payload.
@@ -1163,8 +1174,8 @@ async function readErrorBody(response: Response): Promise<ApiErrorBody | null> {
  */
 export async function downloadReplayJson(
   submissionId: string,
-  opts?: { share?: string; signal?: AbortSignal },
-): Promise<unknown> {
+  opts?: { share?: string; filename?: string; signal?: AbortSignal },
+): Promise<{ bytes: number; filename: string }> {
   const url = buildReplayUrl(submissionId, "json", opts?.share);
   let response: Response;
   try {
@@ -1188,11 +1199,40 @@ export async function downloadReplayJson(
         : `HTTP ${response.status}`;
     throw new ApiError(detail, response.status, body);
   }
-  try {
-    return (await response.json()) as unknown;
-  } catch {
-    throw new ApiError("Replay payload was not valid JSON.", response.status, null);
+  // Read as Blob to preserve the exact canonical bytes the backend
+  // emitted. ``response.json()`` would round-trip through a JS object,
+  // losing the canonical key ordering + whitespace.
+  const blob = await response.blob();
+  const filename =
+    opts?.filename ??
+    parseContentDispositionFilename(response.headers.get("content-disposition")) ??
+    `arena-replay-${submissionId.slice(0, 8)}.json`;
+
+  // SSR guard — mirrors ``downloadReplayZip``. The caller is always
+  // client-side, but fail closed on the server rather than crashing in
+  // a server component.
+  if (typeof document === "undefined" || typeof URL.createObjectURL !== "function") {
+    throw new ApiError(
+      "downloadReplayJson requires a browser environment.",
+      0,
+      null,
+    );
   }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+  }, 0);
+
+  return { bytes: blob.size, filename };
 }
 
 /**
@@ -1436,6 +1476,16 @@ export interface CoachingReflection {
   anchored_note_quote: string | null;
   cached: boolean;
   generated_at: string;
+  /**
+   * P1-4 (FE remediation) — set to ``"llm_unavailable"`` when the
+   * backend returned a 503 with the matching code. The FE inspects this
+   * to render a small "coaching is temporarily unavailable" line instead
+   * of silently hiding the entire section (which would be
+   * indistinguishable from "user opted out"). Absent on every other
+   * payload — owner-graded responses leave this undefined so the
+   * normal "hide silently when null" path still works for opt-outs.
+   */
+  unavailable_reason?: "llm_unavailable";
 }
 
 /**
@@ -1451,8 +1501,14 @@ export interface CoachingReflection {
  *   - ``404`` submission unknown or not graded.
  *   - ``503 {code: "llm_unavailable"}`` — generator failed AND no
  *     cached row exists. We translate this to a null-payload here so
- *     callers don't need an explicit 503 path — the post-mortem
- *     section is silently hidden either way.
+ *     callers don't need an explicit 503 path — the section renders
+ *     a small "temporarily unavailable" copy instead of disappearing.
+ *
+ *     IMPORTANT: FastAPI's ``HTTPException(detail={...})`` wraps the
+ *     code under ``err.body.detail.code``. Some legacy paths (and our
+ *     contract tests) flatten the code to ``err.body.code``. We
+ *     accept BOTH shapes so a 503 from either path resolves to the
+ *     null-payload sentinel below rather than re-throwing.
  *   - ``200`` with the payload above.
  *
  * Network errors (status=0) still throw, so the caller can decide
@@ -1469,8 +1525,23 @@ export async function getCoachingReflection(
     );
   } catch (err) {
     if (err instanceof ApiError && err.status === 503) {
-      const code =
+      // FastAPI HTTPException envelope: ``{detail: {code, message}}``.
+      // Flat envelope (older / hand-rolled paths): ``{code, message}``.
+      // Both must resolve to the null-payload so the FE's coaching
+      // section can render its "Bedrock is offline" copy without
+      // re-throwing.
+      const detail =
+        err.body && typeof err.body === "object"
+          ? (err.body as { detail?: unknown }).detail
+          : null;
+      const detailCode =
+        detail && typeof detail === "object" && "code" in detail &&
+        typeof (detail as { code?: unknown }).code === "string"
+          ? (detail as { code: string }).code
+          : null;
+      const flatCode =
         err.body && typeof err.body.code === "string" ? err.body.code : null;
+      const code = detailCode ?? flatCode;
       if (code === "llm_unavailable") {
         return {
           reflection: null,
@@ -1478,6 +1549,7 @@ export async function getCoachingReflection(
           anchored_note_quote: null,
           cached: false,
           generated_at: new Date().toISOString(),
+          unavailable_reason: "llm_unavailable",
         };
       }
     }

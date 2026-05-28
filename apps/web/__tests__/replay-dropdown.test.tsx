@@ -121,7 +121,10 @@ describe("ShareDropdown — P1-6 replay entries", () => {
   });
 
   it("clicking the JSON entry calls downloadReplayJson with the submission id", async () => {
-    downloadReplayJson.mockResolvedValueOnce({ schema_version: 1, hello: "world" });
+    downloadReplayJson.mockResolvedValueOnce({
+      bytes: 42,
+      filename: `arena-replay-${SUBMISSION_ID.slice(0, 8)}.json`,
+    });
     renderDropdown();
     await openDropdown();
 
@@ -137,7 +140,10 @@ describe("ShareDropdown — P1-6 replay entries", () => {
   });
 
   it("clicking the JSON entry forwards the share token when supplied", async () => {
-    downloadReplayJson.mockResolvedValueOnce({});
+    downloadReplayJson.mockResolvedValueOnce({
+      bytes: 0,
+      filename: "arena-replay-shared.json",
+    });
     renderDropdown({ share: "shr_abc123" });
     await openDropdown();
 
@@ -174,8 +180,17 @@ describe("ShareDropdown — P1-6 replay entries", () => {
     // promise resolved is sufficient.
   });
 
-  it("clicking the JSON entry creates an anchor with the correct download attr", async () => {
-    downloadReplayJson.mockResolvedValueOnce({ ok: true });
+  it("clicking the JSON entry delegates to downloadReplayJson (which owns the anchor click)", async () => {
+    // FE remediation — the anchor click is now performed inside
+    // ``downloadReplayJson`` itself so the file save can use the
+    // canonical response bytes (no JSON.stringify round-trip). The
+    // dropdown's job here is to delegate; the anchor-attr assertions
+    // live in replay-download-canonical.test.tsx where the real
+    // downloadReplayJson is exercised end-to-end.
+    downloadReplayJson.mockResolvedValueOnce({
+      bytes: 12,
+      filename: `arena-replay-${SUBMISSION_ID.slice(0, 8)}.json`,
+    });
     renderDropdown();
     await openDropdown();
 
@@ -183,15 +198,14 @@ describe("ShareDropdown — P1-6 replay entries", () => {
       fireEvent.click(screen.getByTestId("replay-json-item"));
     });
 
-    await waitFor(() => expect(anchorClicks.length).toBeGreaterThan(0));
-    const anchor = anchorClicks[anchorClicks.length - 1];
-    expect(anchor).toBeDefined();
-    expect(anchor?.download).toBe(`arena-replay-${SUBMISSION_ID.slice(0, 8)}.json`);
-    expect(anchor?.href).toBe("blob:mock");
+    await waitFor(() => expect(downloadReplayJson).toHaveBeenCalledTimes(1));
   });
 
   it("fires replay_export_requested telemetry on JSON click", async () => {
-    downloadReplayJson.mockResolvedValueOnce({});
+    downloadReplayJson.mockResolvedValueOnce({
+      bytes: 0,
+      filename: "arena-replay.json",
+    });
     renderDropdown();
     await openDropdown();
 
@@ -210,9 +224,15 @@ describe("ShareDropdown — P1-6 replay entries", () => {
     });
   });
 
-  it("fires replay_export_succeeded with bytes on successful JSON download", async () => {
-    const payload = { schema_version: 1, hello: "world" };
-    downloadReplayJson.mockResolvedValueOnce(payload);
+  it("fires replay_export_succeeded with the canonical wire bytes on JSON download", async () => {
+    // FE remediation — bytes now reflect ``blob.size`` (the actual
+    // on-the-wire byte count) rather than ``JSON.stringify(parsed).length``
+    // (which silently lost canonical whitespace / key order). The mock
+    // mirrors the new ``{bytes, filename}`` return contract.
+    downloadReplayJson.mockResolvedValueOnce({
+      bytes: 1234,
+      filename: "arena-replay-canonical.json",
+    });
     renderDropdown();
     await openDropdown();
 
@@ -232,7 +252,7 @@ describe("ShareDropdown — P1-6 replay entries", () => {
     expect(success?.[1]).toMatchObject({
       submission_id: SUBMISSION_ID,
       kind: "json",
-      bytes: JSON.stringify(payload).length,
+      bytes: 1234,
     });
   });
 

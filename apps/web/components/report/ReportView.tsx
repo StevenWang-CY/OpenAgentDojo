@@ -391,31 +391,70 @@ function NextMissionButton({
     return null;
   }, [recommendation]);
 
+  // FE remediation — when the live recommendation is unavailable (anonymous
+  // viewer, share-link viewer, network outage, 401) we fall back to the
+  // first recommended mission id embedded in
+  // ``feedback_narrative[].recommended_mission_ids``. Capture that fallback
+  // here so the telemetry effect can fire ``recommendation_shown`` with the
+  // ``source: "embedded"`` tag — previously the funnel only saw the live
+  // branch and the embedded surface was invisible.
+  const fallbackMissionId = React.useMemo(() => {
+    if (liveTop) return null;
+    const recs = fallbackReport.feedback_narrative ?? [];
+    for (const entry of recs) {
+      const first = entry.recommended_mission_ids?.[0];
+      if (first) return first;
+    }
+    return null;
+  }, [liveTop, fallbackReport]);
+
   const href = liveTop
     ? `/missions/${liveTop.mission_id}`
     : nextMissionHref(fallbackReport);
 
   const shownRef = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!liveTop) return;
-    if (shownRef.current === liveTop.mission_id) return;
-    shownRef.current = liveTop.mission_id;
-    track("recommendation_shown", {
-      kind: "report",
-      weakest_dim: recommendation?.weakest_dim ?? null,
-      mission_ids: [liveTop.mission_id],
-      signed_in: true,
-    });
-  }, [liveTop, recommendation?.weakest_dim]);
+    if (liveTop) {
+      if (shownRef.current === liveTop.mission_id) return;
+      shownRef.current = liveTop.mission_id;
+      track("recommendation_shown", {
+        kind: "report",
+        source: "live",
+        weakest_dim: recommendation?.weakest_dim ?? null,
+        mission_ids: [liveTop.mission_id],
+        signed_in: true,
+      });
+      return;
+    }
+    if (fallbackMissionId) {
+      // Dedupe on the embedded path too — a re-render shouldn't double-fire.
+      if (shownRef.current === `embedded::${fallbackMissionId}`) return;
+      shownRef.current = `embedded::${fallbackMissionId}`;
+      track("recommendation_shown", {
+        kind: "report",
+        source: "embedded",
+        signed_in: false,
+        weakest_dim: null,
+        mission_ids: [fallbackMissionId],
+      });
+    }
+  }, [liveTop, fallbackMissionId, recommendation?.weakest_dim]);
 
   const onClick = React.useCallback(() => {
-    if (!liveTop) return;
-    track("recommendation_clicked", {
-      position: 0,
-      mission_id: liveTop.mission_id,
-      kind: "report",
-    });
-  }, [liveTop]);
+    if (liveTop) {
+      track("recommendation_clicked", {
+        position: 0,
+        mission_id: liveTop.mission_id,
+        kind: "report",
+      });
+    } else if (fallbackMissionId) {
+      track("recommendation_clicked", {
+        position: 0,
+        mission_id: fallbackMissionId,
+        kind: "report",
+      });
+    }
+  }, [liveTop, fallbackMissionId]);
 
   return (
     <Button asChild>

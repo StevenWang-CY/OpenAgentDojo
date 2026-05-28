@@ -443,9 +443,16 @@ describe("MissionGrid filters (P1-1)", () => {
     expect(within(shipped).queryByText(TS_MISSION.title)).toBeNull();
     expect(within(shipped).queryByText(GO_MISSION.title)).toBeNull();
 
-    // Coming-soon placeholders carry no tags yet; the row hides while a
-    // failure-mode filter is active. TODO(P1-2): wire the "// recommended"
-    // chip on MissionCard once the recommendation surface lands.
-    expect(screen.queryByTestId("mission-grid-upcoming")).toBeNull();
+    // P1 audit fix — coming-soon placeholders carry no tags yet, but the
+    // row still renders with a hint chip so the roadmap stays discoverable
+    // while a failure-mode filter is active. Previously the row collapsed
+    // to empty, which hid the roadmap from anyone narrowing by failure
+    // mode (a discoverability regression).
+    const upcomingRow = screen.getByTestId("mission-grid-upcoming");
+    expect(
+      within(upcomingRow).getByTestId("mission-grid-upcoming-filter-hint"),
+    ).toBeInTheDocument();
+    expect(within(upcomingRow).getByText(UPCOMING_GO.title)).toBeInTheDocument();
+    expect(within(upcomingRow).getByText(UPCOMING_PY.title)).toBeInTheDocument();
   });
 });

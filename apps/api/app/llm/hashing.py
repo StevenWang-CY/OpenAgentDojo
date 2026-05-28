@@ -34,14 +34,23 @@ from typing import Any
 def canonical_content_hash(payload: dict[str, Any]) -> str:
     """SHA-256 hex of JSON-canonicalised ``payload``.
 
-    Canonical form: sorted keys, no whitespace, ``ensure_ascii=False``.
-    Rounding of floats / coercion of mixed types is the caller's
-    responsibility (see per-domain rules in :mod:`app.llm.domains`).
+    Canonical form: sorted keys, no whitespace, ``ensure_ascii=False``,
+    ``allow_nan=False``. Rounding of floats / coercion of mixed types
+    is the caller's responsibility (see per-domain rules in
+    :mod:`app.llm.domains`).
+
+    ``allow_nan=False`` rejects non-finite floats. The cache-key
+    computation is one of the rare callers where it is preferable to
+    raise loud (``ValueError`` from :func:`json.dumps`) rather than
+    silently coerce to ``null`` — a NaN slipping into a cache key
+    silently bakes the bad value into every downstream lookup. Callers
+    seeing this raise should clamp upstream and document the fix.
     """
     canonical = json.dumps(
         payload,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()

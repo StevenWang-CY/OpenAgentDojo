@@ -27,15 +27,21 @@ async function fetchRoadmap(): Promise<FetchOutcome> {
       headers: { Accept: "application/json" },
     });
     if (!res.ok) {
-      return { kind: "offline", reason: `HTTP ${res.status} from ${url}` };
+      // P1 audit fix — the reason string is kept private to server logs
+      // so anonymous visitors never see the backend URL or status code
+      // (which previously leaked into the rendered DOM). The DOM render
+      // path consumes ``kind: "offline"`` only and renders a friendly,
+      // URL-free message.
+      const reason = `HTTP ${res.status} from ${url}`;
+      console.error("roadmap fetch failed:", reason);
+      return { kind: "offline", reason };
     }
     const payload = (await res.json()) as Mission[];
     return { kind: "ok", missions: payload };
   } catch (err) {
-    return {
-      kind: "offline",
-      reason: err instanceof Error ? err.message : String(err),
-    };
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error("roadmap fetch failed:", reason);
+    return { kind: "offline", reason };
   }
 }
 
@@ -100,10 +106,11 @@ export default async function RoadmapPage() {
 
       {outcome.kind === "offline" ? (
         <p
+          data-testid="roadmap-offline-notice"
           className="mt-6 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 font-mono text-xs text-[var(--color-muted-foreground)]"
           aria-live="polite"
         >
-          {`// roadmap fetch failed: ${outcome.reason}`}
+          {"// roadmap is offline — try the GitHub repo for the latest"}
         </p>
       ) : upcoming.length === 0 ? (
         <p className="mt-6 font-mono text-xs text-[var(--color-muted-foreground)]">
@@ -157,6 +164,16 @@ export default async function RoadmapPage() {
         >
           watch repo ↗
         </a>
+      </p>
+
+      <p
+        data-testid="roadmap-authoring-note"
+        className="mt-4 font-mono text-[11px] text-[var(--color-muted-foreground)]"
+      >
+        {"// want to author a mission? see "}
+        <code className="text-[var(--color-foreground)]">
+          scripts/mission-template/
+        </code>
       </p>
     </section>
   );

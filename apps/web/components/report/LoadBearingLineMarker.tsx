@@ -12,13 +12,23 @@ import { cn } from "@/lib/utils";
 /** P1-5 — one critical moment as the marker sees it. ``file_path`` /
  *  ``start_line`` are the optional anchor; when absent the marker is
  *  suppressed for that moment (per design — "submitted without
- *  verification" has no line anchor). */
+ *  verification" has no line anchor).
+ *
+ *  ``user_line_text`` + ``ideal_line_text`` are the optional raw line
+ *  strings used by the token-level inline char-diff overlay. When both
+ *  are present and the marker's tooltip opens, we render a token-diff
+ *  strip inside the tooltip so the user can see precisely which tokens
+ *  changed. Either may be omitted (e.g. the moment is anchored to a
+ *  pure-insertion line that has no user counterpart); the overlay
+ *  suppresses itself when either side is missing. */
 export interface LoadBearingMoment {
   event_id: number;
   file_path?: string;
   start_line?: number;
   end_line?: number;
   label: string;
+  user_line_text?: string;
+  ideal_line_text?: string;
 }
 
 interface LoadBearingLineMarkerProps {
@@ -100,6 +110,212 @@ function findAnchorElement(
  *  fails to match against the actual DOM id. Path-style ids are quote-safe. */
 function cssEscape(value: string): string {
   return value.replace(/(["\\])/g, "\\$1");
+}
+
+// ---------------------------------------------------------------------------
+// Token-level char-diff (P1-5 "Open decisions": yes-for-token-level)
+// ---------------------------------------------------------------------------
+
+/** Soft cap on per-line token count fed into the LCS. Above this the diff
+ *  collapses to a coarse single-pair (whole user line removed, whole ideal
+ *  line added) so a pathological 1000-token line doesn't melt the renderer. */
+const MAX_TOKENS_PER_LINE = 100;
+/** Hard cap on line length before we bail out entirely. */
+const MAX_LINE_CHARS = 400;
+
+/**
+ * Split ``line`` into a lossless token list. The split keeps every
+ * delimiter (whitespace and Unicode punctuation) as its own token, so
+ * concatenating the result is identical to the input. Empty inputs
+ * produce an empty list.
+ *
+ * Examples:
+ *   tokeniseLine("foo bar baz")        -> ["foo", " ", "bar", " ", "baz"]
+ *   tokeniseLine("a,b c")              -> ["a", ",", "b", " ", "c"]
+ *   tokeniseLine("hello, world!")      -> ["hello", ",", " ", "world", "!"]
+ */
+export function tokeniseLine(line: string): string[] {
+  if (!line) return [];
+  const tokens: string[] = [];
+  // ``\p{P}`` matches any Unicode punctuation; ``\s`` covers whitespace.
+  // The "u" flag is required for the Unicode property escape.
+  const delim = /[\s\p{P}]/u;
+  let buf = "";
+  for (const ch of line) {
+    if (delim.test(ch)) {
+      if (buf.length > 0) {
+        tokens.push(buf);
+        buf = "";
+      }
+      tokens.push(ch);
+    } else {
+      buf += ch;
+    }
+  }
+  if (buf.length > 0) tokens.push(buf);
+  return tokens;
+}
+
+export type TokenDiffOp =
+  | { kind: "equal"; value: string }
+  | { kind: "removed"; value: string }
+  | { kind: "added"; value: string };
+
+/**
+ * Token-level diff via classic LCS dynamic programming.
+ *
+ * The algorithm:
+ *   1. Build the (M+1)×(N+1) LCS length table.
+ *   2. Walk it backwards to recover a sequence of ``equal``/``removed``/
+ *      ``added`` operations (we backtrack to the cell with the larger
+ *      neighbour, treating ties as "prefer removed-first" so the output
+ *      is deterministic).
+ *   3. Reverse the recovered list so consumers iterate left-to-right.
+ *
+ * Both inputs are token arrays from ``tokeniseLine``. The result is a
+ * flat list of ops the caller renders by mapping the ``kind`` to a CSS
+ * class — see ``renderTokenDiff`` below.
+ *
+ * Complexity: O(M·N) time + space. For the 100-token cap that's at most
+ * 10k cells per line, which is cheap relative to the rest of the diff
+ * pane's render cost.
+ */
+export function tokenDiff(
+  userTokens: string[],
+  idealTokens: string[],
+): TokenDiffOp[] {
+  const m = userTokens.length;
+  const n = idealTokens.length;
+  if (m === 0 && n === 0) return [];
+  if (m === 0) {
+    return idealTokens.map((t) => ({ kind: "added" as const, value: t }));
+  }
+  if (n === 0) {
+    return userTokens.map((t) => ({ kind: "removed" as const, value: t }));
+  }
+  // ``dp[i][j]`` = LCS length for userTokens[0..i) vs idealTokens[0..j).
+  // We use a flat Int32 array for cache locality (and to avoid the
+  // boxed-array overhead on hot paths).
+  const stride = n + 1;
+  const dp = new Int32Array((m + 1) * stride);
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      if (userTokens[i - 1] === idealTokens[j - 1]) {
+        dp[i * stride + j] = dp[(i - 1) * stride + (j - 1)]! + 1;
+      } else {
+        const up = dp[(i - 1) * stride + j]!;
+        const left = dp[i * stride + (j - 1)]!;
+        dp[i * stride + j] = up >= left ? up : left;
+      }
+    }
+  }
+  const out: TokenDiffOp[] = [];
+  let i = m;
+  let j = n;
+  while (i > 0 && j > 0) {
+    if (userTokens[i - 1] === idealTokens[j - 1]) {
+      out.push({ kind: "equal", value: userTokens[i - 1]! });
+      i -= 1;
+      j -= 1;
+      continue;
+    }
+    const up = dp[(i - 1) * stride + j]!;
+    const left = dp[i * stride + (j - 1)]!;
+    // Tie-break: prefer "removed" first so output ordering is
+    // deterministic given equivalent LCS paths.
+    if (up >= left) {
+      out.push({ kind: "removed", value: userTokens[i - 1]! });
+      i -= 1;
+    } else {
+      out.push({ kind: "added", value: idealTokens[j - 1]! });
+      j -= 1;
+    }
+  }
+  while (i > 0) {
+    out.push({ kind: "removed", value: userTokens[i - 1]! });
+    i -= 1;
+  }
+  while (j > 0) {
+    out.push({ kind: "added", value: idealTokens[j - 1]! });
+    j -= 1;
+  }
+  out.reverse();
+  return out;
+}
+
+/**
+ * Compute the token diff for the marker's tooltip, applying the two
+ * safety caps. Returns ``null`` when the diff is suppressed (lines too
+ * long, both sides missing, or identical).
+ */
+export function computeLoadBearingTokenDiff(
+  userLine: string | undefined,
+  idealLine: string | undefined,
+): TokenDiffOp[] | null {
+  if (typeof userLine !== "string" || typeof idealLine !== "string") {
+    return null;
+  }
+  if (userLine === idealLine) return null;
+  if (userLine.length > MAX_LINE_CHARS || idealLine.length > MAX_LINE_CHARS) {
+    return null;
+  }
+  const userTokens = tokeniseLine(userLine);
+  const idealTokens = tokeniseLine(idealLine);
+  // Bail out into a coarse single-pair when either side is too long —
+  // the LCS table would still fit but the user-facing diff stops being
+  // useful past ~100 tokens.
+  if (
+    userTokens.length > MAX_TOKENS_PER_LINE ||
+    idealTokens.length > MAX_TOKENS_PER_LINE
+  ) {
+    return [
+      { kind: "removed", value: userLine },
+      { kind: "added", value: idealLine },
+    ];
+  }
+  return tokenDiff(userTokens, idealTokens);
+}
+
+/** Render a token diff as a small inline strip inside the tooltip.
+ *  Added/removed tokens get the design-spec'd background tones; equal
+ *  tokens pass through with no styling. */
+function renderTokenDiff(ops: TokenDiffOp[]): React.JSX.Element {
+  return (
+    <span
+      data-testid="load-bearing-token-diff"
+      className="block whitespace-pre-wrap break-all font-mono text-[10px] leading-snug"
+    >
+      {ops.map((op, i) => {
+        if (op.kind === "equal") {
+          return (
+            <span key={i} data-token-kind="equal">
+              {op.value}
+            </span>
+          );
+        }
+        if (op.kind === "added") {
+          return (
+            <span
+              key={i}
+              data-token-kind="added"
+              className="bg-green-500/15 text-green-300"
+            >
+              {op.value}
+            </span>
+          );
+        }
+        return (
+          <span
+            key={i}
+            data-token-kind="removed"
+            className="bg-red-500/15 text-red-300"
+          >
+            {op.value}
+          </span>
+        );
+      })}
+    </span>
+  );
 }
 
 const TOOLTIP_USER = "this line is the one the agent got wrong";
@@ -192,6 +408,15 @@ export function LoadBearingLineMarker({
               : `${group.length} moments at this line: ${group
                   .map((m) => m.label)
                   .join("; ")}`;
+          // FE remediation — when the head moment carries both the user's
+          // line and the ideal line, surface a token-level inline char
+          // diff inside the tooltip. The helper caps long inputs so the
+          // overlay can't blow up on pathological lines.
+          const head = group[0];
+          const tokenOps = computeLoadBearingTokenDiff(
+            head?.user_line_text,
+            head?.ideal_line_text,
+          );
           return (
             <Tooltip
               key={key}
@@ -229,6 +454,11 @@ export function LoadBearingLineMarker({
               </TooltipTrigger>
               <TooltipContent side="right" align="center">
                 <p className="max-w-[260px] text-xs leading-snug">{tooltipText}</p>
+                {tokenOps ? (
+                  <div className="mt-1.5 max-w-[260px] rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1.5">
+                    {renderTokenDiff(tokenOps)}
+                  </div>
+                ) : null}
               </TooltipContent>
             </Tooltip>
           );

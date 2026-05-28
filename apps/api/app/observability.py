@@ -362,12 +362,21 @@ recommendation_compute_seconds = Histogram(
 # Counter for the *swallow* path inside the grading runner where the
 # engine call is wrapped in a fail-soft try/except — a failure here
 # MUST NOT block the grade. The ``stage`` label keeps room for future
-# callsites (e.g. a periodic warm-up job); today we only emit from the
-# pre-grade hook.
+# callsites (e.g. a periodic warm-up job); today we emit from the
+# pre-grade hook, the post-grade hook, and the cache invalidator —
+# operators care about which stage is dropping work so the labels
+# are split rather than collapsed.
 recommendation_engine_errors_total = Counter(
     "recommendation_engine_errors_total",
-    "Recommendation engine failures swallowed by the grader (P1-2).",
-    ["stage"],  # stage ∈ {"pre_grade"}
+    "Recommendation engine failures swallowed by the grader / cache layer (P1-2).",
+    # stage ∈ {
+    #   "pre_grade",       fail-soft engine call inside the grading runner;
+    #   "post_grade",      fail-soft invalidation hook in the grading runner;
+    #   "invalidate",      per-user cache invalidation path;
+    #   "bulk_invalidate", catalogue-wide cache invalidation (CLI / loader);
+    #   "prose",           LLM-polish wrapper around diagnosis / why copy.
+    # }
+    ["stage"],
     registry=REGISTRY,
 )
 # ---------------------------------------------------------------------------
@@ -480,6 +489,50 @@ replay_export_errors_total = Counter(
     # rejected the row), and the generic class name for unexpected
     # failures.
     ["kind", "error_class"],
+    registry=REGISTRY,
+)
+# ---------------------------------------------------------------------------
+# Roadmap loader instrumentation (P1-1 / P4.1B remediation).
+# ---------------------------------------------------------------------------
+# Incremented by :func:`app.missions.roadmap.load_roadmap` when a past-dated
+# placeholder is filtered out in lenient (runtime) mode. Strict mode raises
+# instead — that branch is exercised by CI (validate_missions.py) and does
+# NOT bump this counter. A sustained non-zero rate here means the curated
+# roadmap is drifting out of date and the authoring rotation should refresh
+# ``apps/api/app/missions/roadmap.yaml``.
+roadmap_past_dated_dropped_total = Counter(
+    "roadmap_past_dated_dropped_total",
+    "Roadmap placeholders dropped because their target_release_date is in the past (P1-1).",
+    ["mission_id"],
+    registry=REGISTRY,
+)
+# ---------------------------------------------------------------------------
+# Scratchpad note coalescing instrumentation (P1-4 / P4.1B remediation).
+# ---------------------------------------------------------------------------
+# Incremented by :func:`app.sessions.notes._build_note_edited_payload` when
+# the computed seconds-since-last-edit is negative or implausibly large and
+# we clamp to a safe value. The expected steady-state rate is zero — a
+# non-zero reading typically points at clock skew between the DB and the
+# app process, or at a malformed previous-event timestamp surviving a
+# replay/backfill.
+note_edited_burst_seconds_clamp_total = Counter(
+    "note_edited_burst_seconds_clamp_total",
+    "note.edited seconds_since_last_edit computations clamped to a safe value (P1-4).",
+    registry=REGISTRY,
+)
+# ---------------------------------------------------------------------------
+# Coaching payload redaction instrumentation (P1-4 / P4.1B remediation).
+# ---------------------------------------------------------------------------
+# Incremented by :func:`app.reports.coaching._summarise_payload` every time
+# a per-event-type allowlist suppresses a verbatim payload field that would
+# otherwise have flowed into the Bedrock prompt (e.g. ``command.run.command``
+# or ``patch.applied.path``). The label captures the event type so the
+# privacy dashboard can split "noise on harmless events" from "we're
+# actively gating user-private text on the sensitive ones".
+coaching_payload_redacted_total = Counter(
+    "coaching_payload_redacted_total",
+    "Coaching prompt payload fields suppressed by the per-event-type allowlist (P1-4).",
+    ["event_type"],
     registry=REGISTRY,
 )
 

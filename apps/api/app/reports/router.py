@@ -1349,7 +1349,6 @@ async def get_replay_zip(
     settings = get_settings()
     canonical_url = _replay_canonical_url(settings, submission_id)
     replay_bytes = canonical_json(artefact)
-    final_diff_text = artefact.get("final_diff") or ""
 
     # Owner-vs-share gate (P1-6 audit item 26): the mission's seeded
     # ``agent_patch.diff`` is mission-owned content; we still ship it
@@ -1362,6 +1361,21 @@ async def get_replay_zip(
     _sub_for_redact, _sess_for_redact, redact = await _auth_replay_view(
         submission_id, share, user, db
     )
+
+    # ``final_diff`` is owner-only (see ``build_replay`` privacy posture).
+    # For a share-token recipient the artefact's ``final_diff`` is
+    # ``None``; instead of shipping an empty ``final.diff`` (which
+    # looks like the user committed nothing), emit a short text marker
+    # so a recruiter reading the bundle understands the omission.
+    if redact:
+        final_diff_text = (
+            "# final.diff withheld from share-token bundles. "
+            "The byte count is recorded in replay.json "
+            "(final_diff_byte_count). The submission owner can re-download "
+            "this bundle from their account to access the verbatim diff.\n"
+        )
+    else:
+        final_diff_text = artefact.get("final_diff") or ""
 
     # Optional agent_patch.diff — shipped under the operator's mission
     # license, and ONLY in owner-downloaded bundles. Reads the file via

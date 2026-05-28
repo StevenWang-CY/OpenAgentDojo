@@ -79,11 +79,38 @@ is a pure JSON transform and does no rounding. Documented rules:
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 # Bump on prompt-template edits. Invalidates every llm_cache row across
 # every domain — same discipline as ``RUBRIC_VERSION``.
-PROMPT_VERSION: int = 1
+#
+# Env-rollable: the value is sourced from ``PROMPT_VERSION`` so an
+# operator can bump it without redeploying. Importing
+# :func:`app.config.get_settings` here would create a cycle
+# (``config`` → ``observability`` → ``llm`` → ``domains``) at boot, so
+# we read the env directly. The Settings field ``prompt_version`` is
+# the canonical declaration and validation surface; this constant
+# mirrors it. Both sides default to ``1`` when unset.
+try:
+    PROMPT_VERSION: int = int(os.environ.get("PROMPT_VERSION", "1"))
+    if PROMPT_VERSION < 1:
+        raise ValueError("PROMPT_VERSION must be >=1")
+except (TypeError, ValueError):
+    # A malformed env value should NOT prevent boot — fall back to the
+    # safe default and let the Settings validator surface the misconfig
+    # at request time.
+    PROMPT_VERSION = 1
+
+
+def get_prompt_version() -> int:
+    """Return the active LLM prompt version.
+
+    Function form for callers that want to pick up an env / Settings
+    change without re-importing the module. Reads
+    :data:`PROMPT_VERSION` so the two stay in lockstep.
+    """
+    return PROMPT_VERSION
 
 # Closed vocabulary; one Literal per LLM use site below.
 LLMDomain = Literal[

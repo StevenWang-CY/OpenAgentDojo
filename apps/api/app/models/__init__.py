@@ -11,6 +11,7 @@ from app.models.magic_link_token import MagicLinkToken
 from app.models.mission import Mission
 from app.models.prompt_judgement import PromptJudgement
 from app.models.repo_pack import RepoPack
+from app.models.report_render import ReportRender
 from app.models.session import SessionRow
 from app.models.session_note import SessionNote
 from app.models.submission import Submission
@@ -34,6 +35,7 @@ __all__ = [
     "Mission",
     "PromptJudgement",
     "RepoPack",
+    "ReportRender",
     "SessionNote",
     "SessionRow",
     "Submission",

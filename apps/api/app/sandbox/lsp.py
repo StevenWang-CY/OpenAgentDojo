@@ -56,7 +56,55 @@ LSPErrorClass = Literal[
     "lsp_crashed",
     "initialize_timeout",
     "ws_token_failed",
+    # P1-3 remediation additions:
+    # * ``sandbox_busy``  — an apply-patch (or other exclusive mutation) is
+    #   in flight on this sandbox; the WS proxy MUST refuse a fresh LSP
+    #   attach because spawning a long-lived stdio process mid-patch can
+    #   race the workspace tree the patch is rewriting underneath us.
+    # * ``lsp_oom``       — the language server's process was reaped by the
+    #   kernel OOM killer (docker exit code 137 / signal 9). Surfaced as a
+    #   structured frame so the FE can show "Memory cap hit, falling back
+    #   to syntax-only" instead of the generic "lsp_crashed" copy.
+    # * ``origin_forbidden`` — the WS upgrade carried an ``Origin`` header
+    #   not on the API's CORS allow-list. We refuse the upgrade BEFORE
+    #   accepting the socket; emitted symmetrically with the other classes
+    #   so dashboards keep one error-class taxonomy.
+    "sandbox_busy",
+    "lsp_oom",
+    "origin_forbidden",
 ]
+
+
+# Per-language memory budgets (MiB) for the spawned LSP. These are the design
+# values from §P1-3 — the docker sandbox container has a hard 2 GiB ceiling so
+# a runaway language server cannot starve the host, but the per-language cap
+# narrows that further to prevent ONE wedged server from monopolising the
+# whole container budget. Enforcement is best-effort:
+#
+#   * Docker driver: a ``prlimit --as=`` wrapper around the LSP argv is
+#     applied at spawn time when ``prlimit`` is on the container image's
+#     PATH. The fallback is documented intent — the 2 GiB container ceiling
+#     still backs it.
+#   * Local driver:  ``resource.setrlimit(RLIMIT_AS, ...)`` in the child
+#     pre-exec hook. Best-effort because macOS dev hosts don't honour AS
+#     limits the same way Linux does.
+#
+# Bumping a value here is a load-bearing change — coordinate with the SRE
+# dashboards that alert on ``container_memory_working_set_bytes`` per
+# language label.
+LSP_MEMORY_BUDGETS_MB: Final[dict[str, int]] = {
+    "python": 256,
+    "typescript": 512,
+    "go": 384,
+}
+
+
+# Exit codes / signals that indicate the kernel OOM killer reaped the LSP.
+# Docker surfaces ``137`` (= 128 + SIGKILL) on ``exec_inspect`` after the
+# cgroup OOM trigger fires; raw subprocess paths see ``-9`` from
+# ``Process.returncode`` (Python negates the signal). Either is treated as
+# the same event from the WS proxy's perspective.
+LSP_OOM_EXIT_CODES: Final[frozenset[int]] = frozenset({137, -9, 9})
 
 
 # Dedicated, bounded executor for ``DockerLSPProcess.read_stdout`` so a stuck
@@ -198,6 +246,19 @@ class LSPProcess(ABC):
         process is already gone).
         """
 
+    @property
+    def exit_code(self) -> int | None:
+        """Process exit code once the LSP has terminated, else ``None``.
+
+        Used by the WS proxy to distinguish an OOM-killed server (exit
+        code in :data:`LSP_OOM_EXIT_CODES`) from a graceful EOF. Subclasses
+        override; the base returns ``None`` so a driver that genuinely
+        can't read an exit status (mock LSP, custom transport) still
+        gives the proxy a defined value to switch on rather than blowing
+        up with ``AttributeError``.
+        """
+        return None
+
     @abstractmethod
     async def write_stdin(self, data: bytes) -> None:
         """Write ``data`` to the language server's stdin.
@@ -262,6 +323,17 @@ class LocalLSPProcess(LSPProcess):
     @property
     def alive(self) -> bool:
         return self._proc.returncode is None
+
+    @property
+    def exit_code(self) -> int | None:
+        """Forward ``Process.returncode``; ``None`` while still running.
+
+        On Linux the kernel OOM killer surfaces as ``-9`` (SIGKILL) here;
+        the WS proxy compares against :data:`LSP_OOM_EXIT_CODES` to
+        decide between a generic ``lsp_crashed`` close and the
+        structured ``lsp_oom`` frame.
+        """
+        return self._proc.returncode
 
     async def write_stdin(self, data: bytes) -> None:
         if not data:
@@ -370,6 +442,31 @@ async def spawn_local_lsp(
             detail=f"none of {[c[0] for c in LSP_COMMANDS[language]]} on PATH",
         )
 
+    # Best-effort per-language memory cap. ``resource.setrlimit(RLIMIT_AS)``
+    # in a child preexec is the simplest enforcement on Linux; macOS dev
+    # hosts ignore AS limits, so this is "documented intent" there. We MUST
+    # NOT raise from the preexec — a misconfigured limit must never wedge a
+    # working LSP spawn — so the body is wrapped and the failure mode is
+    # silent fallback to no cap.
+    budget_mb = LSP_MEMORY_BUDGETS_MB.get(language)
+    preexec_fn = None
+    if budget_mb is not None:
+        budget_bytes = int(budget_mb) * 1024 * 1024
+
+        def _set_memory_cap() -> None:  # pragma: no cover — child-only
+            try:
+                import resource
+
+                resource.setrlimit(
+                    resource.RLIMIT_AS, (budget_bytes, budget_bytes)
+                )
+            except Exception:
+                # Silent — see the comment above. The container ceiling is
+                # the backstop on hosts where the rlimit doesn't take.
+                pass
+
+        preexec_fn = _set_memory_cap
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *chosen,
@@ -377,6 +474,7 @@ async def spawn_local_lsp(
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            preexec_fn=preexec_fn,
         )
     except FileNotFoundError as exc:
         # Racy disappearance between ``shutil.which`` and ``exec`` — surface
@@ -433,6 +531,12 @@ class DockerLSPProcess(LSPProcess):
         # plain socket the attribute lookup falls back to the wrapper.
         self._raw = getattr(sock, "_sock", None) or sock
         self._closed = False
+        # Cached exit code from the most recent ``exec_inspect`` — populated
+        # lazily by ``exit_code`` so the WS proxy can read it after the read
+        # pump observes EOF. Docker only fills ``ExitCode`` once
+        # ``Running == False``; until then the SDK returns ``None`` and we
+        # surface that as "still running".
+        self._cached_exit_code: int | None = None
 
     @property
     def alive(self) -> bool:
@@ -442,6 +546,11 @@ class DockerLSPProcess(LSPProcess):
             info = self._client.api.exec_inspect(self._exec_id)
             running = info.get("Running")
             if running is False:
+                # Cache the exit code while we have it so ``exit_code``
+                # below can answer without a second SDK round-trip.
+                ec = info.get("ExitCode")
+                if isinstance(ec, int):
+                    self._cached_exit_code = ec
                 return False
         except Exception as exc:  # pragma: no cover — best-effort
             # Promoted to WARNING (was DEBUG) so operators can correlate
@@ -452,6 +561,35 @@ class DockerLSPProcess(LSPProcess):
             )
             _bump_runtime_error(self._language, "exec_inspect_failed")
         return True
+
+    @property
+    def exit_code(self) -> int | None:
+        """Return the docker ``ExitCode`` for the exec, ``None`` if running.
+
+        Docker exposes ``ExitCode == 137`` when the container's cgroup OOM
+        killer reaps the exec process (= 128 + SIGKILL). The WS proxy uses
+        this to surface a structured ``lsp_oom`` frame instead of the
+        generic ``lsp_crashed`` close.
+        """
+        if self._cached_exit_code is not None:
+            return self._cached_exit_code
+        try:
+            info = self._client.api.exec_inspect(self._exec_id)
+        except Exception as exc:  # pragma: no cover — best-effort
+            logger.warning(
+                "lsp[{}] exec_inspect for exit_code failed: {}",
+                self._language,
+                exc,
+            )
+            _bump_runtime_error(self._language, "exec_inspect_failed")
+            return None
+        if info.get("Running") is True:
+            return None
+        ec = info.get("ExitCode")
+        if isinstance(ec, int):
+            self._cached_exit_code = ec
+            return ec
+        return None
 
     async def write_stdin(self, data: bytes) -> None:
         if not data or self._closed:
@@ -586,7 +724,32 @@ async def spawn_docker_lsp(
     import shlex
 
     quoted = " ".join(shlex.quote(part) for part in argv)
-    shell_cmd = f"exec {quoted} 2>/dev/null"
+
+    # Per-language memory cap (P1-3 audit fix). The sandbox container's
+    # 2 GiB cgroup ceiling protects the host; ``prlimit --as=`` narrows the
+    # process address-space cap to the per-language budget so ONE wedged
+    # server can't monopolise the whole container budget and starve a
+    # second LSP (e.g. python + typescript both attached to a polyglot
+    # repo). We invoke prlimit via a ``command -v`` probe so an image that
+    # ships without prlimit (uncommon — util-linux is on every base we
+    # use) just falls back to the container ceiling rather than failing
+    # the spawn. Bytes, not megabytes: ``--as`` takes a byte count.
+    budget_mb = LSP_MEMORY_BUDGETS_MB.get(language)
+    if budget_mb is not None:
+        budget_bytes = int(budget_mb) * 1024 * 1024
+        # ``command -v prlimit`` returns 0 iff the binary is on PATH; the
+        # ``&&`` chains the limited exec, the ``||`` fallback is the raw
+        # exec so we never hard-fail when prlimit is missing.
+        prlimited = (
+            f"prlimit --as={budget_bytes} {quoted}"
+        )
+        shell_cmd = (
+            f"if command -v prlimit >/dev/null 2>&1; then "
+            f"exec {prlimited} 2>/dev/null; "
+            f"else exec {quoted} 2>/dev/null; fi"
+        )
+    else:
+        shell_cmd = f"exec {quoted} 2>/dev/null"
 
     loop = asyncio.get_running_loop()
 
@@ -633,8 +796,11 @@ async def spawn_docker_lsp(
 
 __all__ = [
     "LSP_COMMANDS",
+    "LSP_MEMORY_BUDGETS_MB",
+    "LSP_OOM_EXIT_CODES",
     "SUPPORTED_LANGUAGES",
     "DockerLSPProcess",
+    "LSPErrorClass",
     "LSPProcess",
     "LSPUnavailableError",
     "LocalLSPProcess",

@@ -2613,10 +2613,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Canonical replay artefact",
+            "description": "Canonical replay artefact. The body is a deterministic JSON object whose canonical form is signed by ``replay_signature`` (HMAC-SHA256 of canonical_json over every field except ``exported_at`` and ``replay_signature`` itself). See ``app/reports/replay.py`` for the field set; the schema is intentionally open-ended so additive fields (e.g. ``final_diff_byte_count``) do not break existing third-party verifiers.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "See ``app/reports/replay.py`` for the canonical field set; the artefact's bytes are signed verbatim and additive fields are introduced via ``schema_version`` bumps."
+                }
               }
             }
           },
@@ -2679,10 +2683,14 @@
         ],
         "responses": {
           "200": {
-            "description": "ZIP stream",
+            "description": "ZIP bundle containing replay.json, final.diff, verify.html, README.md, and (owner-only) agent_patch.diff. Content-Disposition: attachment; filename=arena-replay-<short>-<ymd>.zip.",
             "content": {
-              "application/json": {
-                "schema": {}
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "description": "ZIP bundle. See ``app/reports/router.py::get_replay_zip`` for the file list."
+                }
               }
             }
           },

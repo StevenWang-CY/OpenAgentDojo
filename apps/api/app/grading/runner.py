@@ -480,16 +480,18 @@ class GradingRunner:
             engine_recommended_ids = [
                 item.mission_id for item in rec_set.recommendations
             ]
-        except Exception:  # pragma: no cover — never block the grade.
+        except Exception as exc:  # never block the grade.
             from app.observability import recommendation_engine_errors_total
 
             recommendation_engine_errors_total.labels(stage="pre_grade").inc()
             logger.exception(
                 "[grader] engine_recommended_mission_ids_failed "
-                "session_id={} user_id={}",
+                "session_id={} user_id={} error={}",
                 session_id,
                 getattr(session, "user_id", None),
+                type(exc).__name__,
             )
+            engine_recommended_ids = None
 
         report: ScoreReport = compute_score(
             diff=parsed,
@@ -813,12 +815,16 @@ class GradingRunner:
             from app.recommendations.cache import invalidate_for_user
 
             await invalidate_for_user(db, session.user_id)
-        except Exception:  # pragma: no cover — defensive: never block grading
+        except Exception as exc:  # defensive: never block grading
+            from app.observability import recommendation_engine_errors_total
+
+            recommendation_engine_errors_total.labels(stage="post_grade").inc()
             logger.exception(
                 "[grader] recommendation_cache_invalidation_failed "
-                "session_id={} user_id={}",
+                "session_id={} user_id={} error={}",
                 result.session_id,
                 getattr(session, "user_id", None),
+                type(exc).__name__,
             )
 
         await db.commit()
