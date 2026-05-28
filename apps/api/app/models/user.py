@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Integer, String, Text
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -83,6 +83,22 @@ class User(Base):
     # treat a missing claim as a downgrade attack and reject it).
     session_epoch: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
+    )
+    # P1-4 (§"Coaching reflection" → "Privacy & data flow") — per-user
+    # opt-out for the scratchpad coaching reflection. When False the
+    # coaching endpoint short-circuits and returns ``reflection=null``
+    # WITHOUT ever forwarding the scratchpad text to Bedrock. Defaults
+    # to True for both new and backfilled accounts (mirrors the
+    # analytics-by-default-after-consent posture from P0-5). The toggle
+    # is surfaced on the ``/account/privacy`` page; flipping it does
+    # NOT delete existing cache rows (the row is keyed by content hash,
+    # not user id) — the cache cleanup happens at account-delete time
+    # via the deletion worker (Wave 2D).
+    coaching_reflections_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
     )
 
     def __repr__(self) -> str:  # pragma: no cover

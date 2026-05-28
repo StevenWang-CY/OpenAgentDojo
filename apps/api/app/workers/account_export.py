@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.agent_turn import AgentTurn
+from app.models.coaching_cache_user_index import CoachingCacheUserIndex
 from app.models.command_run import CommandRun
 from app.models.data_export import (
     EXPORT_STATUS_FAILED,
@@ -41,7 +42,9 @@ from app.models.data_export import (
     DataExport,
 )
 from app.models.file_change import FileChange
+from app.models.llm_cache import LLMCache
 from app.models.session import SessionRow
+from app.models.session_note import SessionNote
 from app.models.submission import Submission
 from app.models.supervision_event import SupervisionEvent
 from app.models.user import User
@@ -262,6 +265,17 @@ async def _build_zip(
                     "session_id",
                     _serialise_supervision_event,
                 ),
+                # P1-4 — per-session scratchpad bodies. The note text is
+                # exported alongside the supervision-event stream so the
+                # user owns the full record of what they wrote during a
+                # session; the note.edited events themselves carry only
+                # byte/line counts (privacy invariant, see notes.py docs).
+                (
+                    "session_notes.jsonl",
+                    SessionNote,
+                    "session_id",
+                    _serialise_session_note,
+                ),
                 ("badges.jsonl", UserBadge, "user_id", _serialise_user_badge),
             ]
 
@@ -289,6 +303,31 @@ async def _build_zip(
                             )
 
                 zf.writestr(filename, _to_jsonl(rows, serialiser))
+
+            # P1-4 (Wave 2B) — emit ``llm_cache_for_user.jsonl`` with
+            # every coaching cache row produced by this user. The join
+            # is via ``coaching_cache_user_index`` (stamped by
+            # ``app.reports.coaching`` at generation time); we never
+            # recompute content hashes here — that would couple the
+            # exporter to the coaching module's input schema and a
+            # drift between the two would silently produce empty
+            # exports.
+            coaching_cache_rows = list(
+                (
+                    await db.execute(
+                        select(LLMCache)
+                        .join(
+                            CoachingCacheUserIndex,
+                            CoachingCacheUserIndex.llm_cache_id == LLMCache.id,
+                        )
+                        .where(CoachingCacheUserIndex.user_id == user.id)
+                    )
+                ).scalars()
+            )
+            zf.writestr(
+                "llm_cache_for_user.jsonl",
+                _to_jsonl(coaching_cache_rows, _serialise_llm_cache_row),
+            )
 
             if _UserConsentCls is not None and _AccountEventCls is not None:
                 consents = (
@@ -423,6 +462,10 @@ def _serialise_supervision_event(row: SupervisionEvent) -> dict[str, Any]:
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
 
 
+def _serialise_session_note(row: SessionNote) -> dict[str, Any]:
+    return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+
+
 def _serialise_user_badge(row: UserBadge) -> dict[str, Any]:
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
 
@@ -433,6 +476,28 @@ def _serialise_user_consent(row: Any) -> dict[str, Any]:
 
 def _serialise_account_event(row: Any) -> dict[str, Any]:
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+
+
+def _serialise_llm_cache_row(row: LLMCache) -> dict[str, Any]:
+    """Project a coaching ``llm_cache`` row to the export shape.
+
+    We deliberately drop ``id`` from the export — it's an internal
+    primary key the user has no use for. ``output`` is the verbatim
+    coaching paragraph; the user owns this surface so we ship it
+    unredacted. ``input_tokens`` / ``output_tokens`` are exposed for
+    transparency (the privacy policy talks about token-budget
+    accounting, so showing the actual counts is honest).
+    """
+    return {
+        "domain": row.domain,
+        "content_hash": row.content_hash,
+        "prompt_version": row.prompt_version,
+        "model_id": row.model_id,
+        "output": row.output,
+        "generated_at": row.generated_at,
+        "input_tokens": row.input_tokens,
+        "output_tokens": row.output_tokens,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -461,9 +526,11 @@ this file can be regenerated from the /account page.
 | `command_runs.jsonl` | Every command run inside a sandbox. Includes signed URLs for stdout / stderr. |
 | `submissions.jsonl` | Every graded submission. |
 | `supervision_events.jsonl` | Timeline events emitted while you worked. |
+| `session_notes.jsonl` | Per-session scratchpad bodies (the "// notes" pane in the workspace). |
 | `badges.jsonl` | Badges you earned (`UserBadge`). |
 | `consents.jsonl` | Cookie / privacy consent decisions (`UserConsent`). |
 | `account_events.jsonl` | Account-scoped audit log: consent transitions + account self-service events (email change, sign-out-everywhere, deletion schedule / cancel). |
+| `llm_cache_for_user.jsonl` | Coaching reflections generated for your submissions. One line per cached LLM output; the `output` field is the verbatim coaching paragraph. Empty when you've never triggered a coaching reflection (or have opted out). |
 
 ## Things to know
 

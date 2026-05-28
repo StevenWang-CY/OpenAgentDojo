@@ -36,6 +36,18 @@ export const env = {
   githubOauthEnabledBuildtime:
     (process.env.NEXT_PUBLIC_GITHUB_OAUTH_ENABLED ?? "").toLowerCase() ===
     "true",
+  /**
+   * P1-5 — feature flag for the rebuilt three-way diff (synchronised scroll,
+   * load-bearing-line overlay, mobile tab collapse). Defaults to ON unless
+   * explicitly disabled so dev + test default to the new layout; an operator
+   * can flip ``NEXT_PUBLIC_FEATURE_THREE_WAY_DIFF_V2=false`` to roll back.
+   * The query-string ``?diff_v2=1`` / ``?diff_v2=0`` is a per-tab dev
+   * override (handled at the consumer) — this flag is only the build-time
+   * default.
+   */
+  threeWayDiffV2Default:
+    (process.env.NEXT_PUBLIC_FEATURE_THREE_WAY_DIFF_V2 ?? "").toLowerCase() !==
+    "false",
 } as const;
 
 function trimTrailingSlash(s: string): string {

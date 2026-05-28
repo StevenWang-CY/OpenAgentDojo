@@ -53,6 +53,13 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 # alongside the reports router in app/main.py.
 verify_router = APIRouter(prefix="/verify", tags=["reports"])
 
+# P1-6 — separate router for the replay endpoints. Mounted at
+# ``/api/v1/submissions/...`` per the design so the URL reads "this
+# resource is the submission" instead of "this is a report subresource".
+# Both endpoints reuse the same share-token / cookie auth matrix as the
+# /reports surface above.
+submissions_router = APIRouter(prefix="/submissions", tags=["reports"])
+
 _SHARE_ALG = "HS256"
 _SHARE_TTL_DAYS = 30
 
@@ -964,9 +971,625 @@ async def get_report_for_print(
     )
 
 
+# ---------------------------------------------------------------------------
+# P1-6 — replay artefact endpoints (JSON + ZIP)
+# ---------------------------------------------------------------------------
+#
+# Two endpoints, one builder. The artefact is built on the fly (no S3
+# caching) and is small enough (< 100 KB typical per design) that
+# in-memory zip assembly stays within the request budget. Both endpoints
+# share the same auth matrix as /reports/{id}: owner OR share-token OR
+# 404 for anonymous callers. Tutorials and non-graded submissions 404
+# unconditionally so the replay surface stays a credentialing artefact.
+
+# Single-slot cache keyed by ``"env"``; module-level dict lets us avoid the
+# ``global`` statement (which ``ruff`` flags as discouraged) while keeping
+# the env lazily built on first use.
+_REPLAY_JINJA_CACHE: dict[str, Any] = {}
+
+
+def _replay_jinja_env() -> Any:
+    """Lazily build the Jinja2 environment for the replay templates.
+
+    The templates live in ``app/reports/static/`` and are loaded with
+    autoescape ON for the HTML template (XSS defence — handles and
+    mission titles flow into the page from DB rows) and OFF for the
+    Markdown template (Markdown's own escape rules apply).
+    """
+    env = _REPLAY_JINJA_CACHE.get("env")
+    if env is None:
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+        templates_dir = Path(__file__).parent / "static"
+        env = Environment(
+            loader=FileSystemLoader(str(templates_dir)),
+            autoescape=select_autoescape(("html", "htm", "xml")),
+            keep_trailing_newline=True,
+        )
+        _REPLAY_JINJA_CACHE["env"] = env
+    return env
+
+
+async def _auth_replay_view(
+    submission_id: uuid.UUID,
+    share: str | None,
+    user: User | None,
+    db: AsyncSession,
+) -> tuple[Submission, SessionRow, bool]:
+    """Mirror ``_auth_render_view`` auth + add the replay-specific gates.
+
+    Returns ``(submission, session, redact_payloads)`` where
+    ``redact_payloads`` is True for share-token callers (privacy matrix
+    in P1_DESIGN §P1-6 "Privacy posture").
+
+    Differs from /render in two ways:
+
+      * Anonymous callers (no cookie, no share) get **404**, not 401.
+        The replay URL is structurally a credential and we leak no
+        information about whether the submission exists.
+      * Non-graded sessions and tutorial missions both 404 (rather
+        than 409 as /render does) — the design says the replay
+        endpoint is a credentialing artefact and "credential does not
+        exist" is the right HTTP-level posture for a non-credential.
+    """
+    settings = get_settings()
+    submission, session = await _fetch_submission(db, submission_id)
+
+    is_owner = False
+    is_share = False
+    if user is not None and session.user_id == user.id:
+        is_owner = True
+    if share:
+        try:
+            share_sub = decode_share_token_strict(share, settings)
+            if share_sub == submission_id:
+                is_share = True
+        except ShareTokenError:
+            # A malformed share token on the replay surface collapses
+            # to "anonymous" — we never leak whether the underlying
+            # submission exists by surfacing the share-decode error.
+            is_share = False
+
+    if not (is_owner or is_share):
+        raise HTTPException(status_code=404, detail="replay not found")
+
+    if session.status != "graded":
+        raise HTTPException(status_code=404, detail="replay not found")
+    mission_row = await get_mission_row(db, session.mission_id)
+    if _is_tutorial(mission_row):
+        raise HTTPException(status_code=404, detail="replay not found")
+
+    # Owners always see the unredacted artefact. Share tokens get the
+    # privacy-redacted form per the matrix.
+    redact = (not is_owner) and is_share
+    return submission, session, redact
+
+
+def _replay_etag(artefact: dict[str, Any]) -> str:
+    """Return the weak ETag header for a built artefact.
+
+    Weak because the ``exported_at`` field is part of the body but
+    excluded from the signature; two reads a second apart produce
+    bytes that differ only in that field but are semantically
+    identical. The ``W/"replay-..."`` prefix is the standard weak
+    marker that lets a downstream CDN compare on the signature alone.
+    """
+    sig = artefact.get("replay_signature") or ""
+    return f'W/"replay-{sig}"'
+
+
+def _replay_canonical_url(settings: Settings, submission_id: uuid.UUID) -> str:
+    base = (settings.web_origin or "http://localhost:3000").rstrip("/")
+    return f"{base}/verify/{submission_id}"
+
+
+def _read_text_safe(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("[replay] could not read {}: {}", path, exc)
+        return None
+
+
+def _render_verify_html(artefact: dict[str, Any], canonical_url: str) -> str:
+    envelope = artefact.get("envelope") or {}
+    env = _replay_jinja_env()
+    template = env.get_template("verify.html.j2")
+    rendered: str = template.render(
+        canonical_url=canonical_url,
+        effective_max=envelope.get("effective_max", 100),
+        exported_at=artefact.get("exported_at", ""),
+        graded_at=envelope.get("graded_at", ""),
+        handle=envelope.get("handle", ""),
+        kind=artefact.get("kind", ""),
+        mission_id=envelope.get("mission_id", ""),
+        mission_title=envelope.get("mission_title", ""),
+        rubric_version=envelope.get("rubric_version", ""),
+        schema_version=artefact.get("schema_version", 1),
+        submission_id=artefact.get("submission_id", ""),
+        total_score=envelope.get("total_score", 0),
+        verification_hash=envelope.get("verification_hash")
+        or _persisted_hash_for(artefact),
+        verification_signature=artefact.get("envelope_signature", ""),
+    )
+    return rendered
+
+
+def _persisted_hash_for(artefact: dict[str, Any]) -> str:
+    """Re-derive the canonical hash for the embedded envelope.
+
+    The envelope on the replay artefact does NOT carry the hash field
+    (that lives on the submission row). The verify.html page wants to
+    display it, so we recompute it from the embedded envelope using
+    the same primitive the /verify endpoint uses. Pure CPU — no I/O,
+    no LLM, no secret material.
+    """
+    from app.reports.verification import compute_hash
+
+    envelope = artefact.get("envelope") or {}
+    if not envelope:
+        return ""
+    try:
+        return compute_hash(envelope)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("[replay] could not recompute envelope hash: {}", exc)
+        return ""
+
+
+def _render_readme(
+    artefact: dict[str, Any],
+    *,
+    has_agent_patch: bool,
+) -> str:
+    envelope = artefact.get("envelope") or {}
+    pointer = artefact.get("mission_pointer") or {}
+    env = _replay_jinja_env()
+    template = env.get_template("README.md.j2")
+    rendered: str = template.render(
+        effective_max=envelope.get("effective_max", 100),
+        exported_at=artefact.get("exported_at", ""),
+        graded_at=envelope.get("graded_at", ""),
+        handle=envelope.get("handle", ""),
+        has_agent_patch=has_agent_patch,
+        kind=artefact.get("kind", ""),
+        manifest_sha256=pointer.get("manifest_sha256", ""),
+        mission_id=envelope.get("mission_id", ""),
+        mission_title=envelope.get("mission_title", ""),
+        mission_version=pointer.get("version", 1),
+        repo_pack_id=pointer.get("repo_pack_id", ""),
+        repo_pack_sha=pointer.get("repo_pack_sha", ""),
+        rubric_version=envelope.get("rubric_version", "v1"),
+        schema_version=artefact.get("schema_version", 1),
+        submission_id=artefact.get("submission_id", ""),
+        total_score=envelope.get("total_score", 0),
+    )
+    return rendered
+
+
+def _replay_filename(artefact: dict[str, Any], extension: str) -> str:
+    """Return ``arena-replay-<short>-<ymd>.<extension>``."""
+    sid = str(artefact.get("submission_id") or "unknown")
+    short = sid.split("-", 1)[0]
+    envelope = artefact.get("envelope") or {}
+    graded_at = str(envelope.get("graded_at") or "")
+    ymd = graded_at[:10].replace(":", "").replace("-", "") if graded_at else "00000000"
+    return f"arena-replay-{short}-{ymd}.{extension}"
+
+
+async def _build_replay_for_request(
+    submission_id: uuid.UUID,
+    *,
+    share: str | None,
+    user: User | None,
+    db: AsyncSession,
+) -> tuple[dict[str, Any], Submission, SessionRow]:
+    """Authenticate then build — shared by both replay endpoints."""
+    from app.reports.replay import build_replay
+    from app.reports.verification import verify_secret as resolve_verify_secret
+
+    submission, session, redact = await _auth_replay_view(submission_id, share, user, db)
+    settings = get_settings()
+    try:
+        secret = resolve_verify_secret(settings)
+    except RuntimeError as exc:
+        logger.error("[replay] verify secret unavailable: {}", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "verification_secret_unavailable",
+                "message": "replay service is misconfigured; try again later",
+            },
+        ) from exc
+
+    artefact = await build_replay(
+        db,
+        submission_id,
+        redact_payloads=redact,
+        verify_secret_value=secret,
+    )
+    return artefact, submission, session
+
+
+@submissions_router.get(
+    "/{submission_id}/replay.json",
+    summary="Canonical replay artefact as JSON (P1-6)",
+    responses={
+        200: {"description": "Canonical replay artefact"},
+        404: {"description": "Not found / unauthorised / non-graded / tutorial"},
+        503: {"description": "Verification service misconfigured"},
+    },
+)
+async def get_replay_json(
+    submission_id: uuid.UUID,
+    share: str | None = Query(None, description="Optional signed share token"),
+    user: User | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Serve the deterministic JSON artefact.
+
+    Owners see the full artefact (including prompt payloads + the
+    scratchpad body). Share-token holders see the redacted form; the
+    scratchpad is omitted entirely. Anonymous callers 404.
+
+    The response is cacheable for a year + immutable: a graded
+    submission's replay is byte-identical across replays except for
+    ``exported_at``, which is excluded from the signature — the ETag
+    therefore pins to the signature, not the body bytes.
+    """
+    from app.observability import (
+        replay_export_bytes,
+        replay_export_errors_total,
+        replay_export_requests_total,
+    )
+
+    try:
+        artefact, _submission, _session = await _build_replay_for_request(
+            submission_id, share=share, user=user, db=db
+        )
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            replay_export_errors_total.labels("json", "not_found").inc()
+        elif exc.status_code == 503:
+            replay_export_errors_total.labels("json", "secret_unavailable").inc()
+        else:
+            replay_export_errors_total.labels("json", f"http_{exc.status_code}").inc()
+        raise
+    except Exception as exc:
+        replay_export_errors_total.labels(
+            "json", exc.__class__.__name__
+        ).inc()
+        logger.exception("[replay] json build failed: {}", exc)
+        raise HTTPException(status_code=500, detail="replay build failed") from exc
+
+    from app.reports.replay import canonical_json
+
+    body = canonical_json(artefact)
+    replay_export_requests_total.labels("json").inc()
+    replay_export_bytes.labels("json").observe(len(body))
+
+    # Per P1-6 audit item 15: ``Vary: Authorization, Cookie`` prevents
+    # a CDN keyed only on URL from serving a cached owner response to
+    # a later share-token caller of the same URL (owners see prompt
+    # payloads and the scratchpad body that the share-token redaction
+    # path strips). ``X-Content-Type-Options: nosniff`` blocks
+    # MIME-confusion attacks against the JSON body.
+    headers = {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "ETag": _replay_etag(artefact),
+        "Vary": "Authorization, Cookie",
+        "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noindex",
+    }
+    return Response(
+        content=body,
+        status_code=200,
+        media_type="application/json",
+        headers=headers,
+    )
+
+
+@submissions_router.get(
+    "/{submission_id}/replay.zip",
+    summary="Replay bundle (zip): replay.json + final.diff + verify.html + README (P1-6)",
+    responses={
+        200: {"description": "ZIP stream"},
+        404: {"description": "Not found / unauthorised / non-graded / tutorial"},
+        503: {"description": "Verification service misconfigured"},
+    },
+)
+async def get_replay_zip(
+    submission_id: uuid.UUID,
+    share: str | None = Query(None, description="Optional signed share token"),
+    user: User | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Serve the full bundle as a ZIP.
+
+    The zip is built in memory using ``zipfile.ZipFile`` against an
+    ``io.BytesIO`` buffer; bundles are bounded by the replay artefact's
+    typical size (< 100 KB per design) plus the templated HTML/MD
+    (~4 KB) and an optional agent_patch.diff (< 16 KB). The body is
+    fully buffered before the response, so :class:`Response` (which
+    computes ``Content-Length`` from ``len(body)`` automatically) is
+    the correct vehicle — :class:`StreamingResponse` was misleading
+    because nothing actually streams.
+    """
+    import io
+    import zipfile
+
+    from app.observability import (
+        replay_export_bytes,
+        replay_export_errors_total,
+        replay_export_requests_total,
+    )
+
+    try:
+        artefact, _submission, session = await _build_replay_for_request(
+            submission_id, share=share, user=user, db=db
+        )
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            replay_export_errors_total.labels("zip", "not_found").inc()
+        elif exc.status_code == 503:
+            replay_export_errors_total.labels("zip", "secret_unavailable").inc()
+        else:
+            replay_export_errors_total.labels("zip", f"http_{exc.status_code}").inc()
+        raise
+    except Exception as exc:
+        replay_export_errors_total.labels(
+            "zip", exc.__class__.__name__
+        ).inc()
+        logger.exception("[replay] zip build failed: {}", exc)
+        raise HTTPException(status_code=500, detail="replay build failed") from exc
+
+    from app.reports.replay import canonical_json
+
+    settings = get_settings()
+    canonical_url = _replay_canonical_url(settings, submission_id)
+    replay_bytes = canonical_json(artefact)
+    final_diff_text = artefact.get("final_diff") or ""
+
+    # Owner-vs-share gate (P1-6 audit item 26): the mission's seeded
+    # ``agent_patch.diff`` is mission-owned content; we still ship it
+    # to the owner who downloaded the bundle but withhold it from
+    # share-token recipients (whose bundle is the privacy-redacted
+    # form). We re-walk the auth path here rather than inferring from
+    # the artefact (an owner whose session has no note row would
+    # mis-classify) — the second call hits the same SQLAlchemy
+    # identity map and adds ~zero overhead.
+    _sub_for_redact, _sess_for_redact, redact = await _auth_replay_view(
+        submission_id, share, user, db
+    )
+
+    # Optional agent_patch.diff — shipped under the operator's mission
+    # license, and ONLY in owner-downloaded bundles. Reads the file via
+    # the mission loader's declared ``agent.patch_file`` field; absent
+    # for tutorial missions (which we already 404 above) and for
+    # missions whose folder is unreachable on this server.
+    if redact:
+        agent_patch_text = None
+    else:
+        agent_patch_text = _read_agent_patch_diff(
+            settings.missions_root, session.mission_id
+        )
+    has_agent_patch = bool(agent_patch_text)
+
+    readme_text = _render_readme(artefact, has_agent_patch=has_agent_patch)
+    verify_html_text = _render_verify_html(artefact, canonical_url=canonical_url)
+
+    buf = io.BytesIO()
+    # ``compression=ZIP_DEFLATED`` keeps bundles tight; the standard
+    # library implementation is pure-Python deterministic (modulo the
+    # mtime, which we fix below to 1980-01-01 — the zipfile epoch).
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, content in [
+            ("replay.json", replay_bytes),
+            ("final.diff", final_diff_text.encode("utf-8")),
+            ("README.md", readme_text.encode("utf-8")),
+            ("verify.html", verify_html_text.encode("utf-8")),
+        ]:
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, content)
+        if has_agent_patch:
+            info = zipfile.ZipInfo("agent_patch.diff", date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, (agent_patch_text or "").encode("utf-8"))
+
+    body = buf.getvalue()
+    replay_export_requests_total.labels("zip").inc()
+    replay_export_bytes.labels("zip").observe(len(body))
+
+    filename = _replay_filename(artefact, "zip")
+    # Per P1-6 audit item 15: ``Vary: Authorization, Cookie`` prevents
+    # a CDN keyed only on URL from serving a cached owner zip (which
+    # includes the scratchpad and the agent_patch.diff) to a later
+    # share-token caller of the same URL. ``nosniff`` blocks
+    # MIME-confusion attacks against the ZIP body.
+    headers = {
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "ETag": _replay_etag(artefact),
+        "Vary": "Authorization, Cookie",
+        "X-Content-Type-Options": "nosniff",
+        "X-Robots-Tag": "noindex",
+    }
+    return Response(
+        content=body,
+        status_code=200,
+        media_type="application/zip",
+        headers=headers,
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-4 — Coaching reflection endpoint
+# ---------------------------------------------------------------------------
+#
+# Owner-only. Lazy-loaded by the FE when the post-mortem coaching
+# section enters the viewport. We DELIBERATELY do not accept a
+# share-token here (the coaching reflection embeds the user's private
+# scratchpad text — share-token holders 403).
+#
+# Status surface:
+#   * 401 — anonymous caller (no session cookie).
+#   * 403 — caller is signed in but does not own the submission, OR
+#     attached a ``?share=`` token (we explicitly refuse). The 403
+#     bodies carry no detail about the underlying reason to avoid
+#     fingerprinting.
+#   * 404 — submission unknown / not graded.
+#   * 503 ``{code: "llm_unavailable"}`` — coaching pipeline could
+#     neither find a cached row nor generate a fresh one. The FE
+#     translates this to "hide the section" silently.
+#   * 200 — payload (reflection may still be ``null`` when the user
+#     opted out or has no notes; the FE hides the section either way).
+
+
+@submissions_router.get(
+    "/{submission_id}/coaching",
+    summary="Post-mortem coaching reflection — owner only (P1-4)",
+    responses={
+        200: {"description": "Coaching payload (reflection may be null)"},
+        401: {"description": "Unauthenticated"},
+        403: {"description": "Caller is not the submission owner"},
+        404: {"description": "Submission not found / not graded"},
+        503: {"description": "LLM unavailable AND no cached reflection"},
+    },
+)
+async def get_submission_coaching(
+    submission_id: uuid.UUID,
+    share: str | None = Query(
+        None,
+        description=(
+            "Reject share tokens explicitly — coaching is owner-only "
+            "and surfaces the private scratchpad text."
+        ),
+    ),
+    user: User | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return the coaching reflection for ``submission_id``.
+
+    Auth matrix (strict):
+      * anonymous (no cookie) → 401
+      * share token attached → 403 (we never serve coaching to share
+        viewers, even if the share token would otherwise let them see
+        the report)
+      * cookie present but caller != owner → 403
+      * cookie present + owner → 200 with body
+
+    Body shape::
+
+        {
+          "reflection": str | null,
+          "anchored_event_id": int | null,
+          "anchored_note_quote": str | null,
+          "cached": bool,
+          "generated_at": iso8601
+        }
+
+    On opted-out / no-notes the body returns ``reflection=null`` (200);
+    the FE hides the section. On total LLM failure with no cache the
+    response is a 503 with the FastAPI envelope
+    ``{"detail": {"code": "llm_unavailable", "message": "coaching unavailable"}}``.
+    On non-LLM internal failures (DB blip, ORM crash) the response is
+    a plain 500 — distinct status codes so dashboards can bucket the
+    two failure modes separately.
+    """
+    from app.observability import coaching_errors_total
+    from app.reports.coaching import (
+        CoachingOutcome,
+        CoachingReflectionRead,
+        generate_coaching_reflection,
+    )
+
+    # Share-token holders are explicitly refused. This is the only
+    # surface in the codebase that 403s on a perfectly valid share
+    # token; the privacy contract is documented at length in
+    # P1_DESIGN §P1-4.
+    if share:
+        raise HTTPException(status_code=403, detail="not your report")
+
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+
+    _submission, session = await _fetch_submission(db, submission_id)
+    if session.user_id != user.id:
+        raise HTTPException(status_code=403, detail="not your report")
+    if session.status != "graded":
+        raise HTTPException(status_code=404, detail="submission not graded")
+
+    settings = get_settings()
+    # ``generate_coaching_reflection`` now returns a discriminated
+    # :class:`CoachingResult` — no try/except wrapper needed at this
+    # layer because the inner function maps every failure surface to
+    # an outcome. Only an INTERNAL_FAILED outcome (or an unexpected
+    # raise from a bug) yields a 500, and we deliberately let those
+    # propagate so the platform error handler renders the standard
+    # envelope rather than misleading the FE with "LLM unavailable".
+    result = await generate_coaching_reflection(
+        db, submission_id=submission_id, settings=settings
+    )
+
+    if result.outcome == CoachingOutcome.OK and result.payload is not None:
+        return Response(
+            status_code=200,
+            media_type="application/json",
+            content=result.payload.model_dump_json(),
+        )
+
+    if result.outcome in (CoachingOutcome.OPTED_OUT, CoachingOutcome.NO_NOTES):
+        # 200 with a fully-null body so the FE renders nothing without
+        # an error toast. The status code differentiates "intentionally
+        # silent" from "model is sad" for dashboards.
+        payload = CoachingReflectionRead(
+            reflection=None,
+            anchored_event_id=None,
+            anchored_note_quote=None,
+            cached=False,
+            generated_at=datetime.now(UTC),
+        )
+        return Response(
+            status_code=200,
+            media_type="application/json",
+            content=payload.model_dump_json(),
+        )
+
+    if result.outcome == CoachingOutcome.LLM_FAILED:
+        # 503 with the typed envelope. The FE renders this as "section
+        # unavailable" without a toast.
+        coaching_errors_total.labels(error_class="llm_failed").inc()
+        logger.warning(
+            "coaching: 503 LLM_FAILED submission={} detail={}",
+            submission_id,
+            result.detail or "",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "llm_unavailable",
+                "message": "coaching unavailable",
+            },
+        )
+
+    # INTERNAL_FAILED — log + bump the counter, then 500 via HTTPException.
+    # We deliberately do NOT 503 here; the FE distinguishes the two and a
+    # DB outage masquerading as "model down" hides real platform issues.
+    coaching_errors_total.labels(error_class="internal_failed").inc()
+    logger.error(
+        "coaching: 500 INTERNAL_FAILED submission={} detail={}",
+        submission_id,
+        result.detail or "",
+    )
+    raise HTTPException(status_code=500, detail="internal coaching failure")
+
+
 __all__ = [
     "decode_share_token",
     "issue_share_token",
     "router",
+    "submissions_router",
     "verify_router",
 ]

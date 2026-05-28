@@ -35,9 +35,10 @@ from app.observability import configure_logging, metrics_asgi_app
 from app.profiles.router import router as profiles_router
 from app.recommendations.router import router as recommendations_router
 from app.reports.router import router as reports_router
-from app.reports.router import verify_router
+from app.reports.router import submissions_router, verify_router
 from app.sandbox.pool import SandboxPool
 from app.sessions.integrity import router as integrity_router
+from app.sessions.notes import router as session_notes_router
 from app.sessions.router import router as sessions_router
 from app.status.router import api_v1_router as status_v1_router
 from app.status.router import router as status_router
@@ -301,6 +302,11 @@ def create_app() -> FastAPI:
     # Both routers share the ``/sessions`` prefix; FastAPI merges them by
     # path, so this adds the single ``POST /events/integrity`` route.
     app.include_router(integrity_router, prefix="/api/v1")
+    # P1-4 — workspace scratchpad endpoints. Shares the ``/sessions``
+    # prefix with the main sessions router; FastAPI merges them by
+    # path so this adds three routes (GET/PUT /note, POST
+    # /events/note-viewed) without re-implementing auth + ownership.
+    app.include_router(session_notes_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
     # ``/api/v1/me`` previously aliased ``/api/v1/auth/me`` via ``me_router``;
     # we dropped the alias because the FE (apps/web/lib/api.ts ``auth.me``)
@@ -311,6 +317,10 @@ def create_app() -> FastAPI:
     # P0-11 — public verify surface lives at /api/v1/verify/{id} so the
     # canonical credential URL is short and doesn't pun on /reports.
     app.include_router(verify_router, prefix="/api/v1")
+    # P1-6 — replay artefact endpoints. Mounted at
+    # ``/api/v1/submissions/{id}/replay.{json,zip}`` so the URL reads
+    # "this resource is the submission" rather than punning on /reports.
+    app.include_router(submissions_router, prefix="/api/v1")
     app.include_router(profiles_router, prefix="/api/v1")
     # P1-2 — adaptive next-mission recommendation. Lives under
     # ``/api/v1/me/recommendations`` so a future ``/me`` sub-tree (account

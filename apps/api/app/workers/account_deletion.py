@@ -47,6 +47,7 @@ from app.models.user import User
 from app.observability import (
     account_deletion_grace_run_total,
     account_deletions_processed_total,
+    llm_cache_shared_row_retained_total,
 )
 from app.storage import delete_object
 
@@ -152,7 +153,12 @@ async def _fetch_expired_users(db: AsyncSession, now: datetime) -> list[User]:
     return list((await db.execute(stmt)).scalars())
 
 
-async def _hard_delete_user(db: AsyncSession, user: User) -> None:
+async def _hard_delete_user(db: AsyncSession, user: User) -> None:  # noqa: PLR0912, PLR0915
+    # This worker fans out across every per-user table in lockstep with
+    # the CASCADE chain plus a handful of resources that live outside
+    # the relational graph (S3 objects, scratchpad coaching cache rows).
+    # Splitting it further would scatter the section ordering that the
+    # comments document; the structure is more legible as one method.
     user_id = user.id
 
     # ----- 1. Mark active sessions abandoned --------------------------------
@@ -265,9 +271,12 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:
     from sqlalchemy import delete as sa_delete
 
     from app.models.agent_turn import AgentTurn
+    from app.models.coaching_cache_user_index import CoachingCacheUserIndex
     from app.models.command_run import CommandRun
     from app.models.file_change import FileChange
+    from app.models.llm_cache import LLMCache
     from app.models.magic_link_token import MagicLinkToken
+    from app.models.session_note import SessionNote
     from app.models.supervision_event import SupervisionEvent
     from app.models.user_badge import UserBadge
 
@@ -280,6 +289,14 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:
             FileChange,
             CommandRun,
             SupervisionEvent,
+            # P1-4 — scratchpad bodies. ``ON DELETE CASCADE`` on
+            # session_notes.session_id handles this on Postgres, but
+            # SQLite ignores app-time CASCADE unless ``PRAGMA
+            # foreign_keys = ON`` is explicitly set on the connection.
+            # Re-issue the delete here so the test path stays clean
+            # and a refactor that drops the cascade later still wipes
+            # the user's private notes on hard-delete.
+            SessionNote,
         ):
             await db.execute(
                 sa_delete(child_model).where(child_model.session_id.in_(user_session_ids))
@@ -305,6 +322,62 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:
     await db.execute(sa_delete(MagicLinkToken).where(MagicLinkToken.user_id == user_id))
     await db.execute(sa_delete(UserBadge).where(UserBadge.user_id == user_id))
     await db.execute(sa_delete(DataExport).where(DataExport.user_id == user_id))
+
+    # P1-4 — wipe scratchpad-coaching cache rows produced by this user.
+    # The chain is users → coaching_cache_user_index → llm_cache. We
+    # MUST NOT delete a cache row that any OTHER user's index still
+    # references — that other user would lose their cache for no
+    # reason, and the chokepoint would have to regenerate from
+    # Bedrock on their next request (privacy is preserved either way
+    # because the cache key never carries a user id, only content
+    # hashes). The per-row check below preserves shared rows and
+    # surfaces the count on a counter so ops can verify the
+    # contract holds under real traffic.
+    coaching_cache_ids = list(
+        (
+            await db.execute(
+                select(CoachingCacheUserIndex.llm_cache_id).where(
+                    CoachingCacheUserIndex.user_id == user_id
+                )
+            )
+        ).scalars()
+    )
+    if coaching_cache_ids:
+        to_delete: list = []
+        retained = 0
+        for cache_id in coaching_cache_ids:
+            others = (
+                await db.execute(
+                    select(CoachingCacheUserIndex.user_id)
+                    .where(
+                        CoachingCacheUserIndex.llm_cache_id == cache_id,
+                        CoachingCacheUserIndex.user_id != user_id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if others is None:
+                to_delete.append(cache_id)
+            else:
+                retained += 1
+        if to_delete:
+            await db.execute(
+                sa_delete(LLMCache).where(LLMCache.id.in_(to_delete))
+            )
+        if retained:
+            llm_cache_shared_row_retained_total.inc(retained)
+            logger.info(
+                "account_deletion: retained {} shared coaching cache row(s) for user {}",
+                retained,
+                user_id,
+            )
+    # Always drop the user's index rows — those are user-scoped by
+    # definition; preserving them would orphan-point at deleted rows.
+    await db.execute(
+        sa_delete(CoachingCacheUserIndex).where(
+            CoachingCacheUserIndex.user_id == user_id
+        )
+    )
 
     await _wipe_consent_history_and_stamp_tombstone(db, user_id, user.handle)
 

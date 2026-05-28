@@ -78,6 +78,20 @@ import { env } from "./env";
  * `apps/api/openapi.json` is enforced by `.github/workflows/contracts.yml`.
  */
 
+// ── P1-4 — coaching reflection opt-in toggle ───────────────────────────────
+//
+// The backend ships matching pydantic schemas at
+// ``apps/api/app/schemas/user.py`` (``CoachingConsentRead`` /
+// ``CoachingConsentUpdate``). We mirror them inline here rather than via
+// ``@arena/shared-types`` so the FE can land ahead of the next
+// openapi.json regen — the wire shape is one boolean and won't drift.
+export interface CoachingConsentRead {
+  coaching_reflections_enabled: boolean;
+}
+export interface CoachingConsentUpdate {
+  coaching_reflections_enabled: boolean;
+}
+
 /**
  * Typed error thrown by every `api.*` call. `status` is 0 for network/CORS
  * failures so consumers can distinguish offline-backend from 4xx/5xx.
@@ -359,6 +373,36 @@ export const auth = {
     signal?: AbortSignal,
   ): Promise<void> {
     return request<void>("/auth/me/consent", {
+      method: "POST",
+      body: input,
+      signal,
+    });
+  },
+  /**
+   * GET /api/v1/auth/me/coaching-consent — read the per-user toggle for
+   * the post-mortem coaching reflection (P1-4).
+   *
+   * Returns a single boolean — true when the user has opted in to
+   * forwarding their scratchpad text to AWS Bedrock for the reflection.
+   * Defaults to true on every new account; the privacy panel polls this
+   * to reflect the current state of the column.
+   */
+  getCoachingConsent(signal?: AbortSignal): Promise<CoachingConsentRead> {
+    return request<CoachingConsentRead>("/auth/me/coaching-consent", { signal });
+  },
+  /**
+   * POST /api/v1/auth/me/coaching-consent — flip the opt-in (P1-4).
+   *
+   * Idempotent. The endpoint persists the new value on
+   * ``users.coaching_reflections_enabled`` and returns the post-write
+   * state so the panel can reconcile against the server without a
+   * follow-up GET. CSRF-required; the ``request`` wrapper handles it.
+   */
+  setCoachingConsent(
+    input: CoachingConsentUpdate,
+    signal?: AbortSignal,
+  ): Promise<CoachingConsentRead> {
+    return request<CoachingConsentRead>("/auth/me/coaching-consent", {
       method: "POST",
       body: input,
       signal,
@@ -1065,6 +1109,210 @@ export function getMySkills(signal?: AbortSignal): Promise<SkillsCatalog> {
   return request<SkillsCatalog>(`/profiles/me/skills`, { signal });
 }
 
+// ── P1-6 — Replay artefact downloads ────────────────────────────────────────
+//
+// The backend ships two endpoints with the same auth matrix:
+//   GET /api/v1/submissions/{id}/replay.json — owner OR ?share=<jwt>
+//   GET /api/v1/submissions/{id}/replay.zip  — same
+// Both 404 on anonymous, not-graded, tutorial submissions. The .json variant
+// is served with an aggressive ``Cache-Control: immutable`` + ``ETag`` — the
+// browser's HTTP cache handles repeat fetches without us layering on top.
+// The .zip variant is built on the fly per request (small bundles, < 100 KB).
+//
+// We deliberately bypass the shared ``request`` helper here because:
+//   1. The JSON body is opaque application/json (not parsed against a typed
+//      shape — replay v1 schema lives in docs/schemas/replay.schema.json);
+//   2. The ZIP variant needs ``Response.blob()`` and a Content-Disposition
+//      filename probe, neither of which the JSON-only ``request`` exposes.
+// Both helpers still surface ``ApiError`` so call-sites can branch on
+// ``error.status === 404`` for the "not available" surface.
+
+function buildReplayUrl(submissionId: string, ext: "json" | "zip", share?: string | null): string {
+  const url = new URL(
+    `/api/v1/submissions/${encodeURIComponent(submissionId)}/replay.${ext}`,
+    `${env.apiBaseUrl}/`,
+  );
+  if (share) url.searchParams.set("share", share);
+  return url.toString();
+}
+
+async function readErrorBody(response: Response): Promise<ApiErrorBody | null> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return null;
+  try {
+    return (await response.json()) as ApiErrorBody;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Download the replay artefact for a graded submission.
+ *
+ * Returns the raw parsed JSON (an opaque ``ReplayArtifact`` per
+ * ``docs/schemas/replay.schema.json``). The wire shape is intentionally not
+ * typed here — the artefact is a snapshot of supervision events + the score
+ * report, and a typed contract here would be the wrong layer (the canonical
+ * source is the backend builder + the JSON Schema).
+ *
+ * Behaviour:
+ *  - owner (cookie auth): full payload.
+ *  - share-token viewers (``share=<jwt>``): payload with ``events[].payload``
+ *    fields redacted for prompt text — same matrix as the JSON report.
+ *  - anonymous / tutorial / ungraded: ``ApiError(404)``.
+ */
+export async function downloadReplayJson(
+  submissionId: string,
+  opts?: { share?: string; signal?: AbortSignal },
+): Promise<unknown> {
+  const url = buildReplayUrl(submissionId, "json", opts?.share);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      signal: opts?.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
+    throw new ApiError(`Network error contacting ${url}`, 0, null);
+  }
+  if (!response.ok) {
+    const body = await readErrorBody(response);
+    const detail =
+      body && typeof body.detail === "string"
+        ? body.detail
+        : `HTTP ${response.status}`;
+    throw new ApiError(detail, response.status, body);
+  }
+  try {
+    return (await response.json()) as unknown;
+  } catch {
+    throw new ApiError("Replay payload was not valid JSON.", response.status, null);
+  }
+}
+
+/**
+ * Trigger a browser download of the replay ZIP bundle.
+ *
+ * Resolves once the download has been *handed off* to the browser (the
+ * temporary anchor click ran). On error throws ``ApiError`` so callers can
+ * distinguish 404 ("not available") from a transport failure.
+ *
+ * Mechanics:
+ *  1. fetch the response, read its ``blob()``.
+ *  2. createObjectURL → anchor with ``download={filename}`` → click → remove.
+ *  3. ``revokeObjectURL`` on a ``setTimeout(0)`` so the browser has a tick
+ *     to actually pick up the data: URL before we tear it down.
+ *
+ * ``filename`` is optional. When omitted we probe ``Content-Disposition`` and
+ * fall back to ``arena-replay-{shortId}.zip``. The backend serves a
+ * filename like ``arena-replay-{short}-{graded_ymd}.zip`` — we prefer that
+ * value when present so the saved file matches the canonical name.
+ *
+ * Returned promise carries the wire-byte count so telemetry can fire
+ * ``replay_export_succeeded`` with ``bytes: <blob.size>``.
+ */
+export async function downloadReplayZip(
+  submissionId: string,
+  opts?: { share?: string; filename?: string; signal?: AbortSignal },
+): Promise<{ bytes: number; filename: string }> {
+  const url = buildReplayUrl(submissionId, "zip", opts?.share);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/zip" },
+      signal: opts?.signal,
+    });
+  } catch (err) {
+    // Re-surface aborts as DOMException("AbortError") so callers can
+    // ``err instanceof DOMException && err.name === "AbortError"`` test
+    // without an extra "is this network or abort?" branch.
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
+    throw new ApiError(`Network error contacting ${url}`, 0, null);
+  }
+  if (!response.ok) {
+    const body = await readErrorBody(response);
+    const detail =
+      body && typeof body.detail === "string"
+        ? body.detail
+        : `HTTP ${response.status}`;
+    throw new ApiError(detail, response.status, body);
+  }
+  const blob = await response.blob();
+  const filename =
+    opts?.filename ??
+    parseContentDispositionFilename(response.headers.get("content-disposition")) ??
+    `arena-replay-${submissionId.slice(0, 8)}.zip`;
+
+  // SSR guard — the caller is always client-side (the helper is wired into
+  // a dropdown menu), but failing closed on the server is the right move
+  // if anyone ever calls this from a server component.
+  if (typeof document === "undefined" || typeof URL.createObjectURL !== "function") {
+    throw new ApiError(
+      "downloadReplayZip requires a browser environment.",
+      0,
+      null,
+    );
+  }
+
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  // Hidden anchor — never visible, but appended so the click is a real
+  // user-gesture-initiated navigation that respects the download attribute
+  // across all browsers (Safari in particular cares).
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  // Defer cleanup so the browser's download pipeline has time to pick up
+  // the object URL before we revoke it. setTimeout(0) is enough; longer
+  // timeouts would just delay the GC of the blob.
+  window.setTimeout(() => {
+    anchor.remove();
+    URL.revokeObjectURL(objectUrl);
+  }, 0);
+
+  return { bytes: blob.size, filename };
+}
+
+/**
+ * Parse a ``Content-Disposition`` header for the ``filename=...`` parameter.
+ * Returns ``null`` if the header is absent or doesn't carry a filename.
+ *
+ * Handles both ``filename="quoted name.zip"`` and the RFC 5987
+ * ``filename*=UTF-8''percent-encoded`` form. Prefers ``filename*`` when both
+ * are present (the encoded form is authoritative).
+ */
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const starMatch = header.match(/filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i);
+  const starValue = starMatch?.[2];
+  if (starValue) {
+    try {
+      return decodeURIComponent(starValue.trim());
+    } catch {
+      /* fall through */
+    }
+  }
+  const quoted = header.match(/filename\s*=\s*"([^"]+)"/i);
+  const quotedValue = quoted?.[1];
+  if (quotedValue) return quotedValue;
+  const bare = header.match(/filename\s*=\s*([^;]+)/i);
+  const bareValue = bare?.[1];
+  if (bareValue) return bareValue.trim();
+  return null;
+}
+
 /**
  * P1-2 — adaptive next-mission recommendation set for the signed-in user.
  *
@@ -1097,6 +1345,168 @@ export function shareReport(submissionId: string): Promise<ShareReportResponse> 
   return request<ShareReportResponse>(
     `/reports/${encodeURIComponent(submissionId)}/share`,
     { method: "POST" }
+  );
+}
+
+// ── P1-4 — Session scratchpad (notes) ───────────────────────────────────────
+//
+// The scratchpad is a small per-session free-text buffer the user can use to
+// jot reasoning while working. It is owner-scoped (the BE returns 403 to any
+// other viewer) and capped at 32 KiB on the wire — the FE enforces the same
+// cap client-side to keep the textarea responsive and to short-circuit the
+// 413 round-trip. The endpoints below mirror the backend shipped in Wave 1B:
+//
+//   GET  /api/v1/sessions/{id}/note               → SessionNote
+//   PUT  /api/v1/sessions/{id}/note               → SessionNote
+//                                                   (413 scratchpad_too_large,
+//                                                    409 session_not_active,
+//                                                    403 non-owner)
+//   POST /api/v1/sessions/{id}/events/note-viewed → 204 No Content
+//
+// We intentionally don't put these into ``@arena/shared-types`` yet — the wire
+// shape is two fields and very stable; mirroring inline keeps the FE shippable
+// ahead of the next openapi.json regen.
+export interface SessionNote {
+  body: string;
+  /** ISO8601 timestamp of the last successful write. */
+  updated_at: string;
+}
+
+/**
+ * GET /api/v1/sessions/{id}/note — fetch the current scratchpad body.
+ *
+ * Returns ``{body: "", updated_at}`` on a fresh session (the BE materialises
+ * an empty row on first read). Throws ``ApiError(403)`` for non-owners; the
+ * scratchpad pane defends against this by never mounting for share viewers.
+ */
+export function getSessionNote(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SessionNote> {
+  return request<SessionNote>(
+    `/sessions/${encodeURIComponent(sessionId)}/note`,
+    { signal },
+  );
+}
+
+/**
+ * PUT /api/v1/sessions/{id}/note — overwrite the scratchpad body.
+ *
+ * Body shape is ``{body}``. CSRF-required (handled transparently by the
+ * ``request`` wrapper). Throws ``ApiError`` for the documented error
+ * codes; the BE uses FastAPI's standard ``HTTPException`` envelope so
+ * the code + metadata live under ``err.body.detail``:
+ *   - ``413`` ``{detail: {code: "scratchpad_too_large",
+ *     limit_bytes: 32768, actual_bytes: number, message: string}}`` —
+ *     body exceeds the 32 KiB cap. The FE clamps before sending, but a
+ *     clock-skew between client and server (or a future cap reduction)
+ *     could still surface this; callers must surface the same "near
+ *     limit" toast.
+ *   - ``409`` ``{detail: {code: "session_not_active",
+ *     session_status: string, message: string}}`` — the session has
+ *     moved out of ``active`` (submitting / graded / etc.). The FE
+ *     disables input and renders a read-only banner.
+ *   - ``403`` — non-owner. Defensive only — the pane never mounts for
+ *     non-owners.
+ */
+export function putSessionNote(
+  sessionId: string,
+  body: string,
+  opts?: { signal?: AbortSignal },
+): Promise<SessionNote> {
+  return request<SessionNote>(
+    `/sessions/${encodeURIComponent(sessionId)}/note`,
+    { method: "PUT", body: { body }, signal: opts?.signal },
+  );
+}
+
+/**
+ * P1-4 — owner-only coaching reflection payload returned by
+ * ``GET /api/v1/submissions/{id}/coaching``.
+ *
+ * ``reflection`` may legitimately be ``null`` (the user opted out of
+ * coaching, or has no scratchpad notes on the session); the FE
+ * silently hides the section in that case. The two anchor fields are
+ * parsed from inline ``[event:N]`` / ``[note:"..."]`` markers in the
+ * reflection text; either may be ``null`` if the model omitted them.
+ */
+export interface CoachingReflection {
+  reflection: string | null;
+  anchored_event_id: number | null;
+  anchored_note_quote: string | null;
+  cached: boolean;
+  generated_at: string;
+}
+
+/**
+ * GET /api/v1/submissions/{id}/coaching — owner-only post-mortem
+ * coaching reflection.
+ *
+ * Behaviour at the API level:
+ *   - ``401`` anonymous — caller's session cookie is missing.
+ *   - ``403`` non-owner OR a ``?share=`` token was attached. The
+ *     coaching endpoint never honours share tokens because the
+ *     reflection embeds the private scratchpad text. The FE never
+ *     sends share, so a 403 here is essentially "you don't own this".
+ *   - ``404`` submission unknown or not graded.
+ *   - ``503 {code: "llm_unavailable"}`` — generator failed AND no
+ *     cached row exists. We translate this to a null-payload here so
+ *     callers don't need an explicit 503 path — the post-mortem
+ *     section is silently hidden either way.
+ *   - ``200`` with the payload above.
+ *
+ * Network errors (status=0) still throw, so the caller can decide
+ * whether to retry or hide.
+ */
+export async function getCoachingReflection(
+  submissionId: string,
+  signal?: AbortSignal,
+): Promise<CoachingReflection> {
+  try {
+    return await request<CoachingReflection>(
+      `/submissions/${encodeURIComponent(submissionId)}/coaching`,
+      { signal },
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 503) {
+      const code =
+        err.body && typeof err.body.code === "string" ? err.body.code : null;
+      if (code === "llm_unavailable") {
+        return {
+          reflection: null,
+          anchored_event_id: null,
+          anchored_note_quote: null,
+          cached: false,
+          generated_at: new Date().toISOString(),
+        };
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * POST /api/v1/sessions/{id}/events/note-viewed — emits a
+ * ``note.viewed_during_prompt`` supervision event when the user focuses the
+ * agent-chat composer with a non-empty scratchpad. Best-effort: the BE
+ * accepts it on active sessions, no-ops on terminal sessions. 204 on success.
+ *
+ * ``bytesAtView`` is the byte length of the scratchpad body at the moment of
+ * focus — the BE persists it on the event payload so the post-mortem can
+ * tell at a glance whether the user actually had notes worth glancing at.
+ */
+export function postNoteViewed(
+  sessionId: string,
+  bytesAtView: number,
+  opts?: { signal?: AbortSignal },
+): Promise<void> {
+  return request<void>(
+    `/sessions/${encodeURIComponent(sessionId)}/events/note-viewed`,
+    {
+      method: "POST",
+      body: { bytes_at_view: bytesAtView },
+      signal: opts?.signal,
+    },
   );
 }
 

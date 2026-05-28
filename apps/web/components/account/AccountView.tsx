@@ -25,6 +25,7 @@ import { ApiError, auth } from "@/lib/api";
 import { SectionLabel } from "@/components/ui/SectionLabel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { AccountDataMissionHistory } from "./AccountDataMissionHistory";
 import { DangerPanel } from "./DangerPanel";
 import { DataExportPanel } from "./DataExportPanel";
 import { DeletionLockBanner } from "./DeletionLockBanner";
@@ -183,6 +184,9 @@ export function AccountView({ initialTab = "profile" }: AccountViewProps) {
 
         <TabsContent value="data" className="space-y-8" data-testid="panel-data">
           <DataExportPanel locked={locked} />
+          {me.handle ? (
+            <AccountDataMissionHistory handle={me.handle} />
+          ) : null}
         </TabsContent>
 
         <TabsContent value="danger" className="space-y-8" data-testid="panel-danger">

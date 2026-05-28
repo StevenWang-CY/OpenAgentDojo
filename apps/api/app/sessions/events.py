@@ -331,6 +331,12 @@ class EventEmitter:
         # canonical ``TypeError``. Without the broader catch, a single
         # misbehaving payload could 500 the entire request handler and
         # leave the session pinned mid-submit.
+        # Use the same ISO coercion the WS backfill path uses
+        # (apps/api/app/ws/events.py::_coerce_iso) so a backfill
+        # frame and a live-emit frame for the same DB row carry
+        # byte-identical ``occurred_at`` strings. P1-6 audit item 11.
+        from app.ws.events import _coerce_iso as _ws_coerce_iso
+
         try:
             message = json.dumps(
                 {
@@ -338,7 +344,7 @@ class EventEmitter:
                     "session_id": str(session_id),
                     "event_type": event_type,
                     "payload": payload,
-                    "occurred_at": now.isoformat(),
+                    "occurred_at": _ws_coerce_iso(now),
                 },
                 default=str,
             )

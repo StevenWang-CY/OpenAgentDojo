@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>OpenAgentDojo replay envelope · {{ handle }}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #16181d;
+        --muted: #5b6470;
+        --rule: #cfd6df;
+        --paper: #fafbfc;
+        --accent: #2563eb;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 32px 24px 48px;
+      }
+      header {
+        border-bottom: 1px solid var(--rule);
+        padding-bottom: 16px;
+        margin-bottom: 24px;
+      }
+      header h1 {
+        margin: 0 0 4px;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      header .sub {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      h2 {
+        margin: 24px 0 8px;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted);
+      }
+      dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: minmax(140px, max-content) 1fr;
+        gap: 4px 16px;
+      }
+      dt {
+        color: var(--muted);
+      }
+      dd {
+        margin: 0;
+        word-break: break-all;
+      }
+      pre {
+        background: #ffffff;
+        border: 1px solid var(--rule);
+        border-radius: 4px;
+        padding: 12px;
+        overflow-x: auto;
+        font-size: 12.5px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .pill {
+        display: inline-block;
+        padding: 1px 8px;
+        border: 1px solid var(--rule);
+        border-radius: 999px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .score {
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .score .max {
+        color: var(--muted);
+        font-weight: 400;
+        font-size: 14px;
+      }
+      footer {
+        margin-top: 36px;
+        padding-top: 12px;
+        border-top: 1px solid var(--rule);
+        font-size: 11.5px;
+        color: var(--muted);
+      }
+      a { color: var(--accent); }
+      @media print {
+        body { background: #fff; }
+        pre { border-color: #999; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>// openagentdojo · replay envelope</h1>
+        <div class="sub">offline inspection page · no scripts, no remote calls</div>
+      </header>
+
+      <section>
+        <h2>Subject</h2>
+        <dl>
+          <dt>handle</dt><dd>{{ handle }}</dd>
+          <dt>mission</dt><dd>{{ mission_title }} <span class="pill">{{ mission_id }}</span></dd>
+          <dt>submission_id</dt><dd>{{ submission_id }}</dd>
+          <dt>graded_at</dt><dd>{{ graded_at }}</dd>
+          <dt>rubric</dt><dd>{{ rubric_version }}</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h2>Score</h2>
+        <div class="score">{{ total_score }} <span class="max">/ {{ effective_max }}</span></div>
+      </section>
+
+      <section>
+        <h2>Hash</h2>
+        <pre>{{ verification_hash }}</pre>
+        <h2>Signature</h2>
+        <pre>{{ verification_signature }}</pre>
+        <h2>Canonical URL</h2>
+        <pre>{{ canonical_url }}</pre>
+      </section>
+
+      <section>
+        <h2>How to verify offline</h2>
+        <p>
+          The envelope above is the same dictionary the platform hashed at
+          grade time. To re-derive the signature by hand, run:
+        </p>
+        <pre>
+# 1. Compute the canonical hash:
+#    sorted keys, separators=(',', ':'), ensure_ascii=False, UTF-8.
+SHA-256(canonical_json(envelope)) === {{ verification_hash }}
+
+# 2. Recompute the HMAC under the operator's VERIFY_SECRET:
+HMAC-SHA256(VERIFY_SECRET, verification_hash) === {{ verification_signature }}</pre>
+        <p>
+          Recomputing the HMAC signature requires the operator's
+          <code>VERIFY_SECRET</code>. As a self-check anyone can run,
+          the SHA-256 of the canonical envelope must match
+          <code>verification_hash</code> above — that step is
+          reproducible from the bundle alone:
+        </p>
+        <pre>
+# Linux / macOS recipe — no JavaScript, no remote calls:
+python3 - &lt;&lt;'PY'
+import json, hashlib, sys
+env = json.load(open("replay.json"))["envelope"]
+canon = json.dumps(env, sort_keys=True, separators=(",", ":"),
+                   ensure_ascii=False).encode("utf-8")
+print(hashlib.sha256(canon).hexdigest())
+PY
+# expected: {{ verification_hash }}</pre>
+        <p>
+          The bundle's <code>replay.json</code> carries the envelope plus the
+          full supervision event stream that produced the score. The bundle's
+          <code>README.md</code> documents the canonicalisation rules a third
+          party can re-implement to reproduce the signature byte-for-byte
+          once they obtain the secret from the operator.
+        </p>
+      </section>
+
+      <footer>
+        Generated by OpenAgentDojo · schema {{ schema_version }} ·
+        replay {{ kind }} · exported {{ exported_at }}
+      </footer>
+    </main>
+  </body>
+</html>

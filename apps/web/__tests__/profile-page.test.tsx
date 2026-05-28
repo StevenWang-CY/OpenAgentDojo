@@ -49,6 +49,7 @@ const FIXTURE: PublicProfile = {
   history: [
     {
       session_id: "session-1",
+      submission_id: "submission-1",
       mission_id: "auth-cookie-expiration",
       mission_title: "Expired Session Cookie Still Grants Access",
       completed_at: "2026-03-04T01:00:00Z",

@@ -125,7 +125,119 @@ export type TelemetryEvent =
   // local ``initialize_failed``. ``error_class`` is a free-form
   // string so a future backend error class doesn't require a FE
   // typedef bump.
-  | "lsp_error";
+  | "lsp_error"
+  // P1-5 — fires when the synchronised-scroll hook actually scrolls
+  // the partner pane (one pane scrolled, the other followed). Debounced
+  // to once per second per ``direction`` so a long drag emits one event
+  // rather than burning the funnel. Properties:
+  //   - ``direction`` : ``"user_to_ideal"`` | ``"ideal_to_user"``
+  //   - ``anchor_count``: number of anchor pairs in the anchor map
+  //     (a lightweight indicator of how well-paired the two diffs are)
+  | "three_way_diff_synced_scroll"
+  // P1-5 — fires once per ``(event_id, side)`` hover/focus on the
+  // load-bearing-line marker. Properties:
+  //   - ``event_id`` : the supervision-event id the moment is pinned to
+  //   - ``side``     : ``"user"`` | ``"ideal"``
+  //   - ``moment_count``: how many moments collapse onto this line
+  //     (>= 1; > 1 means the marker is the aggregated chip)
+  | "load_bearing_line_hovered"
+  // P1-6 — fires when the user clicks "Download replay (JSON)" or
+  // "Download replay (ZIP)" in the report share dropdown / account
+  // Data tab. Properties:
+  //   - ``submission_id`` : target submission id
+  //   - ``kind``          : ``"json"`` | ``"zip"``
+  // The backend mirrors this with the prometheus counter
+  // ``replay_export_requests_total{kind}`` so dashboards can join the
+  // FE intent funnel against the BE delivery counter.
+  | "replay_export_requested"
+  // P1-6 — fires once the replay download lands (the browser-side
+  // fetch resolved 200 and either parsed the JSON or triggered the
+  // file save dialog). Properties:
+  //   - ``submission_id`` : target submission id
+  //   - ``kind``          : ``"json"`` | ``"zip"``
+  //   - ``bytes``         : number — wire-size of the served body
+  | "replay_export_succeeded"
+  // P1-6 — fires when the replay request fails: a 404 (auth matrix
+  // rejected the caller), a 503 (verify secret unavailable), a
+  // network error, or a JSON parse failure on the JSON variant.
+  // Properties:
+  //   - ``submission_id`` : target submission id
+  //   - ``kind``          : ``"json"`` | ``"zip"``
+  //   - ``error_class``   : a short discriminator the operator can
+  //     bucket on (``http_404`` / ``http_503`` / ``network_error`` /
+  //     ``parse_error`` / ``unknown``)
+  | "replay_export_failed"
+  // P1-4 (§C "Telemetry rollup") — fires the first time the
+  // scratchpad pane is rendered visible during a session AND on
+  // every subsequent toggle from collapsed → expanded. Wired to the
+  // ``workspaceStore.scratchpadOpen`` setter so the FE never has to
+  // duplicate the toggle logic across keybind + button surfaces.
+  // Properties:
+  //   - ``session_id`` : the owning session UUID (string)
+  //   - ``trigger``    : ``"button"`` | ``"keybind"`` | ``"deeplink"`` —
+  //     how the user opened it; lets the funnel split "people who
+  //     discover the pane via the button" from "people who already
+  //     knew about it and used ⌘\\".
+  | "scratchpad_opened"
+  // P1-4 (§C) — fires after ``PUT /sessions/{id}/note`` returns 200.
+  // Mirror of the BE-side ``note.edited`` supervision event but kept
+  // in the FE telemetry stream so the analytics funnel (PostHog) can
+  // see edit cadence without joining against ``supervision_events``.
+  // Properties:
+  //   - ``session_id``  : the owning session UUID (string)
+  //   - ``bytes``       : new body length in UTF-8 bytes
+  //   - ``debounced_ms``: how long the 1.5 s autosave debounce sat
+  //     before flushing (often 1500; lower on a final blur-flush)
+  | "scratchpad_edit_persisted"
+  // P1-4 (§C) — FE mirror of the BE supervision event
+  // ``note.viewed_during_prompt``. Fires when the agent-chat
+  // composer focuses while the scratchpad has > 0 bytes. The BE
+  // event is the canonical source of truth for the post-mortem
+  // timeline; this FE copy exists so the cookie-consent-gated
+  // analytics funnel can see the same signal without a BE join.
+  // Properties:
+  //   - ``session_id``   : the owning session UUID (string)
+  //   - ``bytes_at_view``: byte length of the scratchpad body at the
+  //     moment the composer focused (matches the BE payload field)
+  | "scratchpad_viewed_during_prompt"
+  // P1-4 (§C, coaching reflection telemetry) — fires once when the
+  // post-mortem "// what you wrote vs. what you did" section enters
+  // the viewport (IntersectionObserver, 50% threshold). Lazy-load
+  // bookkeeping: the FE only requests
+  // ``GET /submissions/{id}/coaching`` after this event fires, so
+  // its count is also the cold-cache request count.
+  // Properties:
+  //   - ``submission_id`` : target submission UUID (string)
+  //   - ``cached``        : boolean — true when the BE returned a
+  //     cache-hit, false when the LLM was invoked. Lets the funnel
+  //     bucket "first viewer" vs "cached reflection" separately.
+  | "coaching_reflection_shown"
+  // P1-4 (§C) — fires when the user clicks an anchor inside the
+  // coaching section: a timeline event quote or a scratchpad note
+  // quote. Lets us tell whether the cross-surface anchoring is
+  // actually used (cheap signal for the "is the coaching pulling
+  // its weight" question).
+  // Properties:
+  //   - ``submission_id`` : target submission UUID (string)
+  //   - ``anchor_kind``   : ``"timeline"`` | ``"note_quote"`` —
+  //     which side of the reflection the user clicked
+  //   - ``event_id``      : present only when ``anchor_kind ===
+  //     "timeline"``; the supervision-event id the anchor jumps to
+  | "coaching_reflection_anchor_clicked"
+  // P1-4 (audit Item 19) — fires when the coaching reflection
+  // ``useQuery`` lands in an error state. The user-facing behaviour
+  // is unchanged (the section is silently hidden) but we want
+  // oncall observability so a stale BE deploy can be triaged from
+  // the analytics funnel without a log dive. Properties:
+  //   - ``status`` : HTTP status (0 for network errors, otherwise
+  //     the BE response status — typically 500 / 503 / 504)
+  | "coaching_reflection_failed"
+  // P1-4 (audit Item A3) — fires when the ``note.viewed_during_prompt``
+  // best-effort BE POST fails. The composer focus telemetry still
+  // landed in PostHog, so this event exists purely so the operator
+  // can spot a degraded BE write path. Properties:
+  //   - ``status`` : HTTP status (0 for network, otherwise BE status)
+  | "scratchpad_viewed_during_prompt_failed";
 
 /**
  * Canonical event names, exposed as a const enum-like object so call sites
@@ -159,6 +271,19 @@ export const TelemetryEvents = {
   lsp_session_started: "lsp_session_started",
   lsp_completion_accepted: "lsp_completion_accepted",
   lsp_error: "lsp_error",
+  three_way_diff_synced_scroll: "three_way_diff_synced_scroll",
+  load_bearing_line_hovered: "load_bearing_line_hovered",
+  replay_export_requested: "replay_export_requested",
+  replay_export_succeeded: "replay_export_succeeded",
+  replay_export_failed: "replay_export_failed",
+  scratchpad_opened: "scratchpad_opened",
+  scratchpad_edit_persisted: "scratchpad_edit_persisted",
+  scratchpad_viewed_during_prompt: "scratchpad_viewed_during_prompt",
+  coaching_reflection_shown: "coaching_reflection_shown",
+  coaching_reflection_anchor_clicked: "coaching_reflection_anchor_clicked",
+  coaching_reflection_failed: "coaching_reflection_failed",
+  scratchpad_viewed_during_prompt_failed:
+    "scratchpad_viewed_during_prompt_failed",
 } as const satisfies Record<TelemetryEvent, TelemetryEvent>;
 
 // ── P1-3 LSP convenience helpers ────────────────────────────────────────────

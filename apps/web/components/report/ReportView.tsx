@@ -12,6 +12,7 @@ import {
   createSession,
   getMyRecommendations,
   getReport,
+  getSessionNote,
   getTimeline,
   shareReport,
 } from "@/lib/api";
@@ -220,6 +221,7 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
         hiddenTestsTotal={countHiddenTestsTotal(report)}
         scoreCapReason={submission.score_cap_reason ?? report.score_cap_reason ?? null}
         uncappedTotal={report.uncapped_total ?? null}
+        share={effectiveShare}
       />
 
       {/* P0-8 — verified vs honor-mode chip pinned beside the score so a
@@ -248,12 +250,15 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
 
       {/* P0-2 — post-mortem walkthrough leads the report: critical
           moment + three-way diff. This is the training surface, not
-          the measurement readout. */}
+          the measurement readout. P1-4 — coaching reflection lands
+          here too, gated on owner status (the surface embeds the
+          private scratchpad text). */}
       <Section title="what you take away" id="walkthrough-heading">
         <PostMortemWalkthrough
           submission={submission}
           events={events}
           onScrollToEvent={scrollToEvent}
+          viewerIsOwner={!effectiveShare && !!user}
         />
       </Section>
 
@@ -307,6 +312,12 @@ export function ReportView({ submissionId, share = null }: ReportViewProps) {
               </li>
             ))}
           </ul>
+        </Section>
+      ) : null}
+
+      {sessionId ? (
+        <Section title="your notes" id="scratchpad-heading">
+          <ScratchpadReadOnly sessionId={sessionId} share={effectiveShare} />
         </Section>
       ) : null}
 
@@ -632,6 +643,7 @@ function ReportHeader({
   hiddenTestsTotal,
   scoreCapReason,
   uncappedTotal,
+  share,
 }: {
   submissionId: string;
   totalScore: number;
@@ -644,6 +656,11 @@ function ReportHeader({
   /** P0-4 — the uncapped (honest) total. Surfaced as "would have scored
    *  X" beside the cap chip when greater than the displayed total. */
   uncappedTotal: number | null;
+  /** P1-6 — when the report is viewed via a public share link, forward the
+   *  token to the share dropdown so its replay-download menu items can hit
+   *  the backend's owner-OR-share auth matrix successfully (a share-token
+   *  viewer gets a redacted payload, but does NOT 404). */
+  share: string | null;
 }) {
   const [sharing, setSharing] = React.useState(false);
   const [sharedExpiresAt, setSharedExpiresAt] = React.useState<string | null>(
@@ -734,6 +751,7 @@ function ReportHeader({
           submissionId={submissionId}
           onCopyLink={() => void handleShare()}
           sharing={sharing}
+          share={share}
         />
         <p className="font-mono text-[11px] text-[var(--color-muted-foreground)]">
           {sharedExpiresAt
@@ -828,6 +846,106 @@ function DiagnosticList({ diagnostics }: { diagnostics: DiagnosticEntry[] }) {
         );
       })}
     </ol>
+  );
+}
+
+/**
+ * P1-4 — read-only post-mortem view of the session scratchpad.
+ *
+ * The walkthrough surface (PostMortemWalkthrough) leads with the agent's
+ * actions; this section closes the loop by showing the user's own
+ * reasoning side-by-side with the timeline. It deliberately renders as a
+ * monospaced ``<pre>`` block so whitespace, indentation, and bullet
+ * conventions the user adopted in the workspace survive the trip.
+ *
+ * Empty state: "you didn't take notes during this session" (encouragement,
+ * not shaming).
+ * 404 (session row deleted under us): "notes are unavailable for this
+ * session" (terminal — no recovery).
+ * Share-link viewers: skipped silently, because the backend's
+ * session-note endpoint is owner-scoped. The component checks
+ * ``effectiveShare`` and renders the share-viewer disclaimer instead.
+ */
+function ScratchpadReadOnly({
+  sessionId,
+  share,
+}: {
+  sessionId: string;
+  share: string | null;
+}) {
+  const noteQuery = useQuery({
+    queryKey: ["session-note", sessionId],
+    queryFn: ({ signal }) => getSessionNote(sessionId, signal),
+    // Share-link viewers can't read the owner-scoped scratchpad — skip the
+    // request to avoid a guaranteed 403 in their console.
+    enabled: !share,
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 403)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+  });
+
+  if (share) {
+    return (
+      <p
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs text-[var(--color-muted-foreground)]"
+        data-testid="scratchpad-readonly-share-disclaimer"
+      >
+        The note-taking surface is private to the session owner.
+      </p>
+    );
+  }
+
+  if (noteQuery.isLoading) {
+    return <Skeleton className="h-24 rounded-md" />;
+  }
+
+  if (noteQuery.error) {
+    const err = noteQuery.error instanceof ApiError ? noteQuery.error : null;
+    if (err?.status === 404) {
+      return (
+        <p
+          className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs text-[var(--color-muted-foreground)]"
+          data-testid="scratchpad-readonly-missing"
+        >
+          Notes are unavailable for this session.
+        </p>
+      );
+    }
+    // 403 / 401 / network: the share-link disclaimer wording fits — the
+    // viewer can't see the notes, regardless of why.
+    return (
+      <p
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs text-[var(--color-muted-foreground)]"
+        data-testid="scratchpad-readonly-forbidden"
+      >
+        Notes for this session aren&apos;t available to you.
+      </p>
+    );
+  }
+
+  const body = (noteQuery.data?.body ?? "").trim();
+  if (body.length === 0) {
+    return (
+      <p
+        className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-xs text-[var(--color-muted-foreground)]"
+        data-testid="scratchpad-readonly-empty"
+      >
+        You didn&apos;t take notes during this session.
+      </p>
+    );
+  }
+
+  return (
+    <pre
+      className="max-h-[400px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 font-mono text-xs leading-relaxed text-[var(--color-foreground)]"
+      data-testid="scratchpad-readonly-body"
+      aria-label="Scratchpad notes from this session"
+    >
+      {noteQuery.data?.body ?? ""}
+    </pre>
   );
 }
 

@@ -5,6 +5,17 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { AgentTurn, SupervisionEvent } from "@arena/shared-types";
 
 /**
+ * P1-4 (audit Item 29) — the trigger source for the most recent
+ * ``setScratchpadOpen(true, …)`` call. Pushed by the pane's header
+ * button (``"button"``), the workspace keybind (``"keybind"``), or a
+ * deep link (``"deeplink"``); read by the pane on the next
+ * false→true transition so the ``scratchpad_opened`` telemetry event
+ * carries the actual surface the user touched. Transient — never
+ * persisted across reloads.
+ */
+export type ScratchpadOpenTrigger = "button" | "keybind" | "deeplink";
+
+/**
  * Workspace state is keyed *per session* in localStorage so a user can have
  * multiple workspaces open in different tabs without them stomping on each
  * other. The hook `useWorkspaceStore(sessionId)` returns a memoised store
@@ -44,6 +55,34 @@ export interface WorkspaceState {
    */
   activeLineFocus: number | null;
 
+  // ── P1-4 — Scratchpad pane (notes) ───────────────────────────────────────
+  /**
+   * True when the bottom-of-AgentChat scratchpad pane is expanded.
+   *
+   * Persisted per (user, session) via the persist middleware so the user's
+   * preference survives reloads. Default ``false`` for new sessions; the
+   * design ships the pane collapsed so it doesn't steal vertical real estate
+   * from users who never take notes.
+   */
+  scratchpadOpen: boolean;
+  /**
+   * UTF-8 byte length of the latest persisted scratchpad body. This is the
+   * ONLY piece of scratchpad state the FE stores locally — the body itself
+   * lives server-side, where the post-mortem reflection reads it. Storing
+   * the body in the client would create a sync nightmare (multi-tab races,
+   * stale buffers after a reset). The byte count is just enough for
+   * AgentChat's "viewed during prompt" emission to decide whether to fire.
+   */
+  scratchpadBytes: number;
+  /**
+   * Transient — surface the latest ``setScratchpadOpen`` call originated
+   * from. Read by the ScratchpadPane on a false→true transition so the
+   * ``scratchpad_opened`` telemetry event carries the user's actual
+   * intent (button click vs. keybind vs. deeplink). NOT persisted; defaults
+   * to ``null`` on mount + after every full reset.
+   */
+  lastScratchpadTrigger: ScratchpadOpenTrigger | null;
+
   // ── Mutators ──────────────────────────────────────────────────────────────
   setSelectedContext(paths: string[]): void;
   toggleContextPath(path: string): void;
@@ -58,6 +97,16 @@ export interface WorkspaceState {
   setSearchPanelOpen(open: boolean): void;
   setHelpOverlayOpen(open: boolean): void;
   setActiveLineFocus(line: number | null): void;
+  /**
+   * Expand/collapse the scratchpad pane (P1-4). ``trigger`` records the
+   * surface the user touched so the pane can attribute the
+   * ``scratchpad_opened`` telemetry event correctly. Optional — callers
+   * who don't pass one are treated as a button click (the discoverable
+   * default surface).
+   */
+  setScratchpadOpen(open: boolean, trigger?: ScratchpadOpenTrigger): void;
+  /** Record the latest persisted scratchpad byte length (P1-4). */
+  setScratchpadBytes(bytes: number): void;
   /**
    * Combined: set the active file AND the line focus in a single render.
    * Used by the find-in-files panel's "jump to match" affordance — splitting
@@ -106,6 +155,9 @@ function makeWorkspaceStore(sessionId: string) {
         searchPanelOpen: false,
         helpOverlayOpen: false,
         activeLineFocus: null,
+        scratchpadOpen: false,
+        scratchpadBytes: 0,
+        lastScratchpadTrigger: null,
 
         setSelectedContext(paths) {
           set({ selectedContext: dedupe(paths) });
@@ -187,6 +239,26 @@ function makeWorkspaceStore(sessionId: string) {
         setActiveLineFocus(line) {
           set({ activeLineFocus: line });
         },
+        setScratchpadOpen(open, trigger) {
+          // Item 29 — stash the trigger so the pane's open-transition
+          // effect can pull it on the next render. We only update the
+          // trigger when one was explicitly supplied; an undefined
+          // trigger preserves the previous value so a `setOpen(false)`
+          // call that doesn't pass a trigger doesn't wipe the value
+          // before the open-transition effect has a chance to read it.
+          if (trigger !== undefined) {
+            set({ scratchpadOpen: open, lastScratchpadTrigger: trigger });
+          } else {
+            set({ scratchpadOpen: open });
+          }
+        },
+        setScratchpadBytes(bytes) {
+          // Clamp to a non-negative integer so a malformed caller can't
+          // poison the "viewed during prompt" guard. ``Number.isFinite``
+          // catches NaN; ``Math.max`` floors any accidental negative.
+          const next = Number.isFinite(bytes) ? Math.max(0, Math.floor(bytes)) : 0;
+          set({ scratchpadBytes: next });
+        },
         setActivePath(path, line = null) {
           set((state) => ({
             openTabs: state.openTabs.includes(path)
@@ -209,6 +281,12 @@ function makeWorkspaceStore(sessionId: string) {
             searchPanelOpen: false,
             helpOverlayOpen: false,
             activeLineFocus: null,
+            // Scratchpad: ``scratchpadOpen`` is a persisted user preference
+            // — leave it alone here so a full ``reset()`` doesn't surprise
+            // a returning user with a collapsed pane. ``scratchpadBytes``
+            // is just a runtime cache; clearing it is safe.
+            scratchpadBytes: 0,
+            lastScratchpadTrigger: null,
           });
         },
         resetForWorkspaceReset() {
@@ -235,6 +313,12 @@ function makeWorkspaceStore(sessionId: string) {
           openTabs: state.openTabs,
           activeFile: state.activeFile,
           fileBuffers: state.fileBuffers,
+          // P1-4 — persist the scratchpad open/closed preference so the
+          // user's choice survives reloads. The body itself lives
+          // server-side; we deliberately don't persist scratchpadBytes
+          // because it's reloadable on mount and would otherwise lie
+          // about a session whose note was cleared in another tab.
+          scratchpadOpen: state.scratchpadOpen,
         }),
         version: 1,
       }

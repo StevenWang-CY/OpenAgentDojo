@@ -82,6 +82,7 @@ export function HelpOverlay({ open, onOpenChange }: HelpOverlayProps) {
           <tbody className="font-mono text-xs">
             <ShortcutRow keys="Cmd/Ctrl+P" action="Quick open file" />
             <ShortcutRow keys="Cmd/Ctrl+Shift+F" action="Find in files" />
+            <ShortcutRow keys="Cmd/Ctrl+B" action="Toggle scratchpad notes" />
             <ShortcutRow keys="Cmd/Ctrl+Enter" action="Submit prompt to agent" />
             <ShortcutRow keys="Cmd/Ctrl+S" action="Save current file" />
             <ShortcutRow keys="Esc" action="Close panel / cancel" />

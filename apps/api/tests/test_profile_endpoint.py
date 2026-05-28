@@ -292,6 +292,10 @@ async def test_full_profile_payload(client, db_engine) -> None:
     assert history[0]["score"] == 92
     assert history[1]["mission_id"] == "auth-cookie-expiration"
     assert history[1]["score"] == 80
+    # Wave 2C — every history row carries the producing submission id so
+    # the account Data tab can render a per-row Replay button.
+    assert history[0]["submission_id"] == str(seeded["sub2"])
+    assert history[1]["submission_id"] == str(seeded["sub1"])
 
     # Radar averages — averaged across the two submissions.
     radar = body["radar_averages"]

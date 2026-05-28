@@ -95,6 +95,10 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   const setSearchPanelOpen = store((s) => s.setSearchPanelOpen);
   const setHelpOverlayOpen = store((s) => s.setHelpOverlayOpen);
   const setActivePath = store((s) => s.setActivePath);
+  // P1-4 — scratchpad open/closed; Cmd/Ctrl+B toggles, click-toggle from
+  // the pane header keeps these in lockstep with the persisted user pref.
+  const scratchpadOpen = store((s) => s.scratchpadOpen);
+  const setScratchpadOpen = store((s) => s.setScratchpadOpen);
 
   // Controlled tab state — `openFile` flips us to the editor tab so the
   // user lands on the file they just clicked instead of an old surface.
@@ -115,6 +119,14 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
       },
       "help-overlay": () => {
         setHelpOverlayOpen(!helpOverlayOpen);
+      },
+      "toggle-scratchpad": () => {
+        // P1-4 — keyboard toggle for the scratchpad. The pane's own
+        // header click is the discoverable surface; this gives power
+        // users a one-key path. Telemetry distinguishes the two via
+        // the ``trigger`` property on ``scratchpad_opened`` (Item 29
+        // — pass "keybind" through the store's trigger field).
+        setScratchpadOpen(!scratchpadOpen, "keybind");
       },
       escape: () => {
         // Close the topmost overlay in z-order. The CommandPalette + help
@@ -819,6 +831,13 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
                 <AgentChat
                   turns={agentTurns}
                   contextPaths={selectedContext}
+                  sessionId={sessionId}
+                  sessionStatus={status}
+                  // P1-4 — mount the scratchpad pane inside the AgentChat
+                  // column. Gated on ``status === "active"`` so terminal
+                  // sessions don't render an editable surface (the pane
+                  // itself defends with the read-only banner if it does).
+                  showScratchpad={status === "active"}
                   onSubmit={(text) =>
                     handleAgentSubmit(
                       sessionId,

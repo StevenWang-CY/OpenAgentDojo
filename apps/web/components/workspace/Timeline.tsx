@@ -6,11 +6,13 @@ import {
   CheckCircle2,
   Circle,
   Edit3,
+  Eye,
   FileCheck,
   FilePlus,
   GitMerge,
   ListChecks,
   MessageSquare,
+  NotebookPen,
   Terminal as TerminalIcon,
   Undo2,
   Wrench,
@@ -349,6 +351,24 @@ function render(event: SupervisionEvent): RenderedEvent {
         tone: "danger",
         label: "Proctored violation",
         detail: `${event.payload.kind}: ${event.payload.detail}`,
+      };
+    // P1-4 — workspace scratchpad meta-cognitive markers. These are
+    // intentionally low-key (neutral tone, matching diff.opened) — they're
+    // signals about how the user is using the scratchpad, not load-bearing
+    // events on the supervision path.
+    case "note.edited":
+      return {
+        icon: NotebookPen,
+        tone: "neutral",
+        label: "notes edited",
+        detail: `${event.payload.bytes} bytes · ${event.payload.lines} line${event.payload.lines === 1 ? "" : "s"}`,
+      };
+    case "note.viewed_during_prompt":
+      return {
+        icon: Eye,
+        tone: "neutral",
+        label: "notes referenced",
+        detail: `${event.payload.bytes_at_view} bytes`,
       };
     default:
       return unreachable(event);

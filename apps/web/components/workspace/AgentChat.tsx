@@ -10,6 +10,9 @@ import { ScrollArea } from "@/components/ui/ScrollArea";
 import { INTENT_KEYWORD_GROUPS } from "@/lib/intent-keywords";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/telemetry";
+import { ApiError, postNoteViewed } from "@/lib/api";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { ScratchpadPane } from "./ScratchpadPane";
 
 interface AgentChatProps {
   /** Turns to render. Newest at the bottom. */
@@ -20,6 +23,21 @@ interface AgentChatProps {
   onSubmit?(text: string): Promise<void> | void;
   /** Apply the patch proposed in a given turn. */
   onApplyPatch?(turnId: string): Promise<void> | void;
+  /**
+   * Owning session id — required to render the scratchpad pane and emit the
+   * ``note.viewed_during_prompt`` event when the composer focuses. Optional
+   * so legacy / test mounts that don't yet need scratchpad wiring can still
+   * render the chat surface in isolation.
+   */
+  sessionId?: string;
+  /** Session lifecycle status; gates scratchpad input. */
+  sessionStatus?: string;
+  /**
+   * When false (or undefined), the scratchpad pane is not mounted. The
+   * parent decides — typically gated on owner-ness and on the session
+   * being interactive (active / submitting).
+   */
+  showScratchpad?: boolean;
   className?: string;
 }
 
@@ -28,6 +46,9 @@ export function AgentChat({
   contextPaths,
   onSubmit,
   onApplyPatch,
+  sessionId,
+  sessionStatus,
+  showScratchpad = false,
   className,
 }: AgentChatProps) {
   // The composer is always active in shipped surfaces; the legacy
@@ -36,6 +57,49 @@ export function AgentChat({
   const disabled = false;
   const [draft, setDraft] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
+
+  // P1-4 — wire the "viewed during prompt" emission. The store is keyed
+  // per-session; we always call the hook (React rules) and ignore the
+  // selector value when ``sessionId`` is absent. The store factory is
+  // cheap and bounded to 16 entries, so a stub sessionId for legacy
+  // mounts can't blow the cache.
+  const storeSessionId = sessionId ?? "__scratchpad_disabled__";
+  const store = useWorkspaceStore(storeSessionId);
+  const scratchpadBytes = store((s) => s.scratchpadBytes);
+  // Ref-tracked one-shot per focus cycle: fires on focus when the
+  // scratchpad has content, resets on blur. Without the reset, a user
+  // who hops back to the chat after editing notes would never re-emit.
+  const noteViewedFiredRef = React.useRef(false);
+  const handleComposerFocus = React.useCallback(() => {
+    if (!sessionId) return;
+    if (noteViewedFiredRef.current) return;
+    if (scratchpadBytes <= 0) return;
+    noteViewedFiredRef.current = true;
+    track("scratchpad_viewed_during_prompt", {
+      session_id: sessionId,
+      bytes_at_view: scratchpadBytes,
+    });
+    // Best-effort BE emission so the supervision timeline + post-mortem
+    // can pin the moment. The user-facing surface degrades gracefully
+    // without this signal, but Item A3 wants oncall observability so a
+    // degraded write path can be triaged from PostHog: log in dev and
+    // emit ``scratchpad_viewed_during_prompt_failed`` with the HTTP
+    // status discriminator.
+    void postNoteViewed(sessionId, scratchpadBytes).catch((err: unknown) => {
+      const status = err instanceof ApiError ? err.status : 0;
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          "AgentChat: postNoteViewed failed",
+          { status },
+          err,
+        );
+      }
+      track("scratchpad_viewed_during_prompt_failed", { status });
+    });
+  }, [scratchpadBytes, sessionId]);
+  const handleComposerBlur = React.useCallback(() => {
+    noteViewedFiredRef.current = false;
+  }, []);
 
   async function handleSubmit(e?: React.FormEvent | React.KeyboardEvent) {
     e?.preventDefault?.();
@@ -124,6 +188,8 @@ export function AgentChat({
             value={draft}
             disabled={disabled || submitting}
             onChange={(e) => setDraft(e.target.value)}
+            onFocus={handleComposerFocus}
+            onBlur={handleComposerBlur}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
@@ -132,6 +198,7 @@ export function AgentChat({
             }}
             rows={3}
             placeholder="Ask the agent to investigate, fix, or add a regression test. Cmd/Ctrl+Enter to send."
+            data-testid="agent-prompt-textarea"
             className="resize-none rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-3 py-2 font-mono text-xs leading-relaxed transition-colors duration-150 ease-macos focus-visible:outline-none focus-visible:border-[var(--color-ring)] focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-background)] disabled:cursor-not-allowed disabled:opacity-60"
           />
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -162,6 +229,12 @@ export function AgentChat({
           </div>
         </form>
       </div>
+      {showScratchpad && sessionId ? (
+        <ScratchpadPane
+          sessionId={sessionId}
+          sessionStatus={sessionStatus}
+        />
+      ) : null}
     </div>
   );
 }

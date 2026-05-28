@@ -114,6 +114,7 @@ async def _fetch_history(db: AsyncSession, user_id: uuid.UUID) -> list[MissionHi
             SessionRow.score,
             Mission.title,
             Mission.difficulty,
+            Submission.id.label("submission_id"),
             Submission.score_report,
         )
         .join(Mission, Mission.id == SessionRow.mission_id)
@@ -139,6 +140,13 @@ async def _fetch_history(db: AsyncSession, user_id: uuid.UUID) -> list[MissionHi
     return [
         MissionHistoryItemRead(
             session_id=row.id,
+            # P1-6 / Wave 2C — outer-joined submission id powers the
+            # per-row Replay button on the account Data tab. ``None``
+            # whenever the session is graded but no submission row was
+            # ever persisted (shouldn't happen under the current grader,
+            # but the outer join keeps the history table from going
+            # empty on legacy data).
+            submission_id=row.submission_id,
             mission_id=row.mission_id,
             mission_title=row.title,
             completed_at=row.completed_at,

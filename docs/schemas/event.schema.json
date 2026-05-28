@@ -51,7 +51,9 @@
         "tab.focused",
         "paste.large",
         "focus.lost",
-        "proctored.violation"
+        "proctored.violation",
+        "note.edited",
+        "note.viewed_during_prompt"
       ]
     },
     "occurred_at": {
@@ -458,6 +460,34 @@
               "enum": ["right_click", "devtools_open", "copy_blocked", "context_menu"]
             },
             "detail": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "note.edited" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes", "lines", "seconds_since_last_edit"],
+          "properties": {
+            "bytes": { "type": "integer", "minimum": 0 },
+            "lines": { "type": "integer", "minimum": 0 },
+            "seconds_since_last_edit": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "event_type": { "const": "note.viewed_during_prompt" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes_at_view"],
+          "properties": {
+            "bytes_at_view": { "type": "integer", "minimum": 0 }
           }
         }
       }

@@ -24,6 +24,8 @@ import {
   Copy,
   Download,
   ExternalLink,
+  FileArchive,
+  FileCode2,
   FileImage,
   FileText,
   Loader2,
@@ -32,6 +34,8 @@ import {
 import { toast } from "sonner";
 import {
   ApiError,
+  downloadReplayJson,
+  downloadReplayZip,
   forceReportRender,
   getReportRenderStatus,
   type ReportRender,
@@ -46,6 +50,45 @@ interface ShareDropdownProps {
    *  expiry handling. */
   onCopyLink(): void;
   sharing: boolean;
+  /** P1-6 — when the report is being viewed via a public share link, the
+   *  dropdown forwards the token on the replay download calls so the
+   *  backend's owner-OR-share auth matrix lets them through (redacted
+   *  prompt payloads for share-token viewers). ``null`` is the owner
+   *  path — the cookie alone authorises the call. */
+  share?: string | null;
+}
+
+/**
+ * P1-6 — discriminator for the ``replay_export_failed`` ``error_class``
+ * dimension. Kept narrow on purpose so the telemetry funnel can bucket
+ * common failure modes (the long tail collapses into ``unknown``).
+ */
+type ReplayErrorClass =
+  | "network_error"
+  | "not_found"
+  | "not_graded"
+  | "unknown";
+
+function classifyReplayError(err: unknown): ReplayErrorClass {
+  if (err instanceof ApiError) {
+    if (err.status === 0) return "network_error";
+    if (err.status === 404) {
+      // The backend uses a single 404 for both "submission unknown" and
+      // "submission not graded yet / tutorial"; the body's ``detail``
+      // string discriminates. We surface the more specific class when the
+      // signal is present so the funnel can tell "wrong id" from "user
+      // clicked replay before grading completed".
+      const detail =
+        err.body && typeof err.body.detail === "string"
+          ? err.body.detail.toLowerCase()
+          : "";
+      if (detail.includes("not graded") || detail.includes("tutorial")) {
+        return "not_graded";
+      }
+      return "not_found";
+    }
+  }
+  return "unknown";
 }
 
 const POLL_INTERVAL_MS = 5_000;
@@ -71,12 +114,120 @@ export function ShareDropdown({
   submissionId,
   onCopyLink,
   sharing,
+  share = null,
 }: ShareDropdownProps) {
   const [open, setOpen] = React.useState(false);
   const [pdfStatus, setPdfStatus] = React.useState<RenderState>("idle");
   const [pngStatus, setPngStatus] = React.useState<RenderState>("idle");
+  // P1-6 — independent loading flags for the two replay variants so the user
+  // can request the JSON while the ZIP is mid-build (or vice versa) without
+  // either spinner clobbering the other. The menu items remain clickable so
+  // a stuck request can be retried via a second click — the network layer
+  // de-dupes via the browser's HTTP cache for the JSON variant.
+  const [replayJsonBusy, setReplayJsonBusy] = React.useState(false);
+  const [replayZipBusy, setReplayZipBusy] = React.useState(false);
   const buttonRef = React.useRef<HTMLButtonElement | null>(null);
   const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  // ── P1-6 — replay download click handlers ────────────────────────────────
+  //
+  // Both handlers share the same shape:
+  //   1. fire ``replay_export_requested`` (intent funnel)
+  //   2. await the API call, branching on success/failure
+  //   3. fire the matching ``_succeeded`` / ``_failed`` event
+  //   4. surface a toast in the appropriate tone
+  // The dropdown is intentionally NOT closed on click so a user who wants
+  // both variants can grab both without re-opening the menu.
+
+  const onDownloadJson = React.useCallback(async () => {
+    if (replayJsonBusy) return;
+    setReplayJsonBusy(true);
+    track("replay_export_requested", { submission_id: submissionId, kind: "json" });
+    const filename = `arena-replay-${submissionId.slice(0, 8)}.json`;
+    // Build the work as a promise we (a) hand to toast.promise for the
+    // loading→success/error UX and (b) await directly so our own
+    // catch-block can fire the ``replay_export_failed`` telemetry. The two
+    // consumers settle on the same promise so the toast and the telemetry
+    // observe the same outcome.
+    const work: Promise<string> = (async () => {
+      const payload = await downloadReplayJson(submissionId, {
+        share: share ?? undefined,
+      });
+      // Serialise once so (a) the bytes count reflects the on-the-wire size
+      // approximation and (b) the same string is reused for the file save.
+      const serialised = JSON.stringify(payload);
+      const blob = new Blob([serialised], { type: "application/json" });
+      if (typeof document !== "undefined" && typeof URL.createObjectURL === "function") {
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = filename;
+        anchor.rel = "noopener";
+        anchor.style.display = "none";
+        document.body.appendChild(anchor);
+        anchor.click();
+        window.setTimeout(() => {
+          anchor.remove();
+          URL.revokeObjectURL(objectUrl);
+        }, 0);
+      }
+      track("replay_export_succeeded", {
+        submission_id: submissionId,
+        kind: "json",
+        bytes: serialised.length,
+      });
+      return filename;
+    })();
+    toast.promise(work, {
+      loading: "Preparing replay JSON…",
+      success: (name) => `Downloaded ${name}`,
+      error: (err: unknown) => replayErrorMessage(err),
+    });
+    try {
+      await work;
+    } catch (err) {
+      track("replay_export_failed", {
+        submission_id: submissionId,
+        kind: "json",
+        error_class: classifyReplayError(err),
+      });
+    } finally {
+      setReplayJsonBusy(false);
+    }
+  }, [submissionId, share, replayJsonBusy]);
+
+  const onDownloadZip = React.useCallback(async () => {
+    if (replayZipBusy) return;
+    setReplayZipBusy(true);
+    track("replay_export_requested", { submission_id: submissionId, kind: "zip" });
+    const work: Promise<string> = (async () => {
+      const result = await downloadReplayZip(submissionId, {
+        share: share ?? undefined,
+      });
+      track("replay_export_succeeded", {
+        submission_id: submissionId,
+        kind: "zip",
+        bytes: result.bytes,
+      });
+      return result.filename;
+    })();
+    toast.promise(work, {
+      loading: "Building replay ZIP…",
+      success: (filename) => `Downloaded ${filename}`,
+      error: (err: unknown) => replayErrorMessage(err),
+    });
+    try {
+      await work;
+    } catch (err) {
+      track("replay_export_failed", {
+        submission_id: submissionId,
+        kind: "zip",
+        error_class: classifyReplayError(err),
+      });
+    } finally {
+      setReplayZipBusy(false);
+    }
+  }, [submissionId, share, replayZipBusy]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -168,6 +319,33 @@ export function ShareDropdown({
             icon={FileImage}
           />
           <Separator />
+          {/* P1-6 — replay artefact downloads. Both items stay clickable
+              for share-token viewers (the backend serves a redacted
+              payload). 404s — tutorial / ungraded submissions — are
+              surfaced via the toast set up in the click handler. */}
+          <MenuItem
+            icon={replayJsonBusy ? Loader2 : FileCode2}
+            label="Download replay (JSON)"
+            hint="canonical artefact, signed"
+            spinning={replayJsonBusy}
+            disabled={replayJsonBusy}
+            data-testid="replay-json-item"
+            onClick={() => {
+              void onDownloadJson();
+            }}
+          />
+          <MenuItem
+            icon={replayZipBusy ? Loader2 : FileArchive}
+            label="Download replay (ZIP)"
+            hint="bundle + verify.html + README"
+            spinning={replayZipBusy}
+            disabled={replayZipBusy}
+            data-testid="replay-zip-item"
+            onClick={() => {
+              void onDownloadZip();
+            }}
+          />
+          <Separator />
           <MenuItem
             icon={ShieldCheck}
             label="Open verification page"
@@ -183,6 +361,26 @@ export function ShareDropdown({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Translate a replay-download failure into a user-facing toast message.
+ * Centralised so both onDownloadJson and onDownloadZip render the same
+ * copy for the same conditions; the wording mirrors the design's spec
+ * ("Replay not available for this submission" for 404s, the raw
+ * ApiError message otherwise).
+ */
+function replayErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 404) {
+      return "Replay not available for this submission.";
+    }
+    if (err.status === 0) {
+      return "Network error — check your connection and try again.";
+    }
+    return err.message || "Could not download replay.";
+  }
+  return "Could not download replay.";
 }
 
 // ── Menu primitives ────────────────────────────────────────────────────────
@@ -202,6 +400,7 @@ function MenuItem({
   spinning = false,
   external = false,
   disabled = false,
+  "data-testid": testId,
 }: {
   icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   label: string;
@@ -210,6 +409,10 @@ function MenuItem({
   spinning?: boolean;
   external?: boolean;
   disabled?: boolean;
+  /** Optional ``data-testid`` for unit-test selection. The menu items have
+   *  ambiguous labels (two "Download ..." entries) so a stable testid is the
+   *  clean way to address them in tests without brittle text matching. */
+  "data-testid"?: string;
 }) {
   return (
     <button
@@ -217,6 +420,7 @@ function MenuItem({
       role="menuitem"
       onClick={onClick}
       disabled={disabled}
+      data-testid={testId}
       className={cn(
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-[var(--color-foreground)]",
         "transition-colors duration-150 ease-macos hover:bg-[var(--color-muted)] focus-visible:outline-none focus-visible:bg-[var(--color-muted)]",

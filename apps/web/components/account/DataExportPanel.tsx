@@ -38,11 +38,13 @@
  */
 
 import * as React from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   Clock,
   Download,
   FileArchive,
+  FileCode2,
   Hourglass,
   Loader2,
   TimerOff,
@@ -374,6 +376,49 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
           </div>
         )}
       </div>
+
+      {/* P1-6 — per-submission replay artefact callout. The artefact is
+          minted per graded submission and downloaded from the share
+          dropdown on the report page (the dropdown owns the loading-state
+          UX and the share-token forwarding). We surface a discoverability
+          card here so users hunting in the Data tab learn the artefact
+          exists without us duplicating the download mechanics. */}
+      <aside
+        aria-labelledby="replay-aside-heading"
+        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4"
+        data-testid="replay-aside"
+      >
+        <SectionLabel id="replay-aside-heading">
+          per-submission replay
+        </SectionLabel>
+        <div className="mt-2 flex items-start gap-3">
+          <FileCode2
+            className="mt-0.5 size-5 shrink-0 text-[var(--color-muted-foreground)]"
+            aria-hidden
+          />
+          <div className="space-y-1.5">
+            <p className="text-sm text-[var(--color-foreground)]">
+              Every graded submission carries a deterministic, signed{" "}
+              <span className="font-medium">replay artefact</span> — the
+              full supervision-event stream plus the score envelope.
+            </p>
+            <p className="text-xs text-[var(--color-muted-foreground)]">
+              Open any report, click <span className="font-mono">Share →
+              Download replay (JSON / ZIP)</span> to grab it. The ZIP also
+              bundles a self-contained <span className="font-mono">verify.html</span>
+              {" "}so a recruiter can re-derive the signature offline.
+            </p>
+            <p className="pt-1 text-xs">
+              <Link
+                href="/profile/me"
+                className="font-medium text-[var(--color-primary)] underline-offset-2 hover:underline"
+              >
+                See your mission history →
+              </Link>
+            </p>
+          </div>
+        </div>
+      </aside>
     </section>
   );
 }

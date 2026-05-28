@@ -370,6 +370,118 @@ recommendation_engine_errors_total = Counter(
     ["stage"],  # stage ∈ {"pre_grade"}
     registry=REGISTRY,
 )
+# ---------------------------------------------------------------------------
+# LLM substrate instrumentation (P1 §0.4).
+# ---------------------------------------------------------------------------
+# The four counters + histogram below cover every transition the
+# ``app.llm.cache.get_or_generate`` chokepoint can make. Dashboards
+# alert on:
+#
+#   * sudden ``llm_cache_hits_total`` drop after a deploy — usually a
+#     ``PROMPT_VERSION`` bump that wasn't documented;
+#   * sustained ``llm_generation_failed_total`` rate above 1% — a
+#     Bedrock outage or a token rotation that didn't land in env;
+#   * ``llm_generation_latency_seconds`` p95 climb — a model degradation
+#     or a network-path regression to the Bedrock region.
+#
+# ``llm_generation_tokens`` is a Counter (NOT a Histogram) because the
+# daily budget guard documented at P1_DESIGN §0.4.7 aggregates against
+# a 7-day moving sum — a Counter is the natural shape for that rule.
+llm_cache_hits_total = Counter(
+    "llm_cache_hits_total",
+    "LLM cache hits served from llm_cache without a live model call (P1 §0.4).",
+    ["domain", "prompt_version"],
+    registry=REGISTRY,
+)
+llm_generation_succeeded_total = Counter(
+    "llm_generation_succeeded_total",
+    "LLM generations that completed a live model call and persisted a cache row (P1 §0.4).",
+    ["domain", "model_id"],
+    registry=REGISTRY,
+)
+llm_generation_failed_total = Counter(
+    "llm_generation_failed_total",
+    "LLM generations that raised before persisting a cache row (P1 §0.4).",
+    # ``error_class`` is the exception's ``__class__.__name__`` so dashboards
+    # can split "RuntimeError" (civitas missing) from "TimeoutError"
+    # (Bedrock slow) from anything else.
+    ["domain", "model_id", "error_class"],
+    registry=REGISTRY,
+)
+llm_generation_latency_seconds = Histogram(
+    "llm_generation_latency_seconds",
+    "Wall-clock latency of the live LLM generator call inside get_or_generate (P1 §0.4).",
+    ["domain", "model_id"],
+    buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10, 30),
+    registry=REGISTRY,
+)
+llm_generation_tokens = Counter(
+    "llm_generation_tokens",
+    "Tokens consumed by LLM generations (P1 §0.4); summed for daily budget rules.",
+    ["domain", "kind"],  # kind ∈ {"input", "output"}
+    registry=REGISTRY,
+)
+# Per-error-class counter for the coaching endpoint so dashboards can
+# bucket LLM-unavailability (operator-actionable) separately from
+# internal faults (engineer-actionable). The ``llm_generation_failed_total``
+# counter above already covers the LLM-call path; this one tracks the
+# HTTP boundary the FE renders against.
+coaching_errors_total = Counter(
+    "coaching_errors_total",
+    "Coaching endpoint errors bucketed by failure class (P1-4).",
+    ["error_class"],  # ∈ {"llm_failed", "internal_failed"}
+    registry=REGISTRY,
+)
+# Diagnostic counter for the account-deletion worker: every shared
+# llm_cache row that the cascade preserved because another user's
+# index still references it. A non-zero value here is GOOD —
+# it means we are correctly NOT wiping cache rows that other users
+# (with coincidentally identical inputs) still need.
+llm_cache_shared_row_retained_total = Counter(
+    "llm_cache_shared_row_retained_total",
+    "llm_cache rows retained during account deletion because another user's "
+    "coaching_cache_user_index row still references them (P1-4).",
+    registry=REGISTRY,
+)
+# ---------------------------------------------------------------------------
+# Replay artefact export instrumentation (P1-6).
+# ---------------------------------------------------------------------------
+# Every successful or failed call into ``GET /submissions/{id}/replay.{json,zip}``
+# bumps one of these. Dashboards alert on:
+#   * ``replay_export_errors_total{kind=zip}`` spike — usually a bundle
+#     template regression (verify.html / README.md rendering broke);
+#   * ``replay_export_bytes`` p95 climb — a runaway event stream or a
+#     misconfigured payload-redaction matrix.
+#
+# The frontend fires the matching ``replay_export_requested`` /
+# ``replay_export_succeeded`` / ``replay_export_failed`` telemetry events
+# (see ``apps/web/lib/telemetry.ts``) so the BE and FE share the same
+# vocabulary for the same lifecycle transitions.
+replay_export_requests_total = Counter(
+    "replay_export_requests_total",
+    "Calls to GET /submissions/{id}/replay.{json,zip} that authenticated (P1-6).",
+    ["kind"],  # kind ∈ {"json", "zip"}
+    registry=REGISTRY,
+)
+replay_export_bytes = Histogram(
+    "replay_export_bytes",
+    "Size of the served replay artefact body in bytes (P1-6).",
+    ["kind"],
+    # Replays are typically < 100 KB; the upper bucket is the design's
+    # "this is suspicious" tripwire.
+    buckets=(1024, 4096, 16384, 65536, 262144, 1048576, 4194304),
+    registry=REGISTRY,
+)
+replay_export_errors_total = Counter(
+    "replay_export_errors_total",
+    "Replay export requests that raised before responding 200 (P1-6).",
+    # ``error_class`` discriminates LookupError (submission missing),
+    # PermissionError (auth matrix denied), ValueError (build_replay
+    # rejected the row), and the generic class name for unexpected
+    # failures.
+    ["kind", "error_class"],
+    registry=REGISTRY,
+)
 
 
 def metrics_asgi_app():

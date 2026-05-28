@@ -60,6 +60,20 @@ export default function PrivacyPage() {
           its own identifiers in your browser and records the routes you
           visit. We do not enable this provider until you grant consent.
         </li>
+        <li>
+          <strong>Workspace scratchpad text (P1-4).</strong> Each mission
+          session has a private scratchpad pane where you can write
+          reasoning before prompting the agent. The text is stored
+          alongside your session row and is visible only to you. When you
+          choose to use the post-mortem coaching reflection feature, the
+          text you typed in your scratchpad is sent to Anthropic via AWS
+          Bedrock to generate the reflection. The reflection is cached
+          (so the same notes always produce the same output) and persists
+          until your account is deleted. You can opt out at any time via{" "}
+          <a href="/account/privacy">Account → Privacy</a>; with the
+          toggle off, the scratchpad still works locally and your text is
+          never forwarded to Bedrock.
+        </li>
       </ul>
 
       <h2>2. Why we collect it (legal bases)</h2>
@@ -129,10 +143,19 @@ export default function PrivacyPage() {
           emails.
         </li>
         <li>
-          <strong>Amazon Web Services (AWS Bedrock)</strong> &mdash; large-
-          language-model inference for narrative grading explanations,
-          enabled only when the in-product feature flag{" "}
-          <code>features.llm_narration_enabled</code> is on.
+          <strong>Amazon Web Services (AWS Bedrock)</strong> &mdash; we
+          use AWS Bedrock (a managed-Anthropic hosting service operated
+          by Amazon Web Services) to generate user-facing prose:
+          next-mission recommendations, coaching reflections, and
+          critical-moment summaries shown alongside your graded report.
+          AWS Bedrock does not train on customer data. Each generated
+          string is cached by content hash so the same inputs always
+          return the same output, and the inputs are scoped tightly
+          per-feature (see the surface-by-surface disclosures in §1).
+          Bedrock is enabled by default for new accounts; you can opt out
+          of the coaching reflection (the only surface that forwards
+          scratchpad text) from{" "}
+          <a href="/account/privacy">Account → Privacy</a>.
         </li>
         <li>
           <strong>Fly.io</strong> &mdash; application hosting and managed
@@ -236,7 +259,42 @@ export default function PrivacyPage() {
         at the top of this page reflects the current revision.
       </p>
 
-      <h2>10. Contact &amp; data-protection officer</h2>
+      <h2>10. Share links and replay artefacts (P1-6)</h2>
+      <p>
+        Your share links include the report&rsquo;s events list. Prompt
+        text and agent response text are <strong>redacted</strong> in
+        share-link views &mdash; only the report owner can see the raw
+        text in a downloaded replay bundle. Your scratchpad body is{" "}
+        <strong>never</strong> included in share-link views. The replay
+        artefact contents follow this matrix:
+      </p>
+      <ul>
+        <li>
+          <strong>Owner (signed in).</strong> Sees the full envelope, the
+          full event stream including verbatim prompt text and agent
+          responses, the final diff, and the scratchpad body.
+        </li>
+        <li>
+          <strong>Share-link holder.</strong> Sees the envelope, the
+          event stream with prompt and agent-response payloads replaced
+          by a byte-count marker, and the final diff. The scratchpad
+          body is omitted from the artefact entirely.
+        </li>
+        <li>
+          <strong>Anonymous viewer (no cookie, no share token).</strong>{" "}
+          Receives a 404 from the replay endpoint regardless of whether
+          the underlying submission exists.
+        </li>
+      </ul>
+      <p>
+        The public verification page at <code>/verify/&lt;id&gt;</code>{" "}
+        is separate from the replay endpoint and only exposes the
+        verification envelope (score, mission, graded-at timestamp,
+        signature) &mdash; it never includes prompt text, agent
+        responses, the final diff, or the scratchpad body.
+      </p>
+
+      <h2>11. Contact &amp; data-protection officer</h2>
       <p>
         Our data-protection contact is{" "}
         <a href={`mailto:${DPO_EMAIL}`}>

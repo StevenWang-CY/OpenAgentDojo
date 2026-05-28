@@ -52,7 +52,16 @@ export type ShortcutId =
   | "quick-open"
   | "find-in-files"
   | "help-overlay"
-  | "escape";
+  | "escape"
+  // P1-4 — toggle the scratchpad pane in the AgentChat column.
+  // Bound to Cmd/Ctrl+B per the design's "Keyboard: Cmd/Ctrl + B
+  // toggles open" constraint. We deliberately do NOT respect
+  // ``isTypingTarget`` here: the user will often want to dump a quick
+  // note from inside the chat composer, so the shortcut has to fire
+  // even when an input is focused. Monaco doesn't bind Cmd+B by
+  // default; the only conflict is the browser's "bold" command on
+  // text inputs, which is a no-op for our non-rich-text fields.
+  | "toggle-scratchpad";
 
 interface UseWorkspaceShortcutsOpts {
   /** Map of shortcut id → handler. Missing entries are no-ops. */
@@ -124,6 +133,21 @@ export function useWorkspaceShortcuts(opts: UseWorkspaceShortcutsOpts): void {
       // check is ``event.key === "?"``.
       if (event.key === "?" && !isTypingTarget(event.target)) {
         const cb = handlers["help-overlay"];
+        if (cb) {
+          event.preventDefault();
+          cb(event);
+        }
+        return;
+      }
+      // Cmd/Ctrl+B → toggle the scratchpad pane. Fires from anywhere in
+      // the workspace (no isTypingTarget gate); see ShortcutId for the
+      // rationale. ``event.key === "b" | "B"`` covers Caps Lock.
+      if (
+        isMeta(event) &&
+        !event.shiftKey &&
+        (event.key === "b" || event.key === "B")
+      ) {
+        const cb = handlers["toggle-scratchpad"];
         if (cb) {
           event.preventDefault();
           cb(event);

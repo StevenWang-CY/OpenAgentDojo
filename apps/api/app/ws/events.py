@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
@@ -88,13 +89,33 @@ def _enforce_event_size(message: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _coerce_iso(dt: datetime | None) -> str:
+    """Return ``dt`` as ISO-8601 microsecond-precision UTC with a ``Z`` suffix.
+
+    Mirrors :func:`app.reports.replay._coerce_event_iso` byte-for-byte so
+    the backfill path (which reads ``ev.occurred_at`` straight from the
+    DB) emits the same wire shape as the live ``EventEmitter.emit``
+    path (which stamps ``datetime.now(UTC).isoformat()`` on its own).
+    Under SQLite the ORM returns naive datetimes; we coerce to UTC-aware
+    here so the wire format never silently drops the timezone suffix.
+    """
+    if dt is None:
+        return ""
+    ts = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    ts = ts.astimezone(UTC)
+    text = ts.isoformat(timespec="microseconds")
+    if text.endswith("+00:00"):
+        text = text[: -len("+00:00")] + "Z"
+    return text
+
+
 def _serialise(ev: SupervisionEvent) -> dict[str, Any]:
     return {
         "id": ev.id,
         "session_id": str(ev.session_id),
         "event_type": ev.event_type,
         "payload": ev.payload,
-        "occurred_at": ev.occurred_at.isoformat(),
+        "occurred_at": _coerce_iso(ev.occurred_at),
     }
 
 

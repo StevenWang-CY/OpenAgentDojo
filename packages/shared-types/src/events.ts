@@ -67,6 +67,13 @@ export const SupervisionEventType = {
   PasteLarge: "paste.large",
   FocusLost: "focus.lost",
   ProctoredViolation: "proctored.violation",
+  // P1-4 — workspace scratchpad. ``note.edited`` is coalesced within
+  // a 30 s rolling window on the backend (see
+  // ``apps/api/app/sessions/notes.py``); ``note.viewed_during_prompt``
+  // fires from the FE when the agent-chat composer focuses while the
+  // scratchpad has non-empty content.
+  NoteEdited: "note.edited",
+  NoteViewedDuringPrompt: "note.viewed_during_prompt",
 } as const;
 
 export type SupervisionEventType =
@@ -370,6 +377,37 @@ export interface ProctoredViolationPayload {
   detail: string;
 }
 
+// ── P1-4 workspace scratchpad payloads ──────────────────────────────────────
+
+/**
+ * Emitted by the backend's ``PUT /sessions/{id}/note`` route. Coalesced
+ * within a 30-second rolling window per session — repeated PUTs within
+ * the window update the latest event in place rather than producing a
+ * new row. Carries the final byte/line counts after the coalesced burst
+ * and the elapsed seconds since the previous *persisted* note row.
+ */
+export interface NoteEditedPayload {
+  /** UTF-8 byte length of the scratchpad body after the write. */
+  bytes: number;
+  /** Newline-delimited line count of the body (0 for empty). */
+  lines: number;
+  /**
+   * Seconds elapsed between the previous ``session_notes.updated_at``
+   * and this write. ``0`` when the row didn't exist before.
+   */
+  seconds_since_last_edit: number;
+}
+
+/**
+ * Emitted by the FE when the agent-chat composer is focused while
+ * the scratchpad pane has non-empty content. The backend records it
+ * via ``POST /sessions/{id}/events/note-viewed``. Not coalesced.
+ */
+export interface NoteViewedDuringPromptPayload {
+  /** UTF-8 byte length captured by the FE at view time. */
+  bytes_at_view: number;
+}
+
 // ── Discriminated union ──────────────────────────────────────────────────────
 
 export type SupervisionEvent =
@@ -404,7 +442,9 @@ export type SupervisionEvent =
   | SupervisionEventOf<"tab.focused", TabFocusedPayload>
   | SupervisionEventOf<"paste.large", PasteLargePayload>
   | SupervisionEventOf<"focus.lost", FocusLostPayload>
-  | SupervisionEventOf<"proctored.violation", ProctoredViolationPayload>;
+  | SupervisionEventOf<"proctored.violation", ProctoredViolationPayload>
+  | SupervisionEventOf<"note.edited", NoteEditedPayload>
+  | SupervisionEventOf<"note.viewed_during_prompt", NoteViewedDuringPromptPayload>;
 
 export interface SupervisionEventOf<
   T extends SupervisionEventType,

@@ -174,6 +174,30 @@ class DeletionScheduledRead(BaseModel):
     scheduled_for: datetime
 
 
+class CoachingConsentRead(BaseModel):
+    """Response body for the coaching opt-out toggle endpoints (P1-4).
+
+    Mirrors the column on ``users.coaching_reflections_enabled``. Kept
+    as a dedicated schema (rather than reusing ``UserRead``) so the FE
+    can call the toggle without forcing a re-render of the entire
+    /auth/me payload — the privacy panel only needs this one bit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    coaching_reflections_enabled: bool
+
+
+class CoachingConsentUpdate(BaseModel):
+    """Body for ``POST /auth/me/coaching-consent`` (P1-4).
+
+    A single boolean. The endpoint is idempotent (POSTing ``true`` when
+    already on is a no-op) so a UI mash on the toggle settles cleanly.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    coaching_reflections_enabled: bool
+
+
 class DeletionLockError(BaseModel):
     """403 envelope returned by :class:`DeletionLockMiddleware`.
 

@@ -68,6 +68,8 @@ from app.models.user_consent import AccountEvent, UserConsent
 from app.schemas.auth import GithubOAuthAvailability
 from app.schemas.consent import ConsentRecord, ConsentState, ConsentUpdate
 from app.schemas.user import (
+    CoachingConsentRead,
+    CoachingConsentUpdate,
     DataExportRead,
     DeleteAccountRequest,
     DeletionLockError,
@@ -776,6 +778,161 @@ async def post_me_consent(
 # shipping two paths for one handler confused the OpenAPI → TS generator
 # (it minted two equivalent operation IDs). Re-add via main.py if a new
 # client ever needs the top-level shape.
+
+
+# ---------------------------------------------------------------------------
+# GET /auth/me/coaching-consent  +  POST /auth/me/coaching-consent  (P1-4)
+# ---------------------------------------------------------------------------
+#
+# Surface for the per-user "send my scratchpad text to AWS Bedrock for the
+# coaching reflection" toggle. The column lives on ``users``
+# (``coaching_reflections_enabled``); Wave 2B's coaching endpoint reads it
+# before forwarding the scratchpad body, so the toggle is load-bearing for
+# the privacy disclosure (see /legal/privacy §1 "Workspace scratchpad text"
+# and §4 "Amazon Web Services (AWS Bedrock)"). Default is True for both new
+# and backfilled rows — see migration 0031.
+#
+# We keep these on the same ``/me/*`` shape as the existing P0-5 consent
+# endpoints rather than overloading PATCH /me, which only mutates
+# ``display_name`` (and whose schema is ``extra='forbid'``). A dedicated
+# POST gives the FE a single-bit endpoint that's cheap to invalidate and
+# doesn't force a re-fetch of the whole UserRead.
+
+
+@router.get(
+    "/me/coaching-consent",
+    response_model=CoachingConsentRead,
+    summary=(
+        "Return whether the caller has opted in to scratchpad coaching "
+        "reflections (P1-4)"
+    ),
+)
+async def get_me_coaching_consent(
+    user: User = Depends(require_auth),
+) -> CoachingConsentRead:
+    """Read the caller's coaching opt-in bit.
+
+    Read-only; safe to call on every render of the privacy panel.
+    """
+    return CoachingConsentRead(
+        coaching_reflections_enabled=bool(user.coaching_reflections_enabled),
+    )
+
+
+@router.post(
+    "/me/coaching-consent",
+    response_model=CoachingConsentRead,
+    summary=(
+        "Toggle the scratchpad coaching reflection opt-in for the caller "
+        "(P1-4)"
+    ),
+    responses=_DELETION_LOCK_RESPONSE,
+)
+async def post_me_coaching_consent(
+    body: CoachingConsentUpdate,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> CoachingConsentRead:
+    """Persist the toggle and return the new state.
+
+    Idempotent — POSTing the value the column already carries is a
+    no-op. The route deliberately does NOT emit an account-event row:
+    the toggle is a preference, not an audit-grade consent decision
+    (those live in :class:`UserConsent` and are append-only with a
+    policy_version stamp). If we ever need an audit trail here we can
+    add an ``account_events`` row under a new event-type literal in a
+    future migration without changing this endpoint.
+
+    Cache invalidation on opt-out: when the new value is ``False`` we
+    eagerly wipe the user's ``scratchpad_coaching`` cache rows via
+    the same JOIN the account-deletion worker uses
+    (``coaching_cache_user_index`` → ``llm_cache``). Rows shared with
+    other users — discovered by finding any OTHER index row pointing
+    at the same cache id — are preserved; the shared-row counter
+    surfaces the preservation for ops dashboards. The cache rows are
+    keyed by content hash (not user id), so a coincidental second
+    user with identical inputs keeps their cache hot.
+    """
+    from app.models.coaching_cache_user_index import CoachingCacheUserIndex
+    from app.models.llm_cache import LLMCache
+    from app.observability import llm_cache_shared_row_retained_total
+
+    previously_enabled = bool(user.coaching_reflections_enabled)
+    user.coaching_reflections_enabled = bool(body.coaching_reflections_enabled)
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+
+    # Invalidate the user's coaching cache only on the True → False
+    # transition. The reverse direction (False → True) needs no cache
+    # touch — the user simply starts hitting the endpoint again, and
+    # the chokepoint resolves a fresh hash on next call.
+    if previously_enabled and not user.coaching_reflections_enabled:
+        from sqlalchemy import delete as sa_delete
+
+        candidate_cache_ids = list(
+            (
+                await db.execute(
+                    select(CoachingCacheUserIndex.llm_cache_id).where(
+                        CoachingCacheUserIndex.user_id == user.id
+                    )
+                )
+            ).scalars()
+        )
+
+        # Per-row decision: only delete the cache row when this user
+        # is the *only* remaining index row pointing at it. A shared
+        # row stays, the user's index row goes either way.
+        to_delete: list = []
+        retained = 0
+        for cache_id in candidate_cache_ids:
+            others = (
+                await db.execute(
+                    select(CoachingCacheUserIndex.user_id)
+                    .where(
+                        CoachingCacheUserIndex.llm_cache_id == cache_id,
+                        CoachingCacheUserIndex.user_id != user.id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if others is None:
+                to_delete.append(cache_id)
+            else:
+                retained += 1
+
+        if to_delete:
+            await db.execute(
+                sa_delete(LLMCache).where(LLMCache.id.in_(to_delete))
+            )
+        # Always drop the user's index rows regardless of preservation —
+        # the user has opted out, the index link should not survive.
+        if candidate_cache_ids:
+            await db.execute(
+                sa_delete(CoachingCacheUserIndex).where(
+                    CoachingCacheUserIndex.user_id == user.id
+                )
+            )
+        await db.flush()
+
+        if retained:
+            llm_cache_shared_row_retained_total.inc(retained)
+        logger.info(
+            "auth.coaching_consent.cache_invalidated user_id={} "
+            "deleted_cache_rows={} retained_shared_rows={}",
+            user.id,
+            len(to_delete),
+            retained,
+        )
+
+    logger.info(
+        "auth.coaching_consent.set user_id={} enabled={}",
+        user.id,
+        user.coaching_reflections_enabled,
+    )
+    return CoachingConsentRead(
+        coaching_reflections_enabled=bool(user.coaching_reflections_enabled),
+    )
 
 
 # ===========================================================================

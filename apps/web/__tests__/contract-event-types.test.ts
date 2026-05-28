@@ -37,6 +37,13 @@ const KNOWN_BE_EVENT_TYPES = [
   // IntegritySignaller and persisted through
   // ``POST /sessions/{id}/events/integrity`` only on proctored sessions.
   "focus.lost",
+  // P1-4 — workspace scratchpad coalesced edit + viewed-during-prompt
+  // markers. Backend coalesces ``note.edited`` within a 30s rolling
+  // window (apps/api/app/sessions/notes.py); ``note.viewed_during_prompt``
+  // fires from the FE when the agent-chat composer focuses while the
+  // scratchpad has non-empty content.
+  "note.edited",
+  "note.viewed_during_prompt",
   "paste.large",
   "patch.applied",
   "patch.failed",

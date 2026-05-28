@@ -18,7 +18,9 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ConsentKind, ConsentState } from "@arena/shared-types";
+import { ApiError, auth } from "@/lib/api";
 import { Switch } from "@/components/ui/Switch";
 import { useConsent } from "@/lib/consent";
 import { SectionLabel } from "./AccountView";
@@ -64,6 +66,43 @@ function checkedFor(state: ConsentState, kind: ConsentKind): boolean {
 export function PrivacyPanel() {
   const { state, setKind } = useConsent();
   const [pendingKind, setPendingKind] = React.useState<ConsentKind | null>(null);
+  const queryClient = useQueryClient();
+
+  // P1-4 — Coaching reflection opt-in. Server-authoritative bit; we
+  // poll it on mount so the toggle reflects whatever the column says
+  // (the user may have flipped it from another browser). The 401 path
+  // collapses to "feature unavailable" so the row is hidden when the
+  // viewer is signed out — the panel is technically reachable for
+  // anonymous users who deep-linked to /account/privacy, and we don't
+  // want to surface a toggle they can't change.
+  const coachingQuery = useQuery({
+    queryKey: ["me", "coaching-consent"],
+    queryFn: ({ signal }) => auth.getCoachingConsent(signal),
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 0)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+  });
+  const coachingMutation = useMutation({
+    mutationFn: (next: boolean) =>
+      auth.setCoachingConsent({ coaching_reflections_enabled: next }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["me", "coaching-consent"], data);
+      // Item A1 — when the user opts OUT of coaching, drop every cached
+      // reflection so an already-open report page re-fetches against the
+      // BE (which now serves ``reflection=null``) and unmounts the
+      // section. Cancel first so an in-flight GET can't race the
+      // invalidation and revive a stale payload.
+      if (data.coaching_reflections_enabled === false) {
+        void queryClient.cancelQueries({ queryKey: ["coaching-reflection"] });
+        void queryClient.invalidateQueries({
+          queryKey: ["coaching-reflection"],
+        });
+      }
+    },
+  });
 
   async function onChange(kind: ConsentKind, granted: boolean) {
     if (kind === "functional") return; // locked
@@ -74,6 +113,11 @@ export function PrivacyPanel() {
       setPendingKind(null);
     }
   }
+
+  const coachingEnabled = coachingQuery.data?.coaching_reflections_enabled ?? true;
+  const coachingAvailable =
+    !(coachingQuery.isError && coachingQuery.error instanceof ApiError &&
+      coachingQuery.error.status === 401);
 
   return (
     <section aria-labelledby="privacy-heading" className="space-y-6">
@@ -116,6 +160,49 @@ export function PrivacyPanel() {
           );
         })}
       </ul>
+
+      {coachingAvailable ? (
+        <section
+          aria-labelledby="coaching-consent-heading"
+          className="space-y-3"
+          data-testid="coaching-consent-section"
+        >
+          <header>
+            <SectionLabel>llm features</SectionLabel>
+            <h3
+              id="coaching-consent-heading"
+              className="mt-1 text-sm font-semibold"
+            >
+              Post-mortem coaching
+            </h3>
+          </header>
+          <div
+            className="flex items-start justify-between gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-elevated)] p-4"
+            data-testid="consent-row-coaching"
+          >
+            <div className="flex-1">
+              <p className="text-sm font-medium">
+                Coaching reflections (sends scratchpad text to AWS Bedrock)
+              </p>
+              <p className="mt-1 text-xs text-[var(--color-muted-foreground)]">
+                After grading, we compare what you wrote in your scratchpad
+                against what you actually prompted. Generating the reflection
+                forwards your scratchpad text to Anthropic via AWS Bedrock,
+                which doesn&rsquo;t train on customer data. Off by your
+                choice: with this turned off, the scratchpad still works
+                locally and your text is never forwarded.
+              </p>
+            </div>
+            <Switch
+              checked={coachingEnabled}
+              onCheckedChange={(next) => coachingMutation.mutate(next)}
+              disabled={coachingQuery.isLoading || coachingMutation.isPending}
+              aria-label="Toggle post-mortem coaching reflections"
+              data-testid="consent-toggle-coaching"
+            />
+          </div>
+        </section>
+      ) : null}
 
       <footer className="flex flex-wrap items-center gap-4 border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-muted-foreground)]">
         <Link

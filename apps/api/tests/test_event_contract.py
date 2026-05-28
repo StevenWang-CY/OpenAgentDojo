@@ -315,6 +315,12 @@ _FE_KNOWN_EVENT_TYPES: set[str] = {
     "paste.large",
     "focus.lost",
     "proctored.violation",
+    # P1-4 — workspace scratchpad. ``note.edited`` is coalesced within
+    # a 30 s rolling window in ``apps/api/app/sessions/notes.py``;
+    # ``note.viewed_during_prompt`` fires from the FE on composer
+    # focus while the scratchpad has content.
+    "note.edited",
+    "note.viewed_during_prompt",
 }
 
 

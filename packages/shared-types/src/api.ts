@@ -508,6 +508,12 @@ export interface EarnedBadge extends Badge {
 
 export interface MissionHistoryItem {
   session_id: UUID;
+  /** P1-6 / Wave 2C — the producing ``submissions.id``. Surfaced so the
+   *  FE can render a per-row Replay button on the account Data tab
+   *  (the replay artefact endpoint keys off submission, not session).
+   *  ``null`` when the session is graded but no submission row exists
+   *  — the row renders without a Replay affordance in that case. */
+  submission_id: UUID | null;
   mission_id: string;
   mission_title: string;
   completed_at: ISODateString | null;

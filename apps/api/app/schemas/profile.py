@@ -55,6 +55,13 @@ class MissionHistoryItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     session_id: uuid.UUID
+    # P1-6 / Wave 2C — the producing ``submissions.id`` for this graded
+    # session. Surfaced so the FE can render a per-row "Replay" affordance
+    # (the replay artefact endpoint keys off submission, not session). The
+    # field is nullable for defensive forward-compatibility: any session
+    # row that surfaces in history without a joined submission renders
+    # the row without a Replay button rather than wiring a broken click.
+    submission_id: uuid.UUID | None = None
     mission_id: str
     mission_title: str
     completed_at: datetime | None = None
