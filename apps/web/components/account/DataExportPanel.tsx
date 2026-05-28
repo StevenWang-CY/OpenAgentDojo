@@ -271,10 +271,82 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
     },
   });
 
+  // Manual "kick" — force an inline build on the BE when polling is
+  // exhausted. The mutation re-uses the per-id query cache key so the
+  // returned terminal state replaces the stale polling envelope without
+  // an extra round trip.
+  const kickMutation = useMutation({
+    mutationFn: ({ id, auto }: { id: string; auto: boolean }) =>
+      account.kickExport(id).then((data) => ({ data, auto })),
+    onSuccess({ data, auto }) {
+      queryClient.setQueryData(["me", "data-export", data.id], data);
+      pollCountRef.current = 0;
+      setPollExhausted(false);
+      if (auto) {
+        // Background kicks shouldn't spam toasts — the panel state
+        // (downloadable link or failure copy) speaks for itself.
+        if (data.status === "ready") {
+          toast.success("Your export is ready.");
+        }
+        return;
+      }
+      if (data.status === "queued" || data.status === "running") {
+        toast.message("Build kicked. Polling for completion.");
+      } else if (data.status === "ready") {
+        toast.success("Your export is ready.");
+      } else if (data.status === "failed") {
+        toast.error(data.error ?? "The export job failed.");
+      }
+    },
+    onError(err: unknown, vars) {
+      // Auto-kicks fail quietly when the BE doesn't expose the /kick
+      // endpoint yet — the user gets the manual "Run build now" button
+      // at pollExhausted as the final fallback. Toasting a 404 from a
+      // background recovery attempt would be confusing.
+      if (vars.auto) return;
+      const message =
+        err instanceof ApiError
+          ? err.message || "Couldn't kick the export."
+          : "Couldn't kick the export.";
+      toast.error(message);
+    },
+  });
+
+  // Auto-kick: when a row has been polling in queued/running for ~30 s
+  // (15 polls × 2 s) without moving, fire the kick endpoint ONCE to
+  // force an inline build. This rescues stuck rows without making the
+  // user wait the full 2-minute poll budget.
+  //
+  // The auto-kick depends on the per-export id (so a fresh kickoff
+  // re-arms the trigger) and is suppressed during the kick's own
+  // network round-trip (so we don't double-fire).
+  const autoKickFiredRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!current || !exportId) return;
+    if (current.status !== "queued" && current.status !== "running") return;
+    if (autoKickFiredRef.current === exportId) return;
+    if (kickMutation.isPending) return;
+    if (pollCountRef.current < 15) return;
+    autoKickFiredRef.current = exportId;
+    kickMutation.mutate({ id: exportId, auto: true });
+  }, [current, exportId, kickMutation]);
+
   function handleRefresh() {
     if (!exportId) return;
     pollCountRef.current = 0;
     setPollExhausted(false);
+    // When the row is still in-flight after the poll budget elapses,
+    // a fresh GET alone won't move the BE state — the auto-sweep may
+    // be wedged or behind. Issue an explicit kick to force an inline
+    // build, then let polling resume against the returned terminal
+    // state.
+    if (
+      current &&
+      (current.status === "queued" || current.status === "running")
+    ) {
+      kickMutation.mutate({ id: exportId, auto: false });
+      return;
+    }
     void query.refetch();
   }
 
@@ -447,11 +519,20 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
             {pollExhausted && isPolling ? (
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-xs text-[var(--color-muted-foreground)]">
-                  We&rsquo;ve been polling for a while — feel free to check
-                  back later, or refresh now.
+                  We&rsquo;ve been polling for a while. The worker may be
+                  catching up — kick the build to run it inline now.
                 </p>
-                <Button variant="secondary" size="sm" onClick={handleRefresh}>
-                  Refresh status
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRefresh}
+                  disabled={kickMutation.isPending}
+                  data-testid="kick-export"
+                >
+                  {kickMutation.isPending ? (
+                    <Loader2 className="size-3 animate-spin" aria-hidden />
+                  ) : null}
+                  {kickMutation.isPending ? "Running…" : "Run build now"}
                 </Button>
               </div>
             ) : null}

@@ -576,6 +576,23 @@ export const account = {
     ).then((value) => value ?? null);
   },
   /**
+   * POST /api/v1/auth/me/data-export/{id}/kick — force an inline run of a
+   * queued / running export. Returns the row with its post-run terminal
+   * status (ready or failed). Idempotent for terminal rows.
+   *
+   * The panel's "Refresh status" button calls this once the poll budget
+   * (60 attempts × 2 s = ~2 minutes) is exhausted. Manual recovery for
+   * the case where the auto-sweep hasn't picked the row up — e.g. the
+   * deployed API predates the sweep wiring, or the sweep itself is
+   * wedged.
+   */
+  kickExport(id: string): Promise<DataExport> {
+    return request<DataExport>(
+      `/auth/me/data-export/${encodeURIComponent(id)}/kick`,
+      { method: "POST" },
+    );
+  },
+  /**
    * POST /api/v1/auth/me/delete — schedule account deletion on a 7-day grace
    * timer. Body re-types the user's email to confirm intent (GitHub-style
    * friction). On success the backend stamps

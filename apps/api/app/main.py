@@ -63,8 +63,14 @@ _RENDER_SWEEP_STALE_AFTER_S = 300
 # forever). Without this loop the FE polls a row that never moves and
 # the user-facing banner reads "Queued — your export will start
 # shortly" indefinitely.
-_EXPORT_SWEEP_INTERVAL_S = 60
-_EXPORT_SWEEP_QUEUED_STALE_AFTER_S = 60
+#
+# Tight cadence: a 15s interval + 20s queued threshold means a stuck
+# queued row resolves inside ~35s without the user touching anything.
+# The manual ``/data-export/{id}/kick`` endpoint covers the gap before
+# the first sweep fires, so the worst-case wait is bounded by the
+# user's patience, not by this constant.
+_EXPORT_SWEEP_INTERVAL_S = 15
+_EXPORT_SWEEP_QUEUED_STALE_AFTER_S = 20
 _EXPORT_SWEEP_RUNNING_STALE_AFTER_S = 600
 
 

@@ -99,6 +99,16 @@ _DELETION_LOCK_RESPONSE: dict[int | str, dict[str, Any]] = {
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+# Anchor for fire-and-forget inline data-export tasks scheduled by the
+# POST /me/data-export handler when the enqueue path is taken. Without
+# this anchor the event loop is free to garbage-collect the task before
+# the build finishes — the row would stay pinned at ``queued`` in the
+# exact race the inline-race path is designed to rescue. The
+# ``add_done_callback(discard)`` pattern matches the existing
+# ``_BACKGROUND_TASKS`` set used by the reports/render path.
+_EXPORT_RACE_TASKS: set[asyncio.Task[None]] = set()
+
+
 class MagicLinkRequest(BaseModel):
     email: EmailStr
     # Phase 4.A.13 — optional same-origin relative path the callback
@@ -1390,14 +1400,15 @@ async def post_me_data_export(
     )
 
     queue = get_queue()
+    enqueued = False
     if queue is not None:
         try:
             queue.enqueue("app.workers.account_export.build_user_export", str(export.id))
+            enqueued = True
         except Exception as exc:
             logger.warning("data-export enqueue failed for {}, running inline: {}", export.id, exc)
-            queue = None
 
-    if queue is None:
+    if not enqueued:
         # Inline fallback — runs the worker in the request loop so dev /
         # test environments without Redis still produce a real export.
         # ``build_user_export`` is sync (it wraps an asyncio.run) so we
@@ -1424,6 +1435,28 @@ async def post_me_data_export(
             )
         # Refresh the row so the response shows the terminal state.
         await db.refresh(export)
+    else:
+        # Belt + braces: schedule an inline build to RACE the queued
+        # worker. ``_async_build_user_export`` short-circuits on terminal
+        # states (READY/FAILED) so whichever finishes second is a
+        # cheap no-op. This rescues the row when:
+        #
+        # - Worker.count reported >0 against a stale registry (the
+        #   worker process is gone but its registration hasn't expired).
+        # - The worker accepted the job but wedged before transitioning
+        #   the row to ``running``.
+        # - The queue is degraded but the enqueue itself succeeded.
+        #
+        # The schedule is fire-and-forget — we don't await it, so the
+        # POST handler still returns the seeded ``queued`` envelope
+        # quickly. The task is anchored to a module-level set so the
+        # event loop doesn't finalise it mid-flight.
+        task = asyncio.create_task(
+            asyncio.to_thread(build_user_export, str(export.id), inline=True),
+            name=f"data-export-inline-race-{export.id}",
+        )
+        _EXPORT_RACE_TASKS.add(task)
+        task.add_done_callback(_EXPORT_RACE_TASKS.discard)
 
     return DataExportRead.model_validate(export)
 
@@ -1572,6 +1605,103 @@ async def get_me_data_export(
     if download_url is not None:
         response = response.model_copy(update={"download_url": download_url})
     return response
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/me/data-export/{export_id}/kick
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/me/data-export/{export_id}/kick",
+    response_model=DataExportRead,
+    summary="Force an inline run of a queued data-export row (P0-6 recovery)",
+)
+async def post_me_data_export_kick(
+    export_id: str,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> DataExportRead:
+    """Manual recovery hatch for a row that is stuck in ``queued`` or
+    ``running`` past the normal worker completion window.
+
+    Three failure modes this endpoint covers — all observable as the FE
+    poll showing "Queued — your export will start shortly" for minutes:
+
+    * **No RQ worker consumer**: the request handler enqueued the job
+      but no ``rq worker`` process is consuming the queue. ``get_queue``
+      now detects this and falls through to the inline fallback, but
+      pre-existing queued rows from before that fix exist in the wild.
+    * **Worker registered but dead**: ``Worker.count`` returns >0
+      because the worker process registered itself in Redis before
+      dying. The job sits in Redis until the heartbeat expires
+      (default 7 minutes).
+    * **Worker present but stuck**: a previous build deadlocked on
+      something. The 60s sweep eventually rescues the row, but the
+      user may not want to wait.
+
+    The endpoint runs ``build_user_export(inline=True)`` synchronously
+    in the request loop (via ``asyncio.to_thread`` to keep the loop
+    unblocked). On return the row carries the terminal status (ready
+    / failed) and the response surfaces it directly.
+
+    Owner-only by uuid; cross-user kicks return 404. Idempotent against
+    terminal rows: ``ready`` / ``failed`` short-circuit inside the
+    worker itself (see ``_async_build_user_export``).
+    """
+    import asyncio as _asyncio
+    import uuid as _uuid
+
+    from app.models.data_export import (
+        EXPORT_IN_FLIGHT_STATUSES,
+        DataExport,
+    )
+    from app.workers.account_export import build_user_export
+
+    try:
+        export_uuid = _uuid.UUID(export_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="export not found") from exc
+
+    export = (
+        await db.execute(
+            select(DataExport).where(
+                DataExport.id == export_uuid,
+                DataExport.user_id == user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if export is None:
+        raise HTTPException(status_code=404, detail="export not found")
+
+    if export.status not in EXPORT_IN_FLIGHT_STATUSES:
+        # Already terminal — just return the current state. The FE only
+        # exposes the kick button while polling so this branch is
+        # defensive; surfacing a 409 would be punishing for a race.
+        return DataExportRead.model_validate(export)
+
+    logger.info(
+        "auth.data_export_kick user_id={} export_id={} prior_status={}",
+        user.id,
+        export.id,
+        export.status,
+    )
+
+    try:
+        await _asyncio.to_thread(build_user_export, str(export.id), inline=True)
+    except Exception as exc:
+        # inline=True suppresses re-raises inside the worker — anything
+        # bubbling out is structural (thread pool, asyncio.run nesting,
+        # AsyncSessionLocal misconfigured). Log loudly and let the
+        # refresh below surface whatever state the row landed at.
+        logger.warning(
+            "data-export kick raised despite inline=True for {}: {}",
+            export.id,
+            exc,
+        )
+
+    await db.refresh(export)
+    return DataExportRead.model_validate(export)
 
 
 # ---------------------------------------------------------------------------
