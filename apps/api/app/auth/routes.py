@@ -1429,6 +1429,85 @@ async def post_me_data_export(
 
 
 # ---------------------------------------------------------------------------
+# GET /auth/me/data-export/latest
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/me/data-export/latest",
+    response_model=DataExportRead,
+    summary="Discover the most recent data-export for this user (P0-6)",
+    responses={204: {"description": "no exports exist for this user"}},
+)
+async def get_me_data_export_latest(
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Return the caller's most-recent ``DataExport`` (by ``requested_at``
+    desc) so the panel can adopt an existing in-flight or terminal row on
+    mount.
+
+    Returns 204 if no export rows exist — the panel renders the empty
+    "Request export" state in that case. The 204 must come back as a
+    ``Response`` instance (FastAPI swallows ``None`` returns through a
+    typed response_model and emits an empty 200 JSON body, which trips
+    the FE's parser).
+
+    Why this exists: the panel previously stored the export id in local
+    React state seeded only by a successful POST. After a page reload,
+    state was empty so the empty "No exports yet" copy rendered — but
+    any pre-existing queued/running row in the DB caused POST to 409
+    with "export_in_flight". The user saw two contradictory messages on
+    the same panel. This endpoint plus the 409 ``detail.export_id`` field
+    let the FE recover the existing row deterministically.
+    """
+    from datetime import UTC, datetime
+
+    from app.models.data_export import (
+        EXPORT_STATUS_EXPIRED,
+        EXPORT_STATUS_READY,
+        DataExport,
+    )
+
+    export = (
+        await db.execute(
+            select(DataExport)
+            .where(DataExport.user_id == user.id)
+            .order_by(DataExport.requested_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if export is None:
+        return Response(status_code=204)
+
+    now = datetime.now(UTC)
+    download_url: str | None = None
+    if export.status == EXPORT_STATUS_READY:
+        expires_at = export.expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at is not None and expires_at <= now:
+            export.status = EXPORT_STATUS_EXPIRED
+            db.add(export)
+            await db.flush()
+            await db.commit()
+        elif export.s3_key and expires_at is not None:
+            remaining = max(1, int((expires_at - now).total_seconds()))
+            from app.storage import generate_download_url
+
+            download_url = generate_download_url(export.s3_key, expires_in=remaining)
+
+    payload = DataExportRead.model_validate(export)
+    if download_url is not None:
+        payload = payload.model_copy(update={"download_url": download_url})
+    return JSONResponse(
+        content=payload.model_dump(mode="json"),
+        status_code=200,
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /auth/me/data-export/{export_id}
 # ---------------------------------------------------------------------------
 

@@ -143,6 +143,42 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
   const pollCountRef = React.useRef(0);
   const [pollExhausted, setPollExhausted] = React.useState(false);
 
+  // Mount-time discovery: ask the BE for the most-recent export so a page
+  // reload doesn't lose a queued/running row. Returns null when the user
+  // has never exported. Disabled in the deletion-grace window — the BE
+  // returns 403 there and the panel itself is locked, so the call would
+  // just generate noise.
+  const latestQuery = useQuery({
+    queryKey: ["me", "data-export", "latest"],
+    enabled: !locked,
+    queryFn: ({ signal }) => account.getLatestExport(signal),
+    // Don't refetch on focus — once we've adopted an id, the per-id poll
+    // below owns freshness. We just need this on mount.
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+  });
+
+  // Adopt the latest row's id whenever discovery resolves (mount, refetch
+  // after invalidation, or a stale tab refocus). The per-id query starts
+  // polling automatically once exportId becomes non-null.
+  React.useEffect(() => {
+    if (!latestQuery.data) return;
+    if (exportId === latestQuery.data.id) return;
+    queryClient.setQueryData(
+      ["me", "data-export", latestQuery.data.id],
+      latestQuery.data,
+    );
+    pollCountRef.current = 0;
+    setPollExhausted(false);
+    setExportId(latestQuery.data.id);
+  }, [latestQuery.data, exportId, queryClient]);
+
   const query = useQuery({
     queryKey: ["me", "data-export", exportId],
     enabled: !!exportId,
@@ -196,10 +232,34 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
     },
     onError(err: unknown) {
       if (err instanceof ApiError && err.status === 409) {
-        // Another export is already queued/running. We don't know its id
-        // (the 409 body intentionally doesn't leak unrelated metadata), so
-        // we surface a "wait for the existing one" notice. The next render
-        // after a successful kickoff will replace this state.
+        // Another export is already queued/running. The BE returns the
+        // existing row's id under ``detail.export_id`` so we can adopt
+        // it directly — the panel renders the live row instead of the
+        // ambiguous "Another export is in flight" notice on top of an
+        // empty state. If the body shape ever drifts we fall back to
+        // refetching ``/me/data-export/latest`` which finds the same row.
+        const body = err.body as { detail?: { export_id?: unknown } } | null;
+        const existingId =
+          body && typeof body.detail?.export_id === "string"
+            ? (body.detail.export_id as string)
+            : null;
+        if (existingId) {
+          queryClient.invalidateQueries({
+            queryKey: ["me", "data-export", existingId],
+          });
+          pollCountRef.current = 0;
+          setPollExhausted(false);
+          setConflict(false);
+          setExportId(existingId);
+          // Also refresh the discovery cache so a remount picks the
+          // same id without another POST.
+          void latestQuery.refetch();
+          toast.info("Picked up the export already in progress.");
+          return;
+        }
+        // Body drift — refetch latest as the fallback adoption path. The
+        // conflict notice still helps if discovery also yields nothing.
+        void latestQuery.refetch();
         setConflict(true);
         return;
       }
@@ -238,7 +298,28 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
         className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-elevated)] p-4"
         data-testid="export-card"
       >
-        {!current ? (
+        {/*
+         * Three mutually-exclusive top-level states:
+         *   1. Discovery in flight   → muted skeleton (avoids the flash of
+         *      "No exports yet" before the BE response lands; this was the
+         *      half of the bug that allowed the contradiction to appear).
+         *   2. Live row present       → render the rich state surface below.
+         *   3. Discovery resolved to null AND no live row → render the
+         *      genuine empty state with "Request export" CTA.
+         */}
+        {!current && latestQuery.isLoading && !latestQuery.isFetched ? (
+          <div
+            className="flex items-center gap-3 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-sm text-[var(--color-muted-foreground)]"
+            data-testid="export-discovery-loading"
+            aria-busy="true"
+          >
+            <Loader2
+              className="size-4 animate-spin text-[var(--color-muted-foreground)]"
+              aria-hidden
+            />
+            <p>Checking for existing exports…</p>
+          </div>
+        ) : !current ? (
           <div className="space-y-3" data-testid="export-empty">
             <div className="flex items-center gap-3 rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-sm text-[var(--color-muted-foreground)]">
               <FileArchive
@@ -256,8 +337,9 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
                 className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-muted-foreground)]"
                 data-testid="export-conflict"
               >
-                Another export is in flight. Wait for it to finish, then
-                request a new one if you need an even fresher snapshot.
+                Another export is in flight, but we couldn&rsquo;t identify
+                it. Try refreshing the page — that will adopt the existing
+                row so you can see its progress.
               </p>
             ) : null}
             <Button

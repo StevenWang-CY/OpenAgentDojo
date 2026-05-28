@@ -44,6 +44,15 @@ function renderPanel() {
 
 beforeEach(() => {
   server.listen({ onUnhandledRequest: "bypass" });
+  // The panel's mount-time discovery hits `/data-export/latest`. Default
+  // to "no exports yet" (204) so existing tests don't have to special-case
+  // discovery; tests that need to seed an existing row override this in
+  // their own `server.use(...)`.
+  server.use(
+    http.get(`${API_BASE}/api/v1/auth/me/data-export/latest`, () =>
+      new HttpResponse(null, { status: 204 }),
+    ),
+  );
 });
 
 afterEach(() => {
@@ -139,6 +148,78 @@ describe("DataExportPanel", () => {
 
     const notice = await screen.findByTestId("export-conflict");
     expect(notice).toHaveTextContent(/another export is in flight/i);
+  });
+
+  it("adopts an existing in-flight row from /latest on mount (no 'No exports yet' flash)", async () => {
+    // Scenario: user reloads the page while a previous export is still
+    // queued (e.g. orphaned by an RQ worker outage). Before the fix the
+    // panel rendered "No exports yet" because local React state was
+    // empty; clicking Request then 409'd. With /latest the panel
+    // discovers the row on mount and renders the live status.
+    server.use(
+      http.get(`${API_BASE}/api/v1/auth/me/data-export/latest`, () =>
+        HttpResponse.json({
+          id: EXPORT_ID,
+          status: "queued",
+          requested_at: new Date().toISOString(),
+        } satisfies DataExport),
+      ),
+      http.get(`${API_BASE}/api/v1/auth/me/data-export/:id`, () =>
+        HttpResponse.json({
+          id: EXPORT_ID,
+          status: "queued",
+          requested_at: new Date().toISOString(),
+        } satisfies DataExport),
+      ),
+    );
+
+    renderPanel();
+
+    // The active surface appears WITHOUT a button click — discovery
+    // adopted the row directly.
+    await screen.findByTestId("export-active");
+    expect(screen.queryByTestId("export-empty")).toBeNull();
+    const status = await screen.findByTestId("export-status");
+    expect(status).toHaveTextContent(/queued/i);
+  });
+
+  it("on 409 with detail.export_id, adopts the existing row instead of showing the contradictory empty/conflict pair", async () => {
+    // Scenario the user reported: the panel shows "No exports yet" AND
+    // a "Another export is in flight" notice on the same surface. Fix:
+    // the 409 carries the existing export id under detail.export_id; we
+    // adopt it and switch to the live status surface.
+    server.use(
+      http.post(`${API_BASE}/api/v1/auth/me/data-export`, () =>
+        HttpResponse.json(
+          {
+            detail: {
+              code: "export_in_flight",
+              message: "an export is already running for this account",
+              export_id: EXPORT_ID,
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+      http.get(`${API_BASE}/api/v1/auth/me/data-export/:id`, () =>
+        HttpResponse.json({
+          id: EXPORT_ID,
+          status: "running",
+          requested_at: new Date().toISOString(),
+        } satisfies DataExport),
+      ),
+    );
+
+    renderPanel();
+    fireEvent.click(await screen.findByTestId("request-export"));
+
+    // The adopted row's surface appears; the contradictory conflict
+    // notice does NOT appear on top of the empty state.
+    await screen.findByTestId("export-active");
+    expect(screen.queryByTestId("export-empty")).toBeNull();
+    expect(screen.queryByTestId("export-conflict")).toBeNull();
+    const status = await screen.findByTestId("export-status");
+    expect(status).toHaveTextContent(/running/i);
   });
 
   it("caches the in-flight export under ['me','data-export',id] so a tab switch survives", async () => {

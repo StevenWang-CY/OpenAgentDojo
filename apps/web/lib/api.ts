@@ -558,6 +558,24 @@ export const account = {
     );
   },
   /**
+   * GET /api/v1/auth/me/data-export/latest — discover the user's most-recent
+   * export on mount. Returns the row (any status) or ``null`` on 204 (no
+   * exports ever requested).
+   *
+   * Why: the panel previously stored the active export id in local React
+   * state seeded only by a successful POST. A page reload dropped that
+   * state, so the empty "No exports yet" copy rendered even when an
+   * actual queued/running row existed in the DB — and POST then 409'd
+   * with "Another export is in flight". This helper lets the panel adopt
+   * the existing row on mount and keep the UI honest.
+   */
+  getLatestExport(signal?: AbortSignal): Promise<DataExport | null> {
+    return request<DataExport | undefined>(
+      "/auth/me/data-export/latest",
+      { signal },
+    ).then((value) => value ?? null);
+  },
+  /**
    * POST /api/v1/auth/me/delete — schedule account deletion on a 7-day grace
    * timer. Body re-types the user's email to confirm intent (GitHub-style
    * friction). On success the backend stamps
