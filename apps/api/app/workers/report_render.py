@@ -43,6 +43,7 @@ from app.config import get_settings
 from app.models.report_render import (
     RENDER_KIND_PDF,
     RENDER_STATUS_FAILED,
+    RENDER_STATUS_QUEUED,
     RENDER_STATUS_READY,
     RENDER_STATUS_RUNNING,
     ReportRender,
@@ -208,50 +209,107 @@ async def _mark_failed(db: Any, row: ReportRender, error: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def sweep_stuck_renders(db: Any, *, stale_after_s: int = 300) -> int:
-    """Mark any ``running`` ``report_renders`` row older than ``stale_after_s``
-    seconds as ``failed``. Returns the number of rows flipped.
+async def sweep_stuck_renders(
+    db: Any,
+    *,
+    stale_after_s: int = 300,
+    queued_stale_after_s: int = 60,
+) -> int:
+    """Recover ``report_renders`` rows abandoned by the worker pipeline.
 
-    A worker that crashed mid-render (OOM kill, SIGTERM during shutdown
-    that didn't finish committing, Playwright deadlock) leaves the row
-    pinned at ``running`` forever. Clients polling the row hang on it;
-    the daily-force-rerender cap counts it against the user's budget;
-    nothing ever moves it. This sweep — invoked on a periodic lifespan
-    task — is the safety net.
+    Returns the total number of rows the sweep touched (rescued queued +
+    flipped running). Two failure modes covered:
 
-    Uses ``created_at`` rather than a missing ``updated_at`` column
-    because the schema doesn't carry per-mutation timestamps; a
-    ``running`` row whose creation is older than the worker's own job
-    timeout (300s by default) is dead by every plausible definition.
+    1. **Orphaned ``queued`` row** — the route enqueued into RQ but no
+       worker consumed the job (queue had no live consumer, worker
+       crashed between enqueue and dequeue, or the route fell through
+       the inline path and the background task was cancelled before it
+       could run). Without this branch the FE polls a row that never
+       moves; the user's force-rerender budget is consumed for nothing.
+       The sweep schedules an inline render for any queued row older
+       than ``queued_stale_after_s`` (default 60 s — long enough to
+       avoid racing a healthy worker, short enough that the user
+       doesn't sit waiting).
 
-    Idempotent: no matching rows → no-op, returns 0.
+    2. **Wedged ``running`` row** — worker SIGTERM'd mid-render, OOM
+       killed, Playwright deadlock, or the upload to S3 hung. Any
+       ``running`` row whose ``created_at`` is older than
+       ``stale_after_s`` is dead by every plausible definition and gets
+       flipped to ``failed``. The error column gives operators a
+       distinct signature to alert on.
+
+    Idempotent + race-safe: the worker's own
+    ``RENDER_STATUS_READY/FAILED`` early-return guard at
+    ``_async_render`` line 136 prevents double work if the sweep races
+    a worker that's about to finish.
     """
     from datetime import timedelta
 
-    horizon = datetime.now(UTC) - timedelta(seconds=int(max(1, stale_after_s)))
-    rows = (
+    now = datetime.now(UTC)
+    queued_horizon = now - timedelta(seconds=int(max(1, queued_stale_after_s)))
+    running_horizon = now - timedelta(seconds=int(max(1, stale_after_s)))
+
+    # 1. Rescue queued rows by scheduling them inline. Fire-and-forget
+    # via asyncio.create_task — same dispatch pattern the route uses for
+    # its no-Redis fallback. The task updates the row out-of-band; the
+    # sweep doesn't await completion (a long render could block the
+    # entire sweep loop otherwise).
+    queued_rows = (
         (
             await db.execute(
                 select(ReportRender).where(
-                    ReportRender.status == RENDER_STATUS_RUNNING,
-                    ReportRender.created_at < horizon,
+                    ReportRender.status == RENDER_STATUS_QUEUED,
+                    ReportRender.created_at < queued_horizon,
                 )
             )
         )
         .scalars()
         .all()
     )
-    if not rows:
-        return 0
-    for row in rows:
+    rescued = 0
+    if queued_rows:
+        import asyncio as _asyncio
+
+        for row in queued_rows:
+            task = _asyncio.create_task(_async_render(row.id, inline=True))
+            # Anchor the task so the GC doesn't finalise it mid-flight.
+            _SWEEP_RESCUE_TASKS.add(task)
+            task.add_done_callback(_SWEEP_RESCUE_TASKS.discard)
+            rescued += 1
+        logger.info(
+            "report_render sweep: rescued {} stuck queued row(s) via inline render",
+            rescued,
+        )
+
+    # 2. Flip wedged running rows to failed.
+    running_rows = (
+        (
+            await db.execute(
+                select(ReportRender).where(
+                    ReportRender.status == RENDER_STATUS_RUNNING,
+                    ReportRender.created_at < running_horizon,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not running_rows:
+        return rescued
+    for row in running_rows:
         row.status = RENDER_STATUS_FAILED
         row.error = "render_timed_out_after_shutdown"
     await db.commit()
     logger.warning(
         "report_render sweep: flipped {} stuck running row(s) to failed",
-        len(rows),
+        len(running_rows),
     )
-    return len(rows)
+    return rescued + len(running_rows)
+
+
+# Anchor for inline rescue tasks spawned by sweep_stuck_renders. The
+# discard callback runs when each task completes.
+_SWEEP_RESCUE_TASKS: set[Any] = set()
 
 
 # ---------------------------------------------------------------------------

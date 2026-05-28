@@ -37,6 +37,7 @@ from app.models.coaching_cache_user_index import CoachingCacheUserIndex
 from app.models.command_run import CommandRun
 from app.models.data_export import (
     EXPORT_STATUS_FAILED,
+    EXPORT_STATUS_QUEUED,
     EXPORT_STATUS_READY,
     EXPORT_STATUS_RUNNING,
     DataExport,
@@ -213,6 +214,120 @@ async def _mark_failed(db: AsyncSession, export: DataExport, error: str) -> None
     export.error = error[:500]
     await db.commit()
     data_exports_requested_total.labels(status=EXPORT_STATUS_FAILED).inc()
+
+
+# ---------------------------------------------------------------------------
+# Stuck-row sweeper (mirrors sweep_stuck_renders pattern from report_render.py)
+# ---------------------------------------------------------------------------
+
+
+async def sweep_stuck_exports(
+    db: AsyncSession,
+    *,
+    queued_stale_after_s: int = 60,
+    running_stale_after_s: int = 600,
+) -> tuple[int, int]:
+    """Recover ``data_exports`` rows abandoned by the worker pipeline.
+
+    Returns ``(rescued_count, failed_count)``.
+
+    Two failure modes the sweep covers:
+
+    1. **Orphaned ``queued`` row** — RQ enqueue silently succeeded against
+       a queue with no live worker (or the worker died between enqueue
+       and dequeue). Without this sweep the FE shows "Queued — your
+       export will start shortly" forever. The sweep schedules an inline
+       build for any ``queued`` row older than ``queued_stale_after_s``.
+       Default 60 s — longer than a healthy worker takes to pick up a
+       job, short enough that the user doesn't sit waiting.
+
+    2. **Wedged ``running`` row** — worker SIGTERM'd mid-build, OOM
+       killed, or stuck in S3 upload. The row pins at ``running``
+       forever; the partial unique index blocks the user from queueing
+       a fresh export. The sweep flips any ``running`` row older than
+       ``running_stale_after_s`` to ``failed`` so the user can retry.
+       Default 600 s — comfortably past the worker's expected build
+       time, before the user's session expires.
+
+    Idempotent + race-safe: the worker's own
+    ``EXPORT_STATUS_READY/FAILED`` early return guards against double
+    builds if the sweep fires concurrently with a slow worker that's
+    about to finish.
+    """
+    from datetime import timedelta
+
+    now = datetime.now(UTC)
+    queued_horizon = now - timedelta(seconds=max(1, queued_stale_after_s))
+    running_horizon = now - timedelta(seconds=max(1, running_stale_after_s))
+
+    # 1. Recover orphaned queued rows by running them inline.
+    queued_rows = (
+        (
+            await db.execute(
+                select(DataExport).where(
+                    DataExport.status == EXPORT_STATUS_QUEUED,
+                    DataExport.requested_at < queued_horizon,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rescued = 0
+    for row in queued_rows:
+        export_id = row.id
+        try:
+            # Run inline in a thread to avoid nesting asyncio.run() under
+            # the sweep's own event loop. inline=True suppresses re-raise
+            # so a single bad export doesn't kill the sweep.
+            await asyncio.to_thread(build_user_export, str(export_id), inline=True)
+            rescued += 1
+            logger.info(
+                "account_export sweep: rescued stuck queued export {} via inline build",
+                export_id,
+            )
+        except Exception as exc:
+            # Defensive: build_user_export(inline=True) shouldn't raise,
+            # but if asyncio.to_thread itself fails we still want to
+            # mark the row failed so the user can retry.
+            logger.exception(
+                "account_export sweep: inline rescue failed for {}: {}",
+                export_id,
+                exc,
+            )
+            row_refresh = (
+                await db.execute(select(DataExport).where(DataExport.id == export_id))
+            ).scalar_one_or_none()
+            if row_refresh is not None and row_refresh.status == EXPORT_STATUS_QUEUED:
+                await _mark_failed(db, row_refresh, f"sweep_inline_failed: {exc}")
+
+    # 2. Flip wedged running rows to failed.
+    running_rows = (
+        (
+            await db.execute(
+                select(DataExport).where(
+                    DataExport.status == EXPORT_STATUS_RUNNING,
+                    DataExport.requested_at < running_horizon,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    failed = 0
+    for row in running_rows:
+        row.status = EXPORT_STATUS_FAILED
+        row.error = "export_worker_wedged_after_timeout"
+        failed += 1
+    if running_rows:
+        await db.commit()
+        data_exports_requested_total.labels(status=EXPORT_STATUS_FAILED).inc(failed)
+        logger.warning(
+            "account_export sweep: flipped {} stuck running row(s) to failed",
+            failed,
+        )
+
+    return rescued, failed
 
 
 async def _build_zip(

@@ -14,18 +14,27 @@ def test_get_queue_uses_provision_name() -> None:
     real Queue whose name we can read; otherwise it returns None and we fall
     back to a source-level guarantee on the literal queue name.
     """
-    from app.workers.queue import get_queue
+    from app.workers.queue import get_queue, reset_queue_cache
 
-    get_queue.cache_clear()  # type: ignore[attr-defined]
+    reset_queue_cache()
     q = get_queue()
     if q is not None:
         assert q.name == "provision"
 
-    # Source-level guarantee — read app/workers/queue.py and confirm the literal.
+    # Source-level guarantee — read app/workers/queue.py and confirm the literal
+    # is either Queue("provision", ...) or a top-level _QUEUE_NAME = "provision"
+    # that gets fed to Queue(_QUEUE_NAME, ...). Both shapes are valid; we just
+    # care the name didn't drift.
     queue_src = (_REPO_ROOT / "apps/api/app/workers/queue.py").read_text(encoding="utf-8")
-    assert 'Queue("provision"' in queue_src, "producer queue name drifted from 'provision'"
+    inline_literal = 'Queue("provision"' in queue_src
+    via_constant = (
+        '_QUEUE_NAME = "provision"' in queue_src and "Queue(_QUEUE_NAME" in queue_src
+    )
+    assert inline_literal or via_constant, "producer queue name drifted from 'provision'"
     assert 'Queue("arena"' not in queue_src
     assert 'Queue("sandbox"' not in queue_src
+    assert '_QUEUE_NAME = "arena"' not in queue_src
+    assert '_QUEUE_NAME = "sandbox"' not in queue_src
 
 
 def test_compose_worker_drains_provision_queue_only() -> None:

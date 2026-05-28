@@ -58,6 +58,15 @@ class ArenaError(Exception):
 _RENDER_SWEEP_INTERVAL_S = 60
 _RENDER_SWEEP_STALE_AFTER_S = 300
 
+# Stuck-export sweep: recovers ``data_exports`` rows orphaned by an RQ
+# enqueue with no consumer (queued forever) or wedged worker (running
+# forever). Without this loop the FE polls a row that never moves and
+# the user-facing banner reads "Queued — your export will start
+# shortly" indefinitely.
+_EXPORT_SWEEP_INTERVAL_S = 60
+_EXPORT_SWEEP_QUEUED_STALE_AFTER_S = 60
+_EXPORT_SWEEP_RUNNING_STALE_AFTER_S = 600
+
 
 async def _render_sweep_loop() -> None:
     """Periodically flip stuck ``report_renders.status='running'`` rows to
@@ -87,6 +96,45 @@ async def _render_sweep_loop() -> None:
             # already recovers on the next tick — the log level just makes
             # sure operators see the failure rate on dashboards.
             logger.error("report_render_sweep_iteration_failed: {}", exc)
+
+
+async def _export_sweep_loop() -> None:
+    """Periodically recover ``data_exports`` rows abandoned by the worker
+    pipeline.
+
+    Two recovery paths, both delegated to
+    ``apps.api.app.workers.account_export.sweep_stuck_exports``:
+
+    1. **Queued with no consumer**: RQ enqueue silently succeeded against
+       a queue with no live worker (or the worker died between enqueue
+       and dequeue). The sweep runs the build inline so the user's
+       export actually completes.
+    2. **Running but wedged**: worker crashed mid-build. The sweep flips
+       the row to ``failed`` so the partial-unique-index releases and
+       the user can retry.
+
+    Same isolation discipline as ``_render_sweep_loop``: fresh session
+    per iteration, errors logged + swallowed, clean cancel on shutdown.
+    """
+    from app.db.session import AsyncSessionLocal
+    from app.workers.account_export import sweep_stuck_exports
+
+    while True:
+        try:
+            await asyncio.sleep(_EXPORT_SWEEP_INTERVAL_S)
+        except asyncio.CancelledError:
+            return
+        try:
+            async with AsyncSessionLocal() as db:
+                await sweep_stuck_exports(
+                    db,
+                    queued_stale_after_s=_EXPORT_SWEEP_QUEUED_STALE_AFTER_S,
+                    running_stale_after_s=_EXPORT_SWEEP_RUNNING_STALE_AFTER_S,
+                )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.error("data_export_sweep_iteration_failed: {}", exc)
 
 
 @asynccontextmanager
@@ -157,6 +205,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # row hangs forever, the FE poll never resolves, and the user's
     # force-rerender budget is silently consumed.
     render_sweep_task = asyncio.create_task(_render_sweep_loop(), name="report-render-sweep")
+    export_sweep_task = asyncio.create_task(_export_sweep_loop(), name="data-export-sweep")
 
     # Let the in-process provision fallback see the running app so it can
     # register handles on the pool (the WS terminal route reads from it).
@@ -183,7 +232,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 completed,
                 timed_out,
             )
-        for task in (reaper_task, orphan_task, render_sweep_task):
+        for task in (reaper_task, orphan_task, render_sweep_task, export_sweep_task):
             task.cancel()
             try:
                 await task

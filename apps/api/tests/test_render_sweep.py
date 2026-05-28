@@ -166,7 +166,10 @@ async def test_sweep_flips_only_stuck_running_rows(db_engine) -> None:
         await db.commit()
 
     async with session_local() as db:
-        flipped = await sweep_stuck_renders(db, stale_after_s=300)
+        # queued_stale_after_s=3600 keeps this test focused on the
+        # running→failed branch — the queued rescue path is covered by
+        # test_sweep_rescues_orphaned_queued_renders below.
+        flipped = await sweep_stuck_renders(db, stale_after_s=300, queued_stale_after_s=86_400)
 
     assert flipped == 1
     async with session_local() as db:
