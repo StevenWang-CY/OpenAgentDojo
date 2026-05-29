@@ -477,16 +477,13 @@ class GradingRunner:
                 mission_catalogue=catalogue,
                 coming_soon=coming_soon,
             )
-            engine_recommended_ids = [
-                item.mission_id for item in rec_set.recommendations
-            ]
+            engine_recommended_ids = [item.mission_id for item in rec_set.recommendations]
         except Exception as exc:  # never block the grade.
             from app.observability import recommendation_engine_errors_total
 
             recommendation_engine_errors_total.labels(stage="pre_grade").inc()
             logger.exception(
-                "[grader] engine_recommended_mission_ids_failed "
-                "session_id={} user_id={} error={}",
+                "[grader] engine_recommended_mission_ids_failed session_id={} user_id={} error={}",
                 session_id,
                 getattr(session, "user_id", None),
                 type(exc).__name__,

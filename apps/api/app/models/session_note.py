@@ -75,7 +75,4 @@ class SessionNote(Base):
     )
 
     def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"<SessionNote session_id={self.session_id} "
-            f"bytes={len(self.body.encode('utf-8'))}>"
-        )
+        return f"<SessionNote session_id={self.session_id} bytes={len(self.body.encode('utf-8'))}>"

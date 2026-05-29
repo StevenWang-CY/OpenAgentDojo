@@ -33,7 +33,6 @@ from loguru import logger
 
 from app.config import get_settings
 
-
 # Queue name MUST match the worker CMD in:
 #   - infra/compose/docker-compose.yml  (worker service)
 #   - infra/docker/sandbox-worker.Dockerfile  (CMD)

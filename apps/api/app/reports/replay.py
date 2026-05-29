@@ -224,7 +224,7 @@ def _bump_nan_clamp_counter() -> None:
     — try/except wraps the metrics path so a missing prometheus_client
     or a double registration never breaks signing.
     """
-    global _NAN_CLAMP_COUNTER
+    global _NAN_CLAMP_COUNTER  # noqa: PLW0603 — lazy-init of a module-level prometheus counter singleton
     try:
         if _NAN_CLAMP_COUNTER is None:
             from prometheus_client import REGISTRY as _REGISTRY
@@ -326,11 +326,7 @@ def replay_signature(artefact: dict[str, Any], verify_secret: str) -> str:
         # secret material, and a divergent ``ValueError`` here would
         # silently bypass those handlers.
         raise RuntimeError("verify secret must be a non-empty string")
-    signed = {
-        k: v
-        for k, v in artefact.items()
-        if k not in {"exported_at", "replay_signature"}
-    }
+    signed = {k: v for k, v in artefact.items() if k not in {"exported_at", "replay_signature"}}
     payload = canonical_json(signed)
     return hmac.new(
         verify_secret.encode("utf-8"),
@@ -358,9 +354,7 @@ async def _load_envelope_inputs(
     ).scalar_one_or_none()
     if session is None:
         raise LookupError(f"session {submission.session_id} not found")
-    user = (
-        await db.execute(select(User).where(User.id == session.user_id))
-    ).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.id == session.user_id))).scalar_one_or_none()
     mission_row = (
         await db.execute(select(Mission).where(Mission.id == session.mission_id))
     ).scalar_one_or_none()
@@ -590,9 +584,7 @@ async def build_replay(
     envelope_signature = submission.verification_signature or ""
 
     events = await _load_events(db, session.id)
-    serialised_events = [
-        _serialise_event(ev, redact_payloads=redact_payloads) for ev in events
-    ]
+    serialised_events = [_serialise_event(ev, redact_payloads=redact_payloads) for ev in events]
 
     # ``final_diff`` lives on the submission row directly — the grader
     # captured it from ``git diff --no-color --no-ext-diff --no-renames``

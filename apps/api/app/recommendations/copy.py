@@ -32,8 +32,7 @@ COLD_START_DIAGNOSIS: Final[str] = (
 )
 
 ALL_GRADED_DIAGNOSIS: Final[str] = (
-    "You're solid across all dimensions — try the freshest missions to "
-    "keep the edge sharp."
+    "You're solid across all dimensions — try the freshest missions to keep the edge sharp."
 )
 
 # One short, actionable sentence per weakest dimension. Each string names
@@ -136,9 +135,7 @@ def why_for_mission(
       * ``0.0`` otherwise — neutral copy.
     """
     if mode == "all_graded":
-        return (
-            "your widest gap — give it another pass with what you learned."
-        )
+        return "your widest gap — give it another pass with what you learned."
 
     user_label = (
         _DIM_LABELS.get(weakest_dim, weakest_dim)
@@ -146,18 +143,14 @@ def why_for_mission(
         else "the freshest dimension on the board"
     )
     if alignment >= 1.0 and expected_weak_dim:
-        return (
-            f"exercises {user_label} as its primary supervisory axis."
-        )
+        return f"exercises {user_label} as its primary supervisory axis."
     if alignment >= 0.5 and weakest_dim:
         mission_label = (
             _DIM_LABELS.get(expected_weak_dim, expected_weak_dim)
             if expected_weak_dim
             else "an adjacent skill"
         )
-        return (
-            f"reinforces {user_label} through a {mission_label} failure mode."
-        )
+        return f"reinforces {user_label} through a {mission_label} failure mode."
     if freshness_fresh:
         return "fresh on the dojo — try the newest Go pack."
     return (

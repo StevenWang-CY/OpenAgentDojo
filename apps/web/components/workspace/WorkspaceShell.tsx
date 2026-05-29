@@ -644,6 +644,44 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   }
 
   if (status === "graded") {
+    // FE audit fix — the redirect effect only fires once ``submissionQuery``
+    // resolves with data, and the spinner branch below assumed that lookup
+    // always eventually succeeds. If GET /sessions/{id}/submission errors
+    // (with ``retry: false`` a single 5xx/network blip stranded the user on
+    // an infinite "Taking you to your report" spinner). Surface a
+    // recoverable error with Retry + a way back instead.
+    if (submissionQuery.isError && !submissionQuery.data) {
+      const apiError =
+        submissionQuery.error instanceof ApiError
+          ? submissionQuery.error
+          : null;
+      return (
+        <FullPageMessage
+          tone="danger"
+          icon={<AlertCircle aria-hidden className="size-6" />}
+          heading="Your submission was graded, but we couldn't open the report."
+          body={
+            apiError?.status === 0
+              ? "Couldn't reach the API. Is the backend running on port 8000?"
+              : (apiError?.message ??
+                "We couldn't load your report just now — please retry.")
+          }
+          actions={
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => void submissionQuery.refetch()}
+              >
+                <RefreshCcw className="size-4" aria-hidden /> Retry
+              </Button>
+              <Button asChild variant="ghost">
+                <Link href="/missions">Back to missions</Link>
+              </Button>
+            </>
+          }
+        />
+      );
+    }
     return (
       <FullPageMessage
         tone="info"

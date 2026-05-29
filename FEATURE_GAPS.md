@@ -424,82 +424,6 @@ should link to the specific supervision event(s) that produced it. An
 "explain this score" surface that walks dimension-by-dimension with citations
 to event ids is the trust-build move for the credentialing claim.
 
-### P1-8. Keyboard shortcuts cheatsheet + `Help (?)` overlay
-
-There's a `Cmd+Enter` hint in [SubmitDialog.tsx:94](apps/web/components/workspace/SubmitDialog.tsx#L94)
-and that's it. A `?`-triggered overlay with the shortcut table (file-open,
-search, submit, apply, revert) is industry-table-stakes for any IDE-shaped
-product.
-
-### P1-9. Failure-mode taxonomy doc + linked theory
-
-The 10 failure modes are well-chosen but they exist as ad-hoc strings
-(`checks_presence_not_expiration`, `overfitted_visible_test`, …). Publish a
-[`docs/failure-modes.md`](docs/) that explains each as a *taxonomy* of
-supervision failures, with references to the real-world incidents/patterns
-they represent. The `/skills` page links into this doc per failure mode.
-This is what converts the product from "10 quizzes" to "a body of knowledge."
-
-### P1-10. Calibration transparency
-
-Each mission already carries `expected_diff_lines_p50` and
-`acceptance.yaml` envelopes
-([missions/_calibration/](missions/_calibration/)). Surface these in the UI:
-the mission detail page shows "median supervisor scores 62 here; ideal
-solution scores 92." This makes the grader's choices defensible and gives
-returning users a sense of where they sit.
-
-### P1-11. Telemetry consent / opt-out UI
-
-[TelemetryProvider](apps/web/components/TelemetryProvider.tsx) exists and
-[lib/telemetry.ts](apps/web/lib/telemetry.ts) emits events
-(`report_viewed`, `prompt_submitted`, etc.). There is no in-product opt-out.
-Tied to P0-5 (Cookie consent) but distinct from it: even consenting users
-need a Settings toggle.
-
-### P1-12. Team / cohort dashboard
-
-For the platform to be sold as training to a company, "team supervisor's
-weekly heatmap" is the artifact a manager will ask for. The plan does not
-include this and it is fine to defer past MVP, but it should be on the
-public roadmap so that prospective customers can map it to a quarter.
-
-### P1-13. Submission rate-limit + active-session feedback in the UI
-
-Plan §21: 3 submissions/user/hour, 1 active session. When the user hits
-either limit the API returns a 429 / 409 with a JSON body
-([sessions/router.py:163](apps/api/app/sessions/router.py#L163)). The
-frontend should render: "You've used 3/3 submissions; resets in 47 min" and
-the active-session conflict already has FE handling, but it's not surfaced on
-the catalog page as a status indicator.
-
-### P1-14. Accessibility audit results
-
-[e2e/a11y.spec.ts](apps/web/e2e/a11y.spec.ts) exists; the WCAG 2.1 AA target
-is documented (plan §13.6). Publish the actual audit results, fix any
-critical Axe violations on the workspace, and add the WAVE / Axe badge to the
-footer. The radar chart in
-[ScoreRadar.tsx](apps/web/components/report/ScoreRadar.tsx) and the
-color-only diff highlights in [DiffViewer.tsx](apps/web/components/workspace/DiffViewer.tsx)
-are the high-risk surfaces.
-
-### P1-15. Mobile-responsive marketing / report / profile (workspace exempt)
-
-Per plan §26, the workspace is desktop-only — that's defensible. But the
-**landing, missions list, report, and profile** *must* render correctly on
-phones, because that's where candidates will share their profile from. The
-landing 3D scene in [Hero3D.tsx](apps/web/components/marketing/Hero3D.tsx)
-will need a mobile fallback.
-
-### P1-16. Resume / recover sessions after sandbox-reaper kill
-
-The idle reaper destroys sandboxes after 30 min. Today this transitions the
-session to `abandoned` and the user loses everything. A "Resume" path that
-re-provisions a sandbox, re-applies the user's last diff, and continues the
-timeline would convert "you got reaped, retry from scratch" (frustration) into
-"continue where you left off" (forgiveness). This is the difference between
-a tool and a teacher.
-
 ---
 
 ## P2 — Recommended but not blocking
@@ -507,22 +431,16 @@ a tool and a teacher.
 Listed for completeness and roadmap visibility. None of these would prevent
 the product from being usable today; all of them would *amplify* it.
 
-- Public docs site / blog at `docs.openagentdojo.app` for SEO. The
+- Public docs site / blog for SEO. The
   in-repo `docs/` content is already strong; surfacing it crawlably costs
   little.
 - Mission-contribution flow for community-authored missions (explicitly
   deferred in plan §26, but worth a public roadmap entry so contributors
   don't waste effort).
-- VS Code / Cursor extension that mirrors the supervision rubric against
-  the user's *actual* agent — high-effort, but the most defensible long-term
-  bet for the platform.
 - SSO (SAML) / SCIM for organizations — *only* after P1-12 (team dashboard).
 - Public per-mission leaderboard — fun, low cost, doubles as a calibration
   surface.
-- Discord/Slack community link in the footer.
 - Newsletter sign-up on the landing page (collect demand signal pre-launch).
-- Pricing UI — gated on hitting the OQ-0003 threshold (≥1000 graded
-  submissions).
 
 ---
 

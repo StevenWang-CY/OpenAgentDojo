@@ -272,9 +272,7 @@ async def generate_coaching_reflection(
 
     notes_body = (ctx.notes.body if ctx.notes is not None else "").strip()
     if not notes_body:
-        logger.debug(
-            "coaching: no notes (submission_id={})", submission_id
-        )
+        logger.debug("coaching: no notes (submission_id={})", submission_id)
         return CoachingResult(outcome=CoachingOutcome.NO_NOTES)
 
     filtered_events = [e for e in ctx.events if e.event_type in _RELEVANT_EVENT_TYPES]
@@ -285,9 +283,7 @@ async def generate_coaching_reflection(
     # addressed but never reconstructable to the user's text".
     inputs = {
         "notes_sha256": hashlib.sha256(notes_body.encode("utf-8")).hexdigest(),
-        "events_sha256": hashlib.sha256(
-            _canonical_json_bytes(events_timeline)
-        ).hexdigest(),
+        "events_sha256": hashlib.sha256(_canonical_json_bytes(events_timeline)).hexdigest(),
         "mission_id": ctx.session.mission_id,
         "mission_version": ctx.manifest_version,
         "failure_mode": ctx.manifest_failure_mode,
@@ -429,9 +425,7 @@ def _build_client() -> Any:
     )
 
 
-async def _load_context(
-    db: AsyncSession, submission_id: uuid.UUID
-) -> _LoadedContext | None:
+async def _load_context(db: AsyncSession, submission_id: uuid.UUID) -> _LoadedContext | None:
     """Gather submission + session + user + notes + events + mission.
 
     Returns ``None`` when the submission or its joined rows can't be
@@ -448,15 +442,11 @@ async def _load_context(
     ).scalar_one_or_none()
     if session is None:
         return None
-    user = (
-        await db.execute(select(User).where(User.id == session.user_id))
-    ).scalar_one_or_none()
+    user = (await db.execute(select(User).where(User.id == session.user_id))).scalar_one_or_none()
     if user is None:
         return None
     notes = (
-        await db.execute(
-            select(SessionNote).where(SessionNote.session_id == session.id)
-        )
+        await db.execute(select(SessionNote).where(SessionNote.session_id == session.id))
     ).scalar_one_or_none()
 
     events = list(
@@ -635,9 +625,7 @@ def _summarise_payload(event_type: str, payload: dict[str, Any]) -> str:
     # If the payload carries fields the allowlist does NOT permit, that
     # is the load-bearing redaction signal — bump the counter exactly
     # once per event regardless of how many fields were suppressed.
-    suppressed_keys = [
-        k for k in payload.keys() if isinstance(k, str) and k not in allowlist
-    ]
+    suppressed_keys = [k for k in payload.keys() if isinstance(k, str) and k not in allowlist]
     if suppressed_keys:
         coaching_payload_redacted_total.labels(event_type=event_type).inc()
 
@@ -762,9 +750,7 @@ async def _stamp_user_index(
         stmt = (
             pg_insert(CoachingCacheUserIndex)
             .values(user_id=user_id, llm_cache_id=cache_row.id)
-            .on_conflict_do_nothing(
-                index_elements=("user_id", "llm_cache_id")
-            )
+            .on_conflict_do_nothing(index_elements=("user_id", "llm_cache_id"))
         )
         await db.execute(stmt)
         await db.flush()
@@ -784,11 +770,7 @@ async def _stamp_user_index(
         ).scalar_one_or_none()
         if existing is not None:
             return
-        db.add(
-            CoachingCacheUserIndex(
-                user_id=user_id, llm_cache_id=cache_row.id
-            )
-        )
+        db.add(CoachingCacheUserIndex(user_id=user_id, llm_cache_id=cache_row.id))
         await db.flush()
 
 

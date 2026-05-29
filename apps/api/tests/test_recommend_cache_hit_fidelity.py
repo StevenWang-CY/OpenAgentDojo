@@ -232,3 +232,58 @@ async def test_cache_hit_preserves_why_copy_for_partial_alignment(
         "rebuild produced different ``why`` copy than the cold write — "
         "extras column may be missing per-item alignment"
     )
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_reapplies_llm_prose(db_engine, monkeypatch) -> None:
+    """P2 prose-flicker — the warm rebuild must re-apply the SAME LLM prose
+    chokepoints as the cold write, not regress to the deterministic copy.
+
+    Before the fix, ``_rebuild_from_cache`` returned ``diagnosis_for(...)``
+    + the deterministic per-mission ``why`` and never re-read the polished
+    text the cold write produced (persisted in ``llm_cache``). The user saw
+    the recommendation wording regress on their second page load within the
+    1h TTL, then revert after expiry. The other tests in this file run with
+    deterministic prose on BOTH paths, so they can't see the flicker; here
+    we stub the prose chokepoints to distinct sentinels so the cold (miss)
+    and warm (hit) paths are only equal if the hit path re-applies prose.
+    """
+    session_local = await _bind_engine(db_engine)
+    user_id = uuid.uuid4()
+    await _seed_catalogue_and_history(session_local, user_id)
+
+    pinned_now = datetime(2026, 5, 27, 12, 0, 0, tzinfo=UTC)
+
+    async def _polished_dx(_db, **_kwargs) -> str:
+        return "POLISHED-DIAGNOSIS"
+
+    async def _polished_why(_db, **kwargs) -> str:
+        return f"POLISHED-WHY::{kwargs['mission_id']}"
+
+    # ``_apply_prose_polish`` imports these names lazily, so patching the
+    # module attribute takes effect on both the miss and the hit path.
+    monkeypatch.setattr("app.recommendations.prose.generate_diagnosis", _polished_dx)
+    monkeypatch.setattr("app.recommendations.prose.generate_why", _polished_why)
+
+    async with session_local() as db:
+        cold = await get_cached_or_compute(db, user_id, now=pinned_now)
+        await db.commit()
+    assert cold.cache_hit is False
+    assert cold.diagnosis == "POLISHED-DIAGNOSIS"
+    cold_whys = {
+        r.mission_id: r.why for r in cold.recommendations if r.status == "shipped"
+    }
+    assert cold_whys and all(v.startswith("POLISHED-WHY::") for v in cold_whys.values())
+
+    async with session_local() as db:
+        warm = await get_cached_or_compute(db, user_id, now=pinned_now)
+        await db.commit()
+    assert warm.cache_hit is True
+    # The fix: the warm rebuild re-applies the prose chokepoints, so the
+    # diagnosis + per-mission why match the cold write rather than the
+    # deterministic fallback (which would NOT carry the POLISHED sentinels).
+    assert warm.diagnosis == "POLISHED-DIAGNOSIS"
+    warm_whys = {
+        r.mission_id: r.why for r in warm.recommendations if r.status == "shipped"
+    }
+    assert warm_whys == cold_whys

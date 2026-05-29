@@ -271,13 +271,14 @@ class MissionLoader:
             await db.commit()
             if stale:
                 logger.info(
-                    "mission loader: invalidated {} user_recommendations rows "
-                    "after catalog upsert", stale,
+                    "mission loader: invalidated {} user_recommendations rows after catalog upsert",
+                    stale,
                 )
         except Exception as exc:
             logger.warning(
                 "mission loader: bulk recommendation invalidation failed "
-                "(catalog upsert succeeded): {}", exc,
+                "(catalog upsert succeeded): {}",
+                exc,
             )
         return len(loaded)
 

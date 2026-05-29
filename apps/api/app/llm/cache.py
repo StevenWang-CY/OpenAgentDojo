@@ -111,9 +111,7 @@ async def get_or_generate(
     # 1. Cache lookup.
     existing = await _lookup(db, domain, content_hash, prompt_version)
     if existing is not None:
-        llm_cache_hits_total.labels(
-            domain=domain, prompt_version=str(prompt_version)
-        ).inc()
+        llm_cache_hits_total.labels(domain=domain, prompt_version=str(prompt_version)).inc()
         return CachedOutput(
             output=existing.output,
             cache_hit=True,
@@ -150,20 +148,12 @@ async def get_or_generate(
         raise
 
     elapsed = time.perf_counter() - started
-    llm_generation_latency_seconds.labels(
-        domain=domain, model_id=model_id
-    ).observe(elapsed)
-    llm_generation_succeeded_total.labels(
-        domain=domain, model_id=model_id
-    ).inc()
+    llm_generation_latency_seconds.labels(domain=domain, model_id=model_id).observe(elapsed)
+    llm_generation_succeeded_total.labels(domain=domain, model_id=model_id).inc()
     if result.input_tokens is not None:
-        llm_generation_tokens.labels(domain=domain, kind="input").inc(
-            result.input_tokens
-        )
+        llm_generation_tokens.labels(domain=domain, kind="input").inc(result.input_tokens)
     if result.output_tokens is not None:
-        llm_generation_tokens.labels(domain=domain, kind="output").inc(
-            result.output_tokens
-        )
+        llm_generation_tokens.labels(domain=domain, kind="output").inc(result.output_tokens)
 
     persisted = await _persist(
         db,
@@ -230,9 +220,7 @@ async def _persist(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
-            .on_conflict_do_nothing(
-                index_elements=("domain", "content_hash", "prompt_version")
-            )
+            .on_conflict_do_nothing(index_elements=("domain", "content_hash", "prompt_version"))
         )
         await db.execute(stmt)
         await db.flush()

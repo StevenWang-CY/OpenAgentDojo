@@ -21,10 +21,10 @@ the in-sandbox LSP spawned by `driver.spawn_lsp` (see
 |--------------|-----------------------|------------------------------------------|
 | `node20`     | `agentarena/node20:1` | `typescript-language-server` (+ `typescript`) |
 | `python312`  | `agentarena/python312:1` | `pyright` (primary), `python-lsp-server` (fallback) |
-| `go` (P1-1) | `agentarena/go122:1` (not yet shipped) | `gopls` — add `go install golang.org/x/tools/gopls@latest` |
+| `go` (P1-1) | `agentarena/go122:1` | `gopls` (pinned `@v0.16.2`) |
 
-When the Go base image lands as part of P1-1, the LSP install command for
-that Dockerfile is:
+The Go base image (`infra/docker/go122.Dockerfile`, shipped in P1-1) installs
+its LSP with:
 
 ```dockerfile
 RUN go install golang.org/x/tools/gopls@v0.16.2 \

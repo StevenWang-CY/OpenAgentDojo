@@ -29,6 +29,7 @@ from typing import Any, cast
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.grading.attempts import candidate_beats
@@ -79,6 +80,7 @@ def _coerce_weakest_dim(raw: str | None) -> WeakestDim | None:
     if raw is None or raw not in _VALID_WEAKEST_DIMS:
         return None
     return cast(WeakestDim, raw)
+
 
 _CACHE_TTL = timedelta(hours=1)
 
@@ -304,9 +306,7 @@ async def get_cached_or_compute(
     cutoff = current - _CACHE_TTL
 
     existing = (
-        await db.execute(
-            select(UserRecommendation).where(UserRecommendation.user_id == user_id)
-        )
+        await db.execute(select(UserRecommendation).where(UserRecommendation.user_id == user_id))
     ).scalar_one_or_none()
 
     if (
@@ -468,9 +468,7 @@ async def _rebuild_from_cache(
         if cand is None:
             # Mission unpublished since the cache row landed; skip it.
             continue
-        alignment = persisted_alignment.get(
-            mid, _alignment_for(cand, cached_weakest)
-        )
+        alignment = persisted_alignment.get(mid, _alignment_for(cand, cached_weakest))
         items.append(
             _build_item(
                 candidate=cand,
@@ -482,13 +480,31 @@ async def _rebuild_from_cache(
         )
     from app.recommendations.copy import diagnosis_for
 
-    return RecommendationSet(
+    rebuilt = RecommendationSet(
         weakest_dim=cached_weakest,
         diagnosis=diagnosis_for(cached_weakest),
         recommendations=items,
         computed_at=_ensure_utc(cached.computed_at),
         cache_hit=True,
     )
+    # P2 prose-flicker fix — re-apply the SAME prose chokepoints used on
+    # the miss path so the warm hit renders the polished diagnosis +
+    # per-mission "why" instead of regressing to the deterministic copy.
+    # The polished bytes were persisted in ``llm_cache`` at miss time, so
+    # ``generate_diagnosis`` / ``generate_why`` resolve to a single SELECT
+    # each here and never reach the model (verified by the prose layer's
+    # read-through cache discipline). When the kill switch is OFF — or the
+    # ``llm_cache`` row is somehow absent — the helpers return the same
+    # deterministic copy the rebuild already produced, so the hit path
+    # still matches the miss path. ``cache_hit`` is preserved as ``True``
+    # because ``_apply_prose_polish`` only rewrites the prose fields.
+    polished = await _apply_prose_polish(
+        db=db,
+        rec_set=rebuilt,
+        history=history,
+        catalogue=catalogue,
+    )
+    return polished
 
 
 def _alignment_for(candidate: MissionCandidate, weakest_dim: str | None) -> float:
@@ -541,9 +557,7 @@ async def _upsert_row(
     else:
         existing = (
             await db.execute(
-                select(UserRecommendation).where(
-                    UserRecommendation.user_id == user_id
-                )
+                select(UserRecommendation).where(UserRecommendation.user_id == user_id)
             )
         ).scalar_one_or_none()
         if existing is None:
@@ -592,10 +606,7 @@ async def invalidate_for_user(db: AsyncSession, user_id: uuid.UUID) -> None:
         dialect = _dialect_name(db)
         if dialect == "postgresql":
             await db.execute(
-                text(
-                    "UPDATE user_recommendations SET invalidated_at = :now "
-                    "WHERE user_id = :uid"
-                ),
+                text("UPDATE user_recommendations SET invalidated_at = :now WHERE user_id = :uid"),
                 {"now": now, "uid": str(user_id)},
             )
             recommendation_cache_total.labels(outcome="invalidated").inc()
@@ -650,15 +661,27 @@ async def bulk_invalidate_all(db: AsyncSession) -> int:
                 {"now": now},
             )
             await db.flush()
+            # UPDATE always yields a CursorResult; narrow explicitly so
+            # ``.rowcount`` type-checks (mypy sees the bare execute() return
+            # as ``Result[Any]``) and a future type mismatch fails loudly
+            # rather than as a stray AttributeError. Mirrors app/sessions/submit.py.
+            if not isinstance(result, CursorResult):
+                raise RuntimeError(
+                    f"expected CursorResult from UPDATE, got {type(result).__name__}"
+                )
             count = result.rowcount or 0
         else:
             rows = (
-                await db.execute(
-                    select(UserRecommendation).where(
-                        UserRecommendation.invalidated_at.is_(None)
+                (
+                    await db.execute(
+                        select(UserRecommendation).where(
+                            UserRecommendation.invalidated_at.is_(None)
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for row in rows:
                 row.invalidated_at = now
             await db.flush()
@@ -667,9 +690,7 @@ async def bulk_invalidate_all(db: AsyncSession) -> int:
         return int(count)
     except Exception as exc:
         recommendation_engine_errors_total.labels(stage="bulk_invalidate").inc()
-        logger.exception(
-            "recommendation cache bulk_invalidate_all failed: {}", exc
-        )
+        logger.exception("recommendation cache bulk_invalidate_all failed: {}", exc)
         raise
 
 
@@ -700,10 +721,10 @@ def _is_well_formed_extras(extras: Any) -> bool:
 async def _apply_prose_polish(
     *,
     db: AsyncSession,
-    rec_set: Any,
+    rec_set: RecommendationSet,
     history: UserHistory,
     catalogue: list[MissionCandidate],
-) -> Any:
+) -> RecommendationSet:
     """Return ``rec_set`` with diagnosis + per-item ``why`` polished.
 
     The polish layer routes through :mod:`app.recommendations.prose`,
@@ -735,9 +756,7 @@ async def _apply_prose_polish(
         )
     except Exception as exc:  # pragma: no cover — defensive double-guard
         recommendation_engine_errors_total.labels(stage="prose").inc()
-        logger.exception(
-            "recommendation prose diagnosis raised; keeping fallback: {}", exc
-        )
+        logger.exception("recommendation prose diagnosis raised; keeping fallback: {}", exc)
         diagnosis = rec_set.diagnosis
 
     polished_items = []
@@ -753,9 +772,7 @@ async def _apply_prose_polish(
                 weakest_dim=weakest_dim,
                 failure_mode=_failure_mode_for(cand),
                 expected_weak_dim=cand.expected_weak_dim,
-                alignment=_alignment_for_mission_id(
-                    item.mission_id, catalogue, weakest_dim
-                ),
+                alignment=_alignment_for_mission_id(item.mission_id, catalogue, weakest_dim),
             )
         except Exception as exc:  # pragma: no cover — defensive double-guard
             recommendation_engine_errors_total.labels(stage="prose").inc()

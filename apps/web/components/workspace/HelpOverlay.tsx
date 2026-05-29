@@ -114,28 +114,28 @@ export function HelpOverlay({ open, onOpenChange }: HelpOverlayProps) {
             id="help-overlay-lsp"
             className="font-mono text-xs font-semibold uppercase tracking-wide text-[var(--color-muted-foreground)]"
           >
-            // lsp
+            {"// lsp"}
           </h3>
           <ul className="mt-1.5 list-none space-y-0.5 pl-0 font-mono text-xs text-[var(--color-foreground)]">
             <li>
-              <span className="text-[var(--color-muted-foreground)]">// chip</span>{" "}
+              <span className="text-[var(--color-muted-foreground)]">{"// chip"}</span>{" "}
               <span className="text-[var(--color-success)]">green</span> ready ·{" "}
               <span className="text-[var(--color-warning)]">amber</span> connecting
               · <span className="text-[var(--color-danger)]">red</span> error
             </li>
             <li>
               <span className="text-[var(--color-muted-foreground)]">
-                // languages
+                {"// languages"}
               </span>{" "}
               python · typescript · go
             </li>
             <li>
-              <span className="text-[var(--color-muted-foreground)]">// notes</span>{" "}
+              <span className="text-[var(--color-muted-foreground)]">{"// notes"}</span>{" "}
               goto-definition is save-driven; unsaved buffers don&rsquo;t cross
               files until you save.
             </li>
             <li>
-              <span className="text-[var(--color-muted-foreground)]">// limit</span>{" "}
+              <span className="text-[var(--color-muted-foreground)]">{"// limit"}</span>{" "}
               two LSPs run concurrently per session; a third evicts the oldest.
             </li>
           </ul>

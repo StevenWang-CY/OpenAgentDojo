@@ -361,9 +361,7 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:  # noqa: PLR0
             else:
                 retained += 1
         if to_delete:
-            await db.execute(
-                sa_delete(LLMCache).where(LLMCache.id.in_(to_delete))
-            )
+            await db.execute(sa_delete(LLMCache).where(LLMCache.id.in_(to_delete)))
         if retained:
             llm_cache_shared_row_retained_total.inc(retained)
             logger.info(
@@ -374,9 +372,7 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:  # noqa: PLR0
     # Always drop the user's index rows — those are user-scoped by
     # definition; preserving them would orphan-point at deleted rows.
     await db.execute(
-        sa_delete(CoachingCacheUserIndex).where(
-            CoachingCacheUserIndex.user_id == user_id
-        )
+        sa_delete(CoachingCacheUserIndex).where(CoachingCacheUserIndex.user_id == user_id)
     )
 
     await _wipe_consent_history_and_stamp_tombstone(db, user_id, user.handle)

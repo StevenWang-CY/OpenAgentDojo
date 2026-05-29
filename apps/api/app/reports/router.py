@@ -22,6 +22,7 @@ from jose import ExpiredSignatureError, JWTError, jwt
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import get_current_user, require_auth
@@ -664,8 +665,7 @@ def _enqueue_render(render_id: uuid.UUID) -> None:
 
     from app.workers.queue import get_queue
 
-    queue = get_queue()
-    if queue is None:
+    def _inline() -> None:
         from app.workers.report_render import _async_render
 
         # Fire-and-forget — the route has already committed the queued
@@ -674,8 +674,21 @@ def _enqueue_render(render_id: uuid.UUID) -> None:
         task = asyncio.create_task(_async_render(render_id, inline=True))
         _BACKGROUND_TASKS.add(task)
         task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    queue = get_queue()
+    if queue is None:
+        _inline()
         return
-    queue.enqueue("app.workers.report_render.render_report", str(render_id), job_timeout=300)
+    # A transient Redis hiccup must not 500 the route — mirror the
+    # account_export handler (apps/api/app/auth/routes.py) and degrade to
+    # the SAME inline path the queue-is-None branch uses. The queued row
+    # is already committed by the caller, so the inline render updates it
+    # out-of-band exactly as the worker would.
+    try:
+        queue.enqueue("app.workers.report_render.render_report", str(render_id), job_timeout=300)
+    except Exception as exc:
+        logger.warning("report-render enqueue failed for {}, running inline: {}", render_id, exc)
+        _inline()
 
 
 async def _force_renders_today(db: AsyncSession, submission_id: uuid.UUID) -> int:
@@ -747,12 +760,31 @@ async def get_render(
         # No render exists yet — enqueue the job and return 202. We
         # insert the row inside this request so a concurrent GET sees
         # the queued state instead of double-enqueuing.
+        #
+        # Two concurrent first-ever requests can both observe ``row is
+        # None`` and both INSERT; the loser's commit trips
+        # ``uq_report_renders_submission_kind``. Match the insert-then-
+        # handle-conflict idiom (app/recommendations/cache.py): on
+        # IntegrityError, roll back, re-SELECT the row the winner wrote,
+        # and fall through to the row-exists branches below so both
+        # callers return the same 202/302.
         row = ReportRender(submission_id=submission_id, kind=kind, status=RENDER_STATUS_QUEUED)
         db.add(row)
-        await db.flush()
-        _enqueue_render(row.id)
-        await db.commit()
-        await db.refresh(row)
+        try:
+            await db.flush()
+            _enqueue_render(row.id)
+            await db.commit()
+            await db.refresh(row)
+        except IntegrityError:
+            await db.rollback()
+            row = (
+                await db.execute(
+                    select(ReportRender).where(
+                        ReportRender.submission_id == submission_id,
+                        ReportRender.kind == kind,
+                    )
+                )
+            ).scalar_one()
 
     if row.status == RENDER_STATUS_READY and row.s3_key:
         signed = generate_download_url(row.s3_key, expires_in=_RENDER_SIGNED_URL_TTL_SECONDS)
@@ -865,6 +897,17 @@ async def post_render(
             },
         )
 
+    def _recycle(row: ReportRender) -> None:
+        # Recycle the row identity so the FE's poll URL stays stable.
+        row.status = RENDER_STATUS_QUEUED
+        row.s3_key = None
+        row.bytes = None
+        row.error = None
+        row.ready_at = None
+        # Phase 4.A.20 — even on the recycle path this is a user-
+        # initiated force, so stamp the column.
+        row.force = True
+
     if existing is None:
         row = ReportRender(
             submission_id=submission_id,
@@ -876,21 +919,34 @@ async def post_render(
         )
         db.add(row)
     else:
-        # Recycle the row identity so the FE's poll URL stays stable.
-        existing.status = RENDER_STATUS_QUEUED
-        existing.s3_key = None
-        existing.bytes = None
-        existing.error = None
-        existing.ready_at = None
-        # Phase 4.A.20 — even on the recycle path this is a user-
-        # initiated force, so stamp the column.
-        existing.force = True
+        _recycle(existing)
         row = existing
 
-    await db.flush()
-    _enqueue_render(row.id)
-    await db.commit()
-    await db.refresh(row)
+    try:
+        await db.flush()
+        _enqueue_render(row.id)
+        await db.commit()
+        await db.refresh(row)
+    except IntegrityError:
+        # A concurrent first-ever POST won the insert race on
+        # ``uq_report_renders_submission_kind``. Match the insert-then-
+        # handle-conflict idiom (app/recommendations/cache.py): roll
+        # back, re-SELECT the winner's row, recycle it as a fresh force
+        # re-render, and return the SAME 202 the recycle path returns.
+        await db.rollback()
+        row = (
+            await db.execute(
+                select(ReportRender).where(
+                    ReportRender.submission_id == submission_id,
+                    ReportRender.kind == kind,
+                )
+            )
+        ).scalar_one()
+        _recycle(row)
+        await db.flush()
+        _enqueue_render(row.id)
+        await db.commit()
+        await db.refresh(row)
 
     return ReportRenderRead.model_validate(row).model_copy(
         update={"poll_after_seconds": _RENDER_POLL_AFTER_SECONDS}
@@ -1110,8 +1166,7 @@ def _render_verify_html(artefact: dict[str, Any], canonical_url: str) -> str:
         schema_version=artefact.get("schema_version", 1),
         submission_id=artefact.get("submission_id", ""),
         total_score=envelope.get("total_score", 0),
-        verification_hash=envelope.get("verification_hash")
-        or _persisted_hash_for(artefact),
+        verification_hash=envelope.get("verification_hash") or _persisted_hash_for(artefact),
         verification_signature=artefact.get("envelope_signature", ""),
     )
     return rendered
@@ -1216,7 +1271,29 @@ async def _build_replay_for_request(
     "/{submission_id}/replay.json",
     summary="Canonical replay artefact as JSON (P1-6)",
     responses={
-        200: {"description": "Canonical replay artefact"},
+        200: {
+            "description": (
+                "Canonical replay artefact. The body is a deterministic JSON object "
+                "whose canonical form is signed by 'replay_signature' (HMAC-SHA256 of "
+                "canonical_json over every field except 'exported_at' and "
+                "'replay_signature' itself). See app/reports/replay.py for the field "
+                "set; the schema is intentionally open-ended so additive fields do not "
+                "break existing third-party verifiers."
+            ),
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": (
+                            "See app/reports/replay.py for the canonical field set; the "
+                            "artefact bytes are signed verbatim and additive fields are "
+                            "introduced via 'schema_version' bumps."
+                        ),
+                    }
+                }
+            },
+        },
         404: {"description": "Not found / unauthorised / non-graded / tutorial"},
         503: {"description": "Verification service misconfigured"},
     },
@@ -1257,9 +1334,7 @@ async def get_replay_json(
             replay_export_errors_total.labels("json", f"http_{exc.status_code}").inc()
         raise
     except Exception as exc:
-        replay_export_errors_total.labels(
-            "json", exc.__class__.__name__
-        ).inc()
+        replay_export_errors_total.labels("json", exc.__class__.__name__).inc()
         logger.exception("[replay] json build failed: {}", exc)
         raise HTTPException(status_code=500, detail="replay build failed") from exc
 
@@ -1294,7 +1369,25 @@ async def get_replay_json(
     "/{submission_id}/replay.zip",
     summary="Replay bundle (zip): replay.json + final.diff + verify.html + README (P1-6)",
     responses={
-        200: {"description": "ZIP stream"},
+        200: {
+            "description": (
+                "ZIP bundle containing replay.json, final.diff, verify.html, "
+                "README.md, and (owner-only) agent_patch.diff. Content-Disposition: "
+                "attachment; filename=arena-replay-<short>-<ymd>.zip."
+            ),
+            "content": {
+                "application/zip": {
+                    "schema": {
+                        "type": "string",
+                        "format": "binary",
+                        "description": (
+                            "ZIP bundle. See app/reports/router.py::get_replay_zip for "
+                            "the file list."
+                        ),
+                    }
+                }
+            },
+        },
         404: {"description": "Not found / unauthorised / non-graded / tutorial"},
         503: {"description": "Verification service misconfigured"},
     },
@@ -1338,9 +1431,7 @@ async def get_replay_zip(
             replay_export_errors_total.labels("zip", f"http_{exc.status_code}").inc()
         raise
     except Exception as exc:
-        replay_export_errors_total.labels(
-            "zip", exc.__class__.__name__
-        ).inc()
+        replay_export_errors_total.labels("zip", exc.__class__.__name__).inc()
         logger.exception("[replay] zip build failed: {}", exc)
         raise HTTPException(status_code=500, detail="replay build failed") from exc
 
@@ -1385,9 +1476,7 @@ async def get_replay_zip(
     if redact:
         agent_patch_text = None
     else:
-        agent_patch_text = _read_agent_patch_diff(
-            settings.missions_root, session.mission_id
-        )
+        agent_patch_text = _read_agent_patch_diff(settings.missions_root, session.mission_id)
     has_agent_patch = bool(agent_patch_text)
 
     readme_text = _render_readme(artefact, has_agent_patch=has_agent_patch)
@@ -1543,9 +1632,7 @@ async def get_submission_coaching(
     # raise from a bug) yields a 500, and we deliberately let those
     # propagate so the platform error handler renders the standard
     # envelope rather than misleading the FE with "LLM unavailable".
-    result = await generate_coaching_reflection(
-        db, submission_id=submission_id, settings=settings
-    )
+    result = await generate_coaching_reflection(db, submission_id=submission_id, settings=settings)
 
     if result.outcome == CoachingOutcome.OK and result.payload is not None:
         return Response(

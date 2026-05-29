@@ -40,9 +40,7 @@ class CoachingCacheUserIndex(Base):
     """Link (user_id, llm_cache_id) for scratchpad_coaching rows."""
 
     __tablename__ = "coaching_cache_user_index"
-    __table_args__ = (
-        Index("idx_coaching_cache_user", "user_id"),
-    )
+    __table_args__ = (Index("idx_coaching_cache_user", "user_id"),)
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -61,7 +59,4 @@ class CoachingCacheUserIndex(Base):
     )
 
     def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"<CoachingCacheUserIndex user_id={self.user_id} "
-            f"llm_cache_id={self.llm_cache_id}>"
-        )
+        return f"<CoachingCacheUserIndex user_id={self.user_id} llm_cache_id={self.llm_cache_id}>"

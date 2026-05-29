@@ -38,6 +38,42 @@ export const SESSION_EXPIRED_MESSAGE =
   "Session expired. Refresh the page to reconnect.";
 
 /**
+ * FE-P2 audit fix — the backend terminal WS (``apps/api/app/ws/terminal.py``)
+ * sends a JSON control frame ``{"type":"error","code":"no_sandbox",...}``
+ * before closing with 1011 when the session has no sandbox / the shell
+ * attach fails. Writing that frame to xterm as raw bytes printed JSON in the
+ * user's shell, and the 1011 close (not in the fatal set) re-printed it on
+ * every reconnect attempt. Intercept the well-formed control frame and
+ * surface ``detail`` through the component's error badge instead.
+ *
+ * Returns the friendly message for a recognised ``type === "error"`` frame,
+ * or null when the frame is plain PTY output that happens to start with
+ * ``{`` (rare in a shell) so the caller falls back to byte-faithful write.
+ * Exported so the policy can be unit-tested without booting xterm.
+ */
+export function errorMessageForControlFrame(frame: string): string | null {
+  // Only attempt a parse for frames that look like a JSON object — bailing
+  // early keeps the byte-stream hot path (regular PTY output) untouched.
+  if (frame.length === 0 || frame[0] !== "{") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(frame);
+  } catch {
+    // A non-JSON line that merely starts with `{` (e.g. shell brace
+    // expansion echoed back) — treat as terminal bytes, not a control frame.
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const obj = parsed as { type?: unknown; code?: unknown; detail?: unknown };
+  if (obj.type !== "error") return null;
+  const detail = typeof obj.detail === "string" ? obj.detail.trim() : "";
+  const code = typeof obj.code === "string" ? obj.code.trim() : "";
+  if (detail) return detail;
+  if (code) return `Terminal error: ${code}`;
+  return "Terminal error";
+}
+
+/**
  * Map a WebSocket close code to an actionable error message, or null if the
  * default StatusBadge ("Disconnected" / "Reconnecting…") is fine. Pulled out
  * so the close-code policy can be unit-tested without booting xterm.
@@ -203,6 +239,18 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
           onMessage(ev) {
             const data = ev.data;
             if (typeof data === "string") {
+              // FE-P2 audit fix — the backend emits a JSON control frame
+              // ``{"type":"error",…}`` before closing 1011 (no sandbox /
+              // attach failed). Surface it via the error badge instead of
+              // dumping raw JSON into the shell; the 1011 close-then-
+              // reconnect loop would otherwise re-print it each attempt.
+              // A non-JSON line that merely starts with `{` falls through
+              // to a byte-faithful write.
+              const controlError = errorMessageForControlFrame(data);
+              if (controlError !== null) {
+                if (!disposed) setError(controlError);
+                return;
+              }
               t.write(data);
             } else if (data instanceof Blob) {
               data
@@ -309,11 +357,14 @@ function StatusBadge({
   const isSessionExpired = error === SESSION_EXPIRED_MESSAGE;
   // FE-P2 audit fix — session-expired surfaces the friendly literal so the
   // user knows it's recoverable with a refresh, and we pair it with a
-  // pointer-events-on Refresh button next to the badge.
+  // pointer-events-on Refresh button next to the badge. Any other error
+  // (incl. the parsed JSON control-frame detail — "no sandbox", "attach
+  // failed", …) surfaces its own message so the badge is actionable rather
+  // than a bare "Error".
   const label = error
     ? isSessionExpired
       ? "Session expired"
-      : "Error"
+      : error
     : status === "connecting"
       ? "Connecting…"
       : status === "reconnecting"
@@ -327,7 +378,7 @@ function StatusBadge({
       <div
         role="status"
         aria-live="polite"
-        title={isSessionExpired ? SESSION_EXPIRED_MESSAGE : undefined}
+        title={isSessionExpired ? SESSION_EXPIRED_MESSAGE : (error ?? undefined)}
         className="pointer-events-none inline-flex items-center gap-1 rounded-md bg-[oklch(from_var(--color-background)_l_c_h/0.85)] px-2 py-0.5 font-mono text-xs text-[var(--color-muted-foreground)] backdrop-blur"
       >
         {status !== "open" && !isSessionExpired ? (

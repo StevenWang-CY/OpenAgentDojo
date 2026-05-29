@@ -392,9 +392,7 @@ def build_feedback_narrative(
     """
     completed = set(completed_mission_ids or [])
     engine_recs: list[str] | None = (
-        list(engine_recommended_mission_ids)
-        if engine_recommended_mission_ids is not None
-        else None
+        list(engine_recommended_mission_ids) if engine_recommended_mission_ids is not None else None
     )
 
     # Score each dimension's "weakness intensity" — pending dimensions are
@@ -435,9 +433,7 @@ def build_feedback_narrative(
             recs = list(engine_recs)
         else:
             recs = [
-                mid
-                for mid in _RECOMMENDED_BY_DIMENSION.get(dim_name, [])
-                if mid not in completed
+                mid for mid in _RECOMMENDED_BY_DIMENSION.get(dim_name, []) if mid not in completed
             ][:2]
         if recs:
             recommendation = _format_recommendation(dim_name, recs)

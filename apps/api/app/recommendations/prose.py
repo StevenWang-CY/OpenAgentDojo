@@ -71,28 +71,15 @@ _RUBRIC_VERSION_LITERAL = "v1"
 # template is rendered. Authored to match the diagnosis prompt
 # (``apps/api/app/llm/prompts/recommendation_diagnosis.md``).
 _DIMENSION_SUMMARY: dict[str, str] = {
-    "final_correctness": (
-        "the merged patch actually fixes the bug and does not regress."
-    ),
-    "verification": (
-        "they ran the test that proves the fix before submitting."
-    ),
-    "agent_review": (
-        "they read the agent's diff line-by-line, not just the prose summary."
-    ),
+    "final_correctness": ("the merged patch actually fixes the bug and does not regress."),
+    "verification": ("they ran the test that proves the fix before submitting."),
+    "agent_review": ("they read the agent's diff line-by-line, not just the prose summary."),
     "prompt_quality": (
-        "their prompts name specific files / symbols and a checkable success "
-        "condition."
+        "their prompts name specific files / symbols and a checkable success condition."
     ),
-    "context_selection": (
-        "they opened the files the bug actually lives in before prompting."
-    ),
-    "safety": (
-        "they refused or pushed back on unsafe destructive commands."
-    ),
-    "diff_minimality": (
-        "they kept the agent's patch focused on the bug, not a refactor spree."
-    ),
+    "context_selection": ("they opened the files the bug actually lives in before prompting."),
+    "safety": ("they refused or pushed back on unsafe destructive commands."),
+    "diff_minimality": ("they kept the agent's patch focused on the bug, not a refactor spree."),
 }
 
 
@@ -213,9 +200,7 @@ async def generate_diagnosis(
         return fallback
 
     if weakest_dim_avg is None:
-        weakest_dim_avg = _resolve_avg(
-            weakest_dim=weakest_dim, user_history=user_history
-        )
+        weakest_dim_avg = _resolve_avg(weakest_dim=weakest_dim, user_history=user_history)
     avg_rounded = round(float(weakest_dim_avg), 1)
     ids_list = _normalised_mission_ids(recommended_mission_ids)
 

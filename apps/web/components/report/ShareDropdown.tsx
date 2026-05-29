@@ -299,6 +299,7 @@ export function ShareDropdown({
             state={pdfStatus}
             setState={setPdfStatus}
             icon={FileText}
+            share={share}
           />
           <RenderItem
             kind="png"
@@ -308,6 +309,7 @@ export function ShareDropdown({
             state={pngStatus}
             setState={setPngStatus}
             icon={FileImage}
+            share={share}
           />
           <Separator />
           {/* P1-6 — replay artefact downloads. Both items stay clickable
@@ -455,6 +457,7 @@ function RenderItem({
   state,
   setState,
   icon: Icon,
+  share,
 }: {
   kind: "pdf" | "png";
   label: string;
@@ -463,6 +466,11 @@ function RenderItem({
   state: RenderState;
   setState(next: RenderState): void;
   icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  /** P1-6 — share token for an anonymous viewer on /report/{id}?share=…;
+   *  threaded into the render-status poll so the backend's owner-OR-share
+   *  auth lets the download through instead of 401-ing. ``null`` /
+   *  ``undefined`` is the owner path (cookie alone authorises). */
+  share?: string | null;
 }) {
   const busy = state === "queued" || state === "running";
 
@@ -515,7 +523,7 @@ function RenderItem({
     const signal = abortRef.current.signal;
 
     try {
-      const status = await getReportRenderStatus(submissionId, kind, undefined, signal);
+      const status = await getReportRenderStatus(submissionId, kind, share ?? undefined, signal);
       if ("ready" in status && status.ready) {
         setState("ready");
         track("report_render_requested", { kind, cache_hit: true });
@@ -567,7 +575,7 @@ function RenderItem({
           const next = await getReportRenderStatus(
             submissionId,
             kind,
-            undefined,
+            share ?? undefined,
             tickController.signal,
           );
           if ("ready" in next && next.ready) {

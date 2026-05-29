@@ -94,7 +94,7 @@ async def generate_mission_authoring_draft(
     draft is already present (so a contributor running the CLI twice never
     silently clobbers the prior output).
     """
-    if not mission_dir.is_dir():
+    if not mission_dir.is_dir():  # noqa: ASYNC240 — one-shot CLI helper; a sync existence check is not a request hot path
         raise FileNotFoundError(
             f"mission directory not found: {mission_dir} — scaffold the mission "
             "skeleton first with ``scripts/mission-template/init.py``."
@@ -240,25 +240,23 @@ def _bump_success_counter() -> None:
     try:
         from app.observability import llm_generation_succeeded_total
 
-        llm_generation_succeeded_total.labels(
-            domain=_DRAFT_DOMAIN, model_id=_DRAFT_MODEL
-        ).inc()
-    except Exception:  # noqa: BLE001 — telemetry is best-effort here
+        llm_generation_succeeded_total.labels(domain=_DRAFT_DOMAIN, model_id=_DRAFT_MODEL).inc()
+    except Exception:
         return
 
 
 def _read_seed_outline(args: argparse.Namespace) -> str:
     """Resolve the seed outline from either ``--seed-outline`` or a file."""
     if args.seed_outline is not None:
-        return args.seed_outline
+        # argparse Namespace attrs are typed ``Any``; the --seed-outline value
+        # is always a str at runtime, so coerce to satisfy the ``-> str`` contract.
+        return str(args.seed_outline)
     if args.seed_outline_file is not None:
         path = Path(args.seed_outline_file)
         if not path.exists():
             raise SystemExit(f"seed outline file not found: {path}")
         return path.read_text(encoding="utf-8")
-    raise SystemExit(
-        "one of --seed-outline or --seed-outline-file is required"
-    )
+    raise SystemExit("one of --seed-outline or --seed-outline-file is required")
 
 
 # ---------------------------------------------------------------------------
@@ -289,10 +287,7 @@ def _build_parser() -> argparse.ArgumentParser:
     draft.add_argument(
         "--repo-pack-id",
         required=True,
-        help=(
-            "Repo pack id the mission targets (one of the keys in "
-            "missions/_shared/repos/)."
-        ),
+        help=("Repo pack id the mission targets (one of the keys in missions/_shared/repos/)."),
     )
     draft.add_argument(
         "--failure-mode-title",

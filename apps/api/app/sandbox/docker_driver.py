@@ -151,8 +151,7 @@ class DockerSandboxDriver(SandboxDriver):
             return mapping[runtime]
         except KeyError as exc:
             raise ValueError(
-                f"unknown language_runtime: {runtime!r}; expected one of "
-                f"{sorted(mapping)!r}"
+                f"unknown language_runtime: {runtime!r}; expected one of {sorted(mapping)!r}"
             ) from exc
 
     # ------------------------------------------------------------- provision

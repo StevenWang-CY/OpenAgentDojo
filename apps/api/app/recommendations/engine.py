@@ -93,6 +93,7 @@ def _passed(score: int, effective_max: int) -> bool:
     threshold = max(1, int(effective_max * _PASS_FRACTION))
     return score >= threshold
 
+
 # Cold-start ladder (mission ids 01, 02, 03 in the canonical numbering).
 # A user with zero graded submissions is shown these as the introductory
 # path. Hardcoded so the engine doesn't depend on mission-row ordering
@@ -201,9 +202,7 @@ class UserHistory:
 
     @property
     def last_graded_at(self) -> datetime | None:
-        timestamps = [
-            a.graded_at for a in self.best_attempts.values() if a.graded_at is not None
-        ]
+        timestamps = [a.graded_at for a in self.best_attempts.values() if a.graded_at is not None]
         if not timestamps:
             return None
         return max(timestamps)
@@ -323,14 +322,10 @@ def _recommend_inner(
         difficulty_match = _difficulty_match_score(candidate, user_band)
         freshness = _freshness_score(candidate, last_graded_at)
         novelty_bonus = (
-            0.5
-            if user_history.per_mission_attempt_count.get(candidate.mission_id, 0) == 0
-            else 0.0
+            0.5 if user_history.per_mission_attempt_count.get(candidate.mission_id, 0) == 0 else 0.0
         )
         total = dim_alignment + difficulty_match + freshness + novelty_bonus
-        scored.append(
-            (total, candidate, dim_alignment, difficulty_match, freshness, novelty_bonus)
-        )
+        scored.append((total, candidate, dim_alignment, difficulty_match, freshness, novelty_bonus))
 
     # Sort by score desc, then mission_id asc for replay stability.
     scored.sort(key=lambda t: (-t[0], t[1].mission_id))
@@ -378,10 +373,7 @@ def _cold_start(
                 title=cand.title,
                 language=cand.language,
                 difficulty=cand.difficulty,
-                why=(
-                    "kicks off the introductory ladder — earns your "
-                    "first dimension scores."
-                ),
+                why=("kicks off the introductory ladder — earns your first dimension scores."),
                 your_best_score=None,
                 your_attempts=0,
                 status="shipped",
@@ -535,9 +527,7 @@ def _current_band(user_history: UserHistory) -> RecommendationDifficulty:
     return "advanced"
 
 
-def _dim_alignment_score(
-    candidate: MissionCandidate, weakest_dim: str | None
-) -> float:
+def _dim_alignment_score(candidate: MissionCandidate, weakest_dim: str | None) -> float:
     """Return ``dim_alignment`` per the engine spec.
 
     Three branches: direct (1.0), failure-mode-tag-mapped (0.5), or none
@@ -555,9 +545,7 @@ def _dim_alignment_score(
     return 0.0
 
 
-def _freshness_score(
-    candidate: MissionCandidate, last_graded_at: datetime | None
-) -> float:
+def _freshness_score(candidate: MissionCandidate, last_graded_at: datetime | None) -> float:
     """Return the freshness signal for ``candidate``.
 
     Preferred path: a typed ``created_at`` is threaded through from the
@@ -584,9 +572,7 @@ def _freshness_score(
     return 1.0 if candidate.mission_id in FRESH_MISSION_IDS else 0.0
 
 
-def _is_fresh(
-    candidate: MissionCandidate, last_graded_at: datetime | None
-) -> bool:
+def _is_fresh(candidate: MissionCandidate, last_graded_at: datetime | None) -> bool:
     """Boolean form of :func:`_freshness_score` used by the copy layer."""
     return _freshness_score(candidate, last_graded_at) > 0.0
 

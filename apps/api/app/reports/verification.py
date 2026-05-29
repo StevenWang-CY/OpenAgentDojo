@@ -301,7 +301,7 @@ def _bump_nan_clamp_counter() -> None:
     Wrapped in a try/except so a missing prometheus_client (or a double
     registration during a hot-reload) does not break signing.
     """
-    global _NAN_CLAMP_COUNTER
+    global _NAN_CLAMP_COUNTER  # noqa: PLW0603 — lazy-init of a module-level prometheus counter singleton
     try:
         if _NAN_CLAMP_COUNTER is None:
             from prometheus_client import Counter as _Counter

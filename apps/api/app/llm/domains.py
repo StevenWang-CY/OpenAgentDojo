@@ -112,6 +112,7 @@ def get_prompt_version() -> int:
     """
     return PROMPT_VERSION
 
+
 # Closed vocabulary; one Literal per LLM use site below.
 LLMDomain = Literal[
     "recommendation_diagnosis",

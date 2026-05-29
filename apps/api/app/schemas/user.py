@@ -27,6 +27,7 @@ class MeRecommendationInline(BaseModel):
     title: str = Field(min_length=1)
     language: MeRecommendationLanguage
 
+
 # Maximum display-name length (matches ``users.display_name`` String(120)).
 DISPLAY_NAME_MAX_LEN = 120
 

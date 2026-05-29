@@ -109,7 +109,7 @@ def _maybe_warn_multi_worker() -> None:
     REST surface and just accept the LSP soft-degradation), so the
     posture is: warn loudly once, let ops decide.
     """
-    global _WEB_CONCURRENCY_WARNED
+    global _WEB_CONCURRENCY_WARNED  # noqa: PLW0603 — module-level warn-once latch (see docstring)
     if _WEB_CONCURRENCY_WARNED:
         return
     _WEB_CONCURRENCY_WARNED = True
@@ -122,6 +122,7 @@ def _maybe_warn_multi_worker() -> None:
             "See app.ws.lsp module docstring.",
             workers,
         )
+
 
 # Bytes per pump-loop read from the WS side. Generous — JSON-RPC LSP frames
 # can easily run to several KB when the server returns a completion list
@@ -294,9 +295,7 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
             # hasn't been accepted yet — Starlette doesn't allow a text
             # frame before ``accept``. Close-with-reason is what
             # downstream tooling can observe.
-            await websocket.close(
-                code=_WS_CLOSE_ORIGIN_FORBIDDEN, reason="origin_forbidden"
-            )
+            await websocket.close(code=_WS_CLOSE_ORIGIN_FORBIDDEN, reason="origin_forbidden")
         except Exception as exc:  # pragma: no cover — best-effort
             logger.debug("lsp ws: origin-forbidden close failed: {}", exc)
         lsp_errors_total.labels(
@@ -313,7 +312,9 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
     # FE never enters the JSON-RPC pump loop with an unsupported language.
     norm_lang = _coerce_language(language)
     if norm_lang is None:
-        lsp_errors_total.labels(language=language or "unknown", error_class="unsupported_language").inc()
+        lsp_errors_total.labels(
+            language=language or "unknown", error_class="unsupported_language"
+        ).inc()
         await websocket.close(code=4400, reason="unsupported_language")
         return
 
@@ -388,9 +389,7 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
                 detail="apply-patch in flight; retry after the patch settles",
                 close_code=_WS_CLOSE_SANDBOX_BUSY,
             )
-            lsp_errors_total.labels(
-                language=norm_lang, error_class="sandbox_busy"
-            ).inc()
+            lsp_errors_total.labels(language=norm_lang, error_class="sandbox_busy").inc()
             return
 
     # 6) Single-LSP-per-(session,language) registry. The lock guards the
@@ -429,9 +428,7 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
                 evict = True
             if evict:
                 _active_lsp.pop(key, None)
-                lsp_errors_total.labels(
-                    language=norm_lang, error_class="dead_entry_evicted"
-                ).inc()
+                lsp_errors_total.labels(language=norm_lang, error_class="dead_entry_evicted").inc()
                 existing = None
 
         if existing is not None:
@@ -553,14 +550,10 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
                 try:
                     exit_code = lsp.exit_code
                 except Exception as exc:  # pragma: no cover — defensive
-                    logger.debug(
-                        "lsp[{}] exit_code lookup failed: {}", norm_lang, exc
-                    )
+                    logger.debug("lsp[{}] exit_code lookup failed: {}", norm_lang, exc)
 
             if exit_code is not None and exit_code in LSP_OOM_EXIT_CODES:
-                lsp_errors_total.labels(
-                    language=norm_lang, error_class="lsp_oom"
-                ).inc()
+                lsp_errors_total.labels(language=norm_lang, error_class="lsp_oom").inc()
                 # Best-effort: emit the structured frame BEFORE the close
                 # so the FE's discriminated-union narrowing has something
                 # to switch on. The frame may be dropped if the WS is
@@ -575,19 +568,13 @@ async def lsp_ws(  # noqa: PLR0912,PLR0915 — sequential lifecycle is easier to
                     )
                     await websocket.send_text(frame.model_dump_json())
                 except Exception as exc:  # pragma: no cover — best-effort
-                    logger.debug(
-                        "lsp[{}] lsp_oom frame send failed: {}", norm_lang, exc
-                    )
+                    logger.debug("lsp[{}] lsp_oom frame send failed: {}", norm_lang, exc)
                 try:
-                    await websocket.close(
-                        code=_WS_CLOSE_LSP_UNAVAILABLE, reason="lsp_oom"
-                    )
+                    await websocket.close(code=_WS_CLOSE_LSP_UNAVAILABLE, reason="lsp_oom")
                 except Exception:  # pragma: no cover — best-effort
                     pass
             else:
-                lsp_errors_total.labels(
-                    language=norm_lang, error_class="lsp_crashed"
-                ).inc()
+                lsp_errors_total.labels(language=norm_lang, error_class="lsp_crashed").inc()
                 try:
                     # ``client_state`` / ``application_state`` aren't part of
                     # the public WebSocket surface in older Starlettes; the

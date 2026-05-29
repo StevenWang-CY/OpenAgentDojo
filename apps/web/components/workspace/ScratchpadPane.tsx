@@ -705,7 +705,7 @@ function ScratchpadHeader({
           title="Renders as markdown in the post-mortem reflection."
           className="ml-1 inline-flex items-center rounded-sm border border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-1 py-0 text-[10px] uppercase tracking-wide text-[var(--color-muted-foreground)]/80"
         >
-          // markdown
+          {"// markdown"}
         </span>
         {!open && bytes > 0 ? (
           <span

@@ -88,7 +88,9 @@ class RoadmapPastDatedError(ValueError):
     """
 
 
-def load_roadmap(path: Path | None = None, *, strict: bool = False) -> Roadmap:
+def load_roadmap(  # noqa: PLR0912 — flat per-field validation; splitting would scatter the schema checks
+    path: Path | None = None, *, strict: bool = False
+) -> Roadmap:
     """Read and validate the roadmap YAML.
 
     Caches by mtime so the parsed model is reused across requests in
@@ -119,12 +121,7 @@ def load_roadmap(path: Path | None = None, *, strict: bool = False) -> Roadmap:
     # Strict mode bypasses the cache — the date check is wall-clock-
     # dependent, and a cached pass from yesterday could mask a date that
     # just slipped past midnight in CI's TZ.
-    if (
-        not strict
-        and path is None
-        and _ROADMAP_CACHE
-        and _ROADMAP_CACHE[0][0] == mtime
-    ):
+    if not strict and path is None and _ROADMAP_CACHE and _ROADMAP_CACHE[0][0] == mtime:
         return _ROADMAP_CACHE[0][1]
 
     try:
@@ -160,14 +157,11 @@ def load_roadmap(path: Path | None = None, *, strict: bool = False) -> Roadmap:
                             f"date={parsed_date.isoformat()} — refresh or remove."
                         )
                     logger.warning(
-                        "roadmap.yaml: dropping past-dated placeholder "
-                        "id={} date={}",
+                        "roadmap.yaml: dropping past-dated placeholder id={} date={}",
                         entry_id_label,
                         parsed_date.isoformat(),
                     )
-                    roadmap_past_dated_dropped_total.labels(
-                        mission_id=entry_id_label
-                    ).inc()
+                    roadmap_past_dated_dropped_total.labels(mission_id=entry_id_label).inc()
                     continue
             kept.append(entry)
         # Detect a *full* collapse from past-dated drops: the source list
@@ -192,9 +186,7 @@ def load_roadmap(path: Path | None = None, *, strict: bool = False) -> Roadmap:
         # an empty roadmap so the rest of the catalog still renders.
         if strict:
             raise
-        logger.warning(
-            "roadmap.yaml at {} failed Pydantic validation: {}", target, exc
-        )
+        logger.warning("roadmap.yaml at {} failed Pydantic validation: {}", target, exc)
         return Roadmap(placeholders=[])
 
     if path is None and not strict:
@@ -203,9 +195,7 @@ def load_roadmap(path: Path | None = None, *, strict: bool = False) -> Roadmap:
     return roadmap
 
 
-def filter_collisions(
-    roadmap: Roadmap, shipped_mission_ids: Iterable[str]
-) -> Roadmap:
+def filter_collisions(roadmap: Roadmap, shipped_mission_ids: Iterable[str]) -> Roadmap:
     """Drop placeholders whose ``id`` collides with a shipped mission.
 
     The author-time invariant (placeholder ids must be globally unique

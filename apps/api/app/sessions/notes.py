@@ -116,16 +116,12 @@ async def _upsert_note(
         await db.execute(stmt)
         await db.flush()
         row = (
-            await db.execute(
-                select(SessionNote).where(SessionNote.session_id == session_id)
-            )
+            await db.execute(select(SessionNote).where(SessionNote.session_id == session_id))
         ).scalar_one()
         return row
 
     existing = (
-        await db.execute(
-            select(SessionNote).where(SessionNote.session_id == session_id)
-        )
+        await db.execute(select(SessionNote).where(SessionNote.session_id == session_id))
     ).scalar_one_or_none()
     if existing is None:
         row = SessionNote(
@@ -281,9 +277,7 @@ async def _coalesce_or_emit_note_edited(
     # (if any) IS ``latest`` here; its occurred_at is the right anchor for
     # seconds_since_last_edit. First-edit case (``latest is None``)
     # naturally yields 0 via the payload builder.
-    previous_event_at = (
-        _as_utc(latest.occurred_at) if latest is not None else None
-    )
+    previous_event_at = _as_utc(latest.occurred_at) if latest is not None else None
     payload = _build_note_edited_payload(
         body=body,
         now=now,
@@ -394,9 +388,7 @@ async def get_note(
     session_row = await _require_owned_session(db, session_id, user)
 
     existing = (
-        await db.execute(
-            select(SessionNote).where(SessionNote.session_id == session_id)
-        )
+        await db.execute(select(SessionNote).where(SessionNote.session_id == session_id))
     ).scalar_one_or_none()
     if existing is None:
         return SessionNoteRead(body="", updated_at=_as_utc(session_row.started_at))
@@ -457,9 +449,7 @@ async def put_note(
     # already serialises writes; on Postgres it acquires a FOR UPDATE
     # lock that the second writer blocks on until the first commits.
     await db.execute(
-        select(SessionNote)
-        .where(SessionNote.session_id == session_id)
-        .with_for_update()
+        select(SessionNote).where(SessionNote.session_id == session_id).with_for_update()
     )
 
     row = await _upsert_note(

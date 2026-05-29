@@ -71,9 +71,13 @@ class RecommendationSet(BaseModel):
 
     weakest_dim: WeakestDim | None = None
     diagnosis: str
-    recommendations: list[RecommendationItem] = Field(
-        default_factory=list, min_length=0, max_length=3
-    )
+    # Required (no default): the response ALWAYS carries this key — the
+    # engine/cache builders pass it on every branch, and the all-graded
+    # path passes an explicit ``[]``. ``min_length=0`` keeps the empty list
+    # legal while ``required`` (no default_factory) makes the OpenAPI — and
+    # therefore the generated FE type — treat it as always-present, matching
+    # how RecommendationStrip / ReportView actually consume it.
+    recommendations: list[RecommendationItem] = Field(min_length=0, max_length=3)
     computed_at: datetime
     cache_hit: bool
 

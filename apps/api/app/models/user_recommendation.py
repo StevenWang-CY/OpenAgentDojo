@@ -47,17 +47,13 @@ class UserRecommendation(Base):
         primary_key=True,
     )
     weakest_dim: Mapped[str | None] = mapped_column(Text, nullable=True)
-    recommended_ids: Mapped[list[str]] = mapped_column(
-        ARRAY(Text), nullable=False, default=list
-    )
+    recommended_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
     )
-    invalidated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # P4.1 audit — cache rebuild fidelity payload (migration 0027).
     # Today this stores
     # ``{"items":[{"mission_id":"...", "alignment": 0.5}, ...]}`` so a
@@ -66,9 +62,7 @@ class UserRecommendation(Base):
     # depends on the user's current weakest dim, which changes between
     # the miss and the next hit). Optional / nullable so older rows
     # written before 0027 still rehydrate via the fall-back path.
-    extras: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True
-    )
+    extras: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover
         return (

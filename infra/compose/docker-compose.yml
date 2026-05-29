@@ -242,7 +242,7 @@ services:
           echo "stale-exports-cron: next run in $${sleep_for}s"
           sleep $$sleep_for
           echo "stale-exports-cron: starting sweep"
-          uv run python -m scripts.sweep_stale_exports || echo "stale-exports-cron: sweep raised — retrying tomorrow"
+          python -m scripts.sweep_stale_exports || echo "stale-exports-cron: sweep raised — retrying tomorrow"
         done
 
   deletion-grace-cron:
@@ -291,7 +291,7 @@ services:
           echo "deletion-grace-cron: next run in $${sleep_for}s"
           sleep $$sleep_for
           echo "deletion-grace-cron: starting sweep"
-          uv run python -m scripts.process_deletion_grace || echo "deletion-grace-cron: sweep raised — counter labelled failed; retrying tomorrow"
+          python -m scripts.process_deletion_grace || echo "deletion-grace-cron: sweep raised — counter labelled failed; retrying tomorrow"
         done
 
   web:

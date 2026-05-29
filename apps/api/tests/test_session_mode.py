@@ -29,6 +29,23 @@ from app.sessions.integrity import _reset_bucket
 _CSRF = "test-csrf-mode-fixed"
 
 
+@pytest.fixture(autouse=True)
+def _no_provision(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the in-process provision spawn for this module.
+
+    These tests exercise session *mode* + the integrity endpoint — not the
+    sandbox. Left live, ``POST /sessions`` schedules a fire-and-forget
+    provision ``asyncio.Task`` (``provision_in_process`` defaults to True)
+    that runs on the shared event loop against the same in-memory SQLite
+    connection the integrity write uses. The two transactions interleave
+    non-deterministically, which intermittently swallowed the integrity
+    event's INSERT (``test_integrity_event_persists_for_proctored`` would
+    then see 0 rows). Stubbing the spawn removes the racing task; the
+    session row (mode + counters) is still created exactly as before.
+    """
+    monkeypatch.setattr("app.workers.provision.enqueue_provision", lambda session_id: None)
+
+
 async def _seed_mission_and_user(db_engine) -> tuple[uuid.UUID, str]:
     """Create a User + Mission once per test; returns ``(user_id, mission_id)``."""
     from app.db import session as session_module

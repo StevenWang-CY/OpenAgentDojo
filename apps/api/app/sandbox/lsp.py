@@ -141,11 +141,10 @@ def _bump_runtime_error(language: str, error_class: LSPErrorClass) -> None:
     try:
         from app.observability import lsp_runtime_errors_total
 
-        lsp_runtime_errors_total.labels(
-            language=language, error_class=error_class
-        ).inc()
+        lsp_runtime_errors_total.labels(language=language, error_class=error_class).inc()
     except Exception:  # pragma: no cover — telemetry must never throw
         pass
+
 
 # ---------------------------------------------------------------------------
 # Public language → command mapping
@@ -352,9 +351,7 @@ class LocalLSPProcess(LSPProcess):
                 # Promoted to WARNING (was DEBUG) so operators can correlate
                 # a stuck pump with a broken stdin pipe; runtime counter
                 # carries the per-language label for dashboarding.
-                logger.warning(
-                    "lsp[{}] stdin write failed: {}", self._language, exc
-                )
+                logger.warning("lsp[{}] stdin write failed: {}", self._language, exc)
                 _bump_runtime_error(self._language, "stdin_broken_pipe")
 
     async def read_stdout(self) -> bytes:
@@ -376,9 +373,7 @@ class LocalLSPProcess(LSPProcess):
             if self._proc.stdin is not None and not self._proc.stdin.is_closing():
                 self._proc.stdin.close()
         except Exception as exc:  # pragma: no cover — best-effort
-            logger.warning(
-                "lsp[{}] stdin close failed: {}", self._language, exc
-            )
+            logger.warning("lsp[{}] stdin close failed: {}", self._language, exc)
             _bump_runtime_error(self._language, "stdin_broken_pipe")
 
         # 2) Give it a brief window to exit on its own.
@@ -401,9 +396,7 @@ class LocalLSPProcess(LSPProcess):
         except ProcessLookupError:
             return
         except Exception as exc:  # pragma: no cover — best-effort
-            logger.warning(
-                "lsp[{}] terminate failed: {}", self._language, exc
-            )
+            logger.warning("lsp[{}] terminate failed: {}", self._language, exc)
             _bump_runtime_error(self._language, "terminate_failed")
 
         try:
@@ -457,9 +450,7 @@ async def spawn_local_lsp(
             try:
                 import resource
 
-                resource.setrlimit(
-                    resource.RLIMIT_AS, (budget_bytes, budget_bytes)
-                )
+                resource.setrlimit(resource.RLIMIT_AS, (budget_bytes, budget_bytes))
             except Exception:
                 # Silent — see the comment above. The container ceiling is
                 # the backstop on hosts where the rlimit doesn't take.
@@ -556,9 +547,7 @@ class DockerLSPProcess(LSPProcess):
             # Promoted to WARNING (was DEBUG) so operators can correlate
             # "alive() reports stale" with the underlying Docker SDK
             # failure (daemon restart, socket closed, etc.).
-            logger.warning(
-                "lsp[{}] exec_inspect failed: {}", self._language, exc
-            )
+            logger.warning("lsp[{}] exec_inspect failed: {}", self._language, exc)
             _bump_runtime_error(self._language, "exec_inspect_failed")
         return True
 
@@ -598,9 +587,7 @@ class DockerLSPProcess(LSPProcess):
         try:
             await loop.run_in_executor(None, self._raw.send, data)
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
-            logger.warning(
-                "lsp[{}] socket send failed: {}", self._language, exc
-            )
+            logger.warning("lsp[{}] socket send failed: {}", self._language, exc)
             _bump_runtime_error(self._language, "stdin_broken_pipe")
             self._closed = True
 
@@ -616,9 +603,7 @@ class DockerLSPProcess(LSPProcess):
         # caller as an empty read (signal-equivalent to a graceful EOF).
         try:
             data = await asyncio.wait_for(
-                loop.run_in_executor(
-                    _LSP_RECV_EXECUTOR, self._raw.recv, self._CHUNK
-                ),
+                loop.run_in_executor(_LSP_RECV_EXECUTOR, self._raw.recv, self._CHUNK),
                 timeout=_LSP_RECV_TIMEOUT_S,
             )
         except TimeoutError:
@@ -631,9 +616,7 @@ class DockerLSPProcess(LSPProcess):
             self._closed = True
             return b""
         except (OSError, ConnectionResetError) as exc:
-            logger.warning(
-                "lsp[{}] socket recv failed: {}", self._language, exc
-            )
+            logger.warning("lsp[{}] socket recv failed: {}", self._language, exc)
             _bump_runtime_error(self._language, "socket_recv_failed")
             self._closed = True
             return b""
@@ -685,9 +668,7 @@ class DockerLSPProcess(LSPProcess):
         try:
             await loop.run_in_executor(None, self._raw.close)
         except Exception as exc:  # pragma: no cover — best-effort
-            logger.warning(
-                "lsp[{}] socket close failed: {}", self._language, exc
-            )
+            logger.warning("lsp[{}] socket close failed: {}", self._language, exc)
             _bump_runtime_error(self._language, "shutdown_timeout")
 
 
@@ -740,9 +721,7 @@ async def spawn_docker_lsp(
         # ``command -v prlimit`` returns 0 iff the binary is on PATH; the
         # ``&&`` chains the limited exec, the ``||`` fallback is the raw
         # exec so we never hard-fail when prlimit is missing.
-        prlimited = (
-            f"prlimit --as={budget_bytes} {quoted}"
-        )
+        prlimited = f"prlimit --as={budget_bytes} {quoted}"
         shell_cmd = (
             f"if command -v prlimit >/dev/null 2>&1; then "
             f"exec {prlimited} 2>/dev/null; "

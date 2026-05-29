@@ -812,10 +812,7 @@ async def post_me_consent(
 @router.get(
     "/me/coaching-consent",
     response_model=CoachingConsentRead,
-    summary=(
-        "Return whether the caller has opted in to scratchpad coaching "
-        "reflections (P1-4)"
-    ),
+    summary=("Return whether the caller has opted in to scratchpad coaching reflections (P1-4)"),
 )
 async def get_me_coaching_consent(
     user: User = Depends(require_auth),
@@ -832,10 +829,7 @@ async def get_me_coaching_consent(
 @router.post(
     "/me/coaching-consent",
     response_model=CoachingConsentRead,
-    summary=(
-        "Toggle the scratchpad coaching reflection opt-in for the caller "
-        "(P1-4)"
-    ),
+    summary=("Toggle the scratchpad coaching reflection opt-in for the caller (P1-4)"),
     responses=_DELETION_LOCK_RESPONSE,
 )
 async def post_me_coaching_consent(
@@ -912,16 +906,12 @@ async def post_me_coaching_consent(
                 retained += 1
 
         if to_delete:
-            await db.execute(
-                sa_delete(LLMCache).where(LLMCache.id.in_(to_delete))
-            )
+            await db.execute(sa_delete(LLMCache).where(LLMCache.id.in_(to_delete)))
         # Always drop the user's index rows regardless of preservation —
         # the user has opted out, the index link should not survive.
         if candidate_cache_ids:
             await db.execute(
-                sa_delete(CoachingCacheUserIndex).where(
-                    CoachingCacheUserIndex.user_id == user.id
-                )
+                sa_delete(CoachingCacheUserIndex).where(CoachingCacheUserIndex.user_id == user.id)
             )
         await db.flush()
 

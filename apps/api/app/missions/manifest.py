@@ -87,9 +87,7 @@ _SKILL_TAGS: frozenset[str] = frozenset(
         "skill:cli",
     }
 )
-_LANGUAGE_TAGS: frozenset[str] = frozenset(
-    {"lang:typescript", "lang:python", "lang:go"}
-)
+_LANGUAGE_TAGS: frozenset[str] = frozenset({"lang:typescript", "lang:python", "lang:go"})
 _KNOWN_TAGS: frozenset[str] = _FAILURE_MODE_TAGS | _SKILL_TAGS | _LANGUAGE_TAGS
 
 
