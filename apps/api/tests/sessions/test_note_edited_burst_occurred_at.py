@@ -110,8 +110,24 @@ async def test_burst_preserves_first_put_occurred_at(
     app = _make_app(db_session, user)
     transport = ASGITransport(app=app)
 
-    before_first = datetime.now(UTC)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        # Warm the request path (first ASGI dispatch, dependency
+        # resolution, the initial DB round-trip) BEFORE starting the
+        # wall-clock measurement. Otherwise the first PUT's server-side
+        # ``occurred_at`` is dominated by cold-start latency on a loaded
+        # CI runner — observed at ~0.4 s — which swamps the burst-anchor
+        # tolerances below and flakes the test. ``GET /note`` is
+        # explicitly side-effect-free (no row insert, no supervision
+        # event), so it warms the path that runs before ``put_note``
+        # stamps ``occurred_at`` without perturbing the coalescing
+        # contract (the event-count assertion below stays 1).
+        warm = await ac.get(
+            f"/api/v1/sessions/{session.id}/note",
+            **_csrf_kwargs(),
+        )
+        assert warm.status_code == 200, warm.text
+
+        before_first = datetime.now(UTC)
         # Five PUTs separated by tiny sleeps so wall-clock can distinguish
         # the first from the last even on a fast CI runner. The sleeps
         # are deliberately small (50 ms each) to keep the test fast while
@@ -131,7 +147,7 @@ async def test_burst_preserves_first_put_occurred_at(
             )
             assert r.status_code == 200, r.text
             await asyncio.sleep(0.05)
-    after_last = datetime.now(UTC)
+        after_last = datetime.now(UTC)
 
     events = (
         (
