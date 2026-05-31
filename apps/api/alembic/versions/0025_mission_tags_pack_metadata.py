@@ -32,7 +32,7 @@ memory test engine keeps working. This migration only runs against
 Postgres at deploy-time; the GIN index is created unconditionally
 because SQLite doesn't run Alembic in our suite.
 
-Revision ID: 0025_mission_tags_and_pack_metadata
+Revision ID: 0025_mission_tags_pack_metadata
 Revises: 0024_magic_link_next
 Create Date: 2026-05-27
 """
@@ -50,7 +50,7 @@ from loguru import logger
 
 from alembic import op
 
-revision: str = "0025_mission_tags_and_pack_metadata"
+revision: str = "0025_mission_tags_pack_metadata"
 down_revision: str | None = "0024_magic_link_next"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

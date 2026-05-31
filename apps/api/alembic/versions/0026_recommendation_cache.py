@@ -28,7 +28,7 @@ tests. The ORM CHECK constraints in
 invariant at table-creation time on SQLite.
 
 Revision ID: 0026_recommendation_cache
-Revises: 0025_mission_tags_and_pack_metadata
+Revises: 0025_mission_tags_pack_metadata
 Create Date: 2026-05-27
 """
 
@@ -44,7 +44,7 @@ import yaml
 from alembic import op
 
 revision: str = "0026_recommendation_cache"
-down_revision: str | None = "0025_mission_tags_and_pack_metadata"
+down_revision: str | None = "0025_mission_tags_pack_metadata"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

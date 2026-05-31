@@ -18,7 +18,7 @@ Two small additions chained off the 0023 merge node:
   force-rerender budget.
 
 Revision ID: 0024_magic_link_next
-Revises: 0023_merge_oauth_and_session_mode
+Revises: 0023_merge_oauth_session_mode
 Create Date: 2026-05-25
 """
 
@@ -31,7 +31,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0024_magic_link_next"
-down_revision: str | None = "0023_merge_oauth_and_session_mode"
+down_revision: str | None = "0023_merge_oauth_session_mode"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -10,7 +10,7 @@ migrations declare this revision as their single parent.
 Empty ``upgrade()`` / ``downgrade()`` — no schema work; this is purely a
 graph-shape resolution.
 
-Revision ID: 0023_merge_oauth_and_session_mode
+Revision ID: 0023_merge_oauth_session_mode
 Revises: 0021_github_oauth, 0022_session_mode
 Create Date: 2026-05-25
 """
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-revision: str = "0023_merge_oauth_and_session_mode"
+revision: str = "0023_merge_oauth_session_mode"
 down_revision: tuple[str, str] | str | None = (
     "0021_github_oauth",
     "0022_session_mode",

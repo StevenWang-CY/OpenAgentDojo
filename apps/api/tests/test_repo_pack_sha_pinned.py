@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.models.repo_pack import RepoPack
 
 # Pinned set of pack ids the seed migration writes (mirror of
-# ``_SEED_REPO_PACKS`` in alembic/versions/0025_mission_tags_and_pack_metadata.py).
+# ``_SEED_REPO_PACKS`` in alembic/versions/0025_mission_tags_pack_metadata.py).
 # Kept here so this test breaks loudly if the seed list drifts and we forget
 # to update either the migration or this skeleton.
 _EXPECTED_PACK_IDS: Final[tuple[str, ...]] = (
