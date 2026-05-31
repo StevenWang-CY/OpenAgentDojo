@@ -31,8 +31,24 @@ jobs:
             if [ -z "$sha" ]; then continue; fi
             author_email="$(git show -s --format=%ae "$sha")"
             author_name="$(git show -s --format=%an "$sha")"
-            expected="Signed-off-by: ${author_name} <${author_email}>"
             body="$(git show -s --format=%B "$sha")"
+
+            # Dependabot authors as `dependabot[bot] <…@users.noreply.github.com>`
+            # but always signs off with a fixed `<support@github.com>` address,
+            # which can never match its author email. Its commits are
+            # bot-generated and trusted, so accept any present Signed-off-by
+            # trailer for them while keeping the strict author==signer rule for
+            # human contributors.
+            if [ "$author_name" = "dependabot[bot]" ] || [[ "$author_email" == *"dependabot"* ]]; then
+              if grep -qE '^Signed-off-by: ' <<<"$body"; then
+                continue
+              fi
+              echo "::error::Dependabot commit $sha is missing a Signed-off-by trailer."
+              missing=$((missing + 1))
+              continue
+            fi
+
+            expected="Signed-off-by: ${author_name} <${author_email}>"
             if ! grep -F -q "$expected" <<<"$body"; then
               echo "::error::Commit $sha is missing the DCO sign-off."
               echo "  expected trailer: $expected"
