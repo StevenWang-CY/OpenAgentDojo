@@ -132,9 +132,15 @@ describe("downloadReplayJson — canonical bytes preserved", () => {
 
   it("falls back to the short-id filename when no Content-Disposition is sent", async () => {
     globalThis.fetch = vi.fn(async () => {
+      // Use a Uint8Array body (not a Blob-backed Response) for the same
+      // reason the beforeEach mock does: passing a Blob through a Response
+      // can yield a stream that fails to re-read via ``.blob()`` on the
+      // consumer side (jsdom >= 29 surfaces this as a body-read error,
+      // which downloadReplayJson reports as a network error). The header
+      // shape — specifically the ABSENCE of Content-Disposition — is the
+      // only thing this case needs to exercise.
       const bodyBytes = new TextEncoder().encode(CANONICAL_BYTES);
-      const blob = new Blob([bodyBytes], { type: "application/json" });
-      return new Response(blob, {
+      return new Response(bodyBytes, {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
