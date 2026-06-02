@@ -10,7 +10,7 @@
 #   docker build -f infra/docker/go122.Dockerfile -t agentarena/go122:1 .
 # ---------------------------------------------------------------------------
 
-FROM golang:1.22-bookworm
+FROM golang:1.26-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
