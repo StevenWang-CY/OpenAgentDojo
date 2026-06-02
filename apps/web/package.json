@@ -44,7 +44,7 @@
     "recharts": "^2.13.0",
     "remark-gfm": "^4.0.0",
     "sonner": "^1.5.0",
-    "tailwind-merge": "^2.5.0",
+    "tailwind-merge": "^3.6.0",
     "vscode-jsonrpc": "^8.2.1",
     "vscode-languageclient": "^9.0.1",
     "vscode-ws-jsonrpc": "^3.5.0",
