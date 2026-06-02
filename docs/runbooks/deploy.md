@@ -49,7 +49,7 @@ parallel branches, both declared
 two heads (`0021_github_oauth`, `0022_session_mode`) and refused to
 `upgrade head` because it could not pick one.
 
-The fix is **`0023_merge_oauth_and_session_mode.py`** — an empty merge
+The fix is **`0023_merge_oauth_session_mode.py`** — an empty merge
 migration whose `down_revision` is the tuple of the two parents. The
 upgrade and downgrade bodies are intentionally empty; the migration's
 only job is to declare a single new head so future migrations have an
@@ -62,7 +62,7 @@ applies cleanly:
 0020_session_reset_event
     → 0021_github_oauth        (either order; both have 0020 as parent)
     → 0022_session_mode
-        → 0023_merge_oauth_and_session_mode  (merge, no schema work)
+        → 0023_merge_oauth_session_mode  (merge, no schema work)
             → 0024_*           (future migrations parent off 0023)
 ```
 
@@ -111,5 +111,5 @@ remaining two are operator habits.
   the database in a bad state.
 - [`incident-response.md`](./incident-response.md) — what to do when a
   deploy goes sideways.
-- [`apps/api/alembic/versions/0023_merge_oauth_and_session_mode.py`](../../apps/api/alembic/versions/0023_merge_oauth_and_session_mode.py)
+- [`apps/api/alembic/versions/0023_merge_oauth_session_mode.py`](../../apps/api/alembic/versions/0023_merge_oauth_session_mode.py)
   — the merge migration that resolved the dual-heads incident.

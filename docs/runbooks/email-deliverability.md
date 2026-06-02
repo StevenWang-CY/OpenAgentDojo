@@ -15,19 +15,20 @@ deliverability dashboard.
 magic_link_email_total{backend, outcome}
 ```
 
-- `backend` ∈ `{resend, smtp, dev-log, unknown}` — the transport the
-  dispatch chain actually selected. `dev-log` is the developer-mode
-  stderr fallback; seeing it in production means **both** Resend and
-  SMTP failed and the operator is running in `ARENA_ENV=development`.
-  `unknown` is reserved for the resend-throttle short-circuit, which
-  never reaches a transport.
-- `outcome` ∈ `{delivered, timeout, failed, throttled}`. `throttled`
-  fires when the per-email 60-second resend cooldown rejects a send.
+- `backend` ∈ `{resend, smtp, dev-log}` — the transport the dispatch
+  chain actually selected. `dev-log` is the developer-mode stderr
+  fallback; seeing it in production means **both** Resend and SMTP
+  failed and the operator is running in `ARENA_ENV=development`. The
+  resend-throttle short-circuit never reaches a transport, so it is
+  tracked by the separate `magic_link_throttled_total` counter below
+  rather than as a `magic_link_email_total` label.
+- `outcome` ∈ `{delivered, timeout, failed}`.
 
 ```
-magic_link_throttled_total{outcome="throttled"}
+magic_link_throttled_total
 ```
 
+(A dedicated, label-free counter — `magic_link_throttled_total.inc()`.)
 Bumped when the resend endpoint (`POST /auth/magic-link/resend`) sees
 a request within the 60-second per-email cooldown window. A spike
 indicates either a **buggy FE timer** (the sign-in card's resend
@@ -35,9 +36,9 @@ button should disable itself for 60s after a send, so any spike on
 that counter against a single deployed FE build is a regression
 candidate) **OR an enumeration attempt** (an attacker probing for
 valid email addresses and not waiting for the cooldown). Correlate
-against `magic_link_email_total{outcome="throttled"}`: the two should
-move together; divergence means a code path is bypassing one of the
-two counters.
+against the `auth.magic_link.throttled` structured log lines below: a
+spike with many distinct `email_hash` values from disparate IPs points
+at enumeration rather than a stuck FE timer.
 
 ### Structured log lines
 
@@ -59,7 +60,7 @@ Recommended panels (Grafana / your equivalent):
    The "delivered" band should dominate; any visible "failed" or
    "timeout" band signals a transport degradation worth investigating.
 2. **Single-stat** of the failure ratio:
-   `sum(rate(magic_link_email_total{outcome!="delivered",outcome!="throttled"}[15m])) / sum(rate(magic_link_email_total{outcome!="throttled"}[15m]))`
+   `sum(rate(magic_link_email_total{outcome!="delivered"}[15m])) / sum(rate(magic_link_email_total[15m]))`
    Alert when sustained above `0.05` (5%) for ten minutes.
 3. **Per-backend split** of failures (`sum(...) by (backend)`) so the
    operator can see whether Resend or SMTP is the source of the dip

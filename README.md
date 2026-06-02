@@ -116,10 +116,10 @@ cd apps/api && uv run pytest
 
 **MVP complete + P0 hardening in flight.** Milestones M0–M8 (bootstrap, data layer, sandbox, workspace UI, agent service, grading engine, mission content, public profile/landing, hardening) have all shipped. The platform provisions sandboxes, runs the deterministic agent, grades the 100-point supervision rubric, and renders public profiles.
 
-The post-MVP P0 batch ([FEATURE_GAPS.md](FEATURE_GAPS.md), [P0_DESIGN.md](P0_DESIGN.md), [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md)) is mostly landed:
+The post-MVP P0 batch ([FEATURE_GAPS.md](FEATURE_GAPS.md), [P0_DESIGN.md](P0_DESIGN.md), [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md)) has landed in full:
 
-- ✅ Shipped: P0-1 onboarding (Mission 00), P0-2 post-mortem walkthrough, P0-3 multi-attempt scoring, P0-4 give-up affordance, P0-5 legal pages + cookie consent, P0-6 account self-service, P0-11 verifiable report artifact (verify page + PDF/PNG dropdown + worker), P0-12 reset-to-initial workspace, P0-13 LICENSE + CONTRIBUTING + rubric reconciliation.
-- ⏳ Pending: P0-7 GitHub OAuth, P0-8 proctored mode, P0-9 find-in-files, P0-10 email-deliverability fallback.
+- ✅ Shipped: P0-1 onboarding (Mission 00), P0-2 post-mortem walkthrough, P0-3 multi-attempt scoring, P0-4 give-up affordance, P0-5 legal pages + cookie consent, P0-6 account self-service, P0-7 GitHub OAuth, P0-8 proctored mode, P0-9 find-in-files, P0-10 email-deliverability fallback, P0-11 verifiable report artifact (verify page + PDF/PNG dropdown + worker), P0-12 reset-to-initial workspace, P0-13 LICENSE + CONTRIBUTING + rubric reconciliation.
+- ✅ P1 follow-ons shipped: recommendations, scratchpad/coaching reflection, LSP proxy, three-way diff, replay artifact.
 
 See [IMPLEMENTATION_PLAN.md §17](IMPLEMENTATION_PLAN.md) for the full breakdown.
 

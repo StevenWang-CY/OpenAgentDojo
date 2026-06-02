@@ -132,7 +132,7 @@ Both search surfaces are server-backed (`GET /sessions/{id}/files/list`, `POST /
    - Write `agent_patch.diff` (applies cleanly on `initial_commit`, fails ≥1 hidden test).
    - Write `hidden_tests/`, `forbidden_changes.yaml`, `ideal_solution.md`, `prompts/`, `acceptance.yaml`.
 3. Add the mission to the catalog seed migration.
-4. Run `pnpm validate:missions` and `pnpm test:missions:<NN>` until green.
+4. Run `pnpm validate:missions` and `pnpm test:missions` until green.
 5. PR includes the design note + manifest + acceptance test passing in CI.
 
 ## Tests & checks

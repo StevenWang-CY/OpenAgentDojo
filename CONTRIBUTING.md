@@ -86,11 +86,11 @@ their workspace before merging.
 
 The grading engine's structural validators live at
 [`apps/api/app/grading/validators/`](apps/api/app/grading/validators/).
-Read one (`forbidden_changes.py` is a good model) before writing yours.
+Read one (`forbidden.py` is a good model) before writing yours.
 Every validator MUST be deterministic — no clocks, no random seeds, no
 network. The grading replay loop assumes the same inputs produce the
 same `ValidatorResult`. If your validator needs to read the workspace,
-use the `fs_reader` shim passed into `ctx` — never shell out.
+use the `fs_reader` shim passed into the validator — never shell out.
 
 ## 6. UI changes
 

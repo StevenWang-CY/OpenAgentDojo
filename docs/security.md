@@ -30,25 +30,31 @@ Any breakout would need to chain: an unpatched kernel CVE + a misconfigured cap 
 
 See [IMPLEMENTATION_PLAN.md §21](../IMPLEMENTATION_PLAN.md).
 
-| Resource | Limit (per user, per hour) |
-|---|---|
-| Prompts to the agent | 20 |
-| Commands run in the sandbox | 50 |
-| Submissions | 3 |
-| Active sessions | 1 (concurrency cap, not per-hour) |
+Rate rules are a per-bucket request count over a sliding **60-second** window (`apps/api/app/middleware/rate_limit.py`), keyed by user (or IP for unauthenticated routes):
 
-Returned as `429 Too Many Requests` with `Retry-After`. Per-IP throttles overlay the per-user limits to slow brute-force account creation.
+| Resource | Limit |
+|---|---|
+| Prompts to the agent | 12 / min |
+| Commands run in the sandbox | 30 / min |
+| Submissions | 3 / min |
+| Session creates | 6 / min |
+| Repo-wide search (P0-9) | 10 / min |
+| Workspace reset (P0-12) | 10 / min |
+| Active sessions | 1 (concurrency cap — a second create returns `409`, not `429`) |
+
+Returned as `429 Too Many Requests` with `Retry-After` (the window length). Per-IP throttles overlay the per-user limits to slow brute-force account creation.
 
 ## Banned commands
 
-Both client- and server-side, the following patterns are rejected with a `400 banned_command`:
+`POST /api/v1/sessions/{id}/commands` is guarded server-side by `apps/api/app/middleware/banned_commands.py`. A match returns `400 {"detail": "banned command"}`, emits a `validator.flag` supervision event (`kind: "banned_command"`), and never forwards to the handler. The denylist (a high-signal regex set, favouring false positives):
 
-- `rm -rf /` and variants targeting `/`, `/etc`, `/usr`, `/var`.
-- Fork bombs (`:(){:|:&};:`).
-- Pipes to shell from untrusted sources (`curl ... | sh`, `curl ... | bash`, `wget ... | sh`, `wget ... | bash`).
-- Direct invocations of `chmod 777` on directories containing more than 10 files (heuristic).
+- `rm -rf /` targeting root.
+- Fork bombs (`:(){ ... }`).
+- Pipes to shell (`curl ... | sh`/`bash`, `wget ... | sh`/`bash`).
+- Reverse-shell / listener (`nc -l`).
+- `sudo …`, `mkfs.…`, `dd if=… of=/dev/…`, and redirects to a raw block device (`> /dev/sd…`).
 
-Banned commands are surfaced in the UI as warnings before submit, and rejected by the API as a safety net.
+The same middleware rejects oversize command bodies (`413`, >1 MiB) before buffering them. Banned commands are surfaced in the UI as warnings before submit, and rejected by the API as a safety net.
 
 ## Secret handling
 
@@ -62,8 +68,8 @@ See [docs/runbooks/rotate-secrets.md](./runbooks/rotate-secrets.md) for rotation
 ## Cookies & CSRF
 
 - Session cookie: `arena_session`, `HttpOnly`, `Secure`, `SameSite=Lax`, 30-day expiry, rotated on each login (`SESSION_SECRET`-signed).
-- CSRF token: per-session, issued by `GET /me`, required on every `POST`/`PUT`/`DELETE` as `X-Csrf-Token`.
-- WebSocket auth: short-lived (60 s) signed token passed as `?token=…`; the channel-id is part of the signed payload to prevent cross-channel use.
+- CSRF token: double-submit cookie `arena_csrf` (readable by JS, not HttpOnly), issued by `GET /api/v1/auth/me` (also at login `/auth/callback` and `POST /api/v1/auth/csrf-refresh`); required on every unsafe method (`POST`/`PUT`/`PATCH`/`DELETE`) echoed back as the `X-Csrf-Token` header, which the middleware compares against the cookie.
+- WebSocket auth: short-lived (60 s) HMAC token minted by `GET /api/v1/sessions/{id}/ws-token` and passed as `?token=…`; the session-id (plus user-id and the user's `session_epoch`) is baked into the signed payload, so a token only authenticates that session's channels and is invalidated by a sign-out-everywhere epoch bump.
 
 ## Auth & identity
 

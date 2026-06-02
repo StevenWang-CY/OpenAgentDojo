@@ -21,8 +21,8 @@ in under 8 minutes by a returning user; hard missions can take ~25. -->
 
 ## Repo pack
 
-<!-- Which repo pack does this build on? See missions/_packs/. If you
-need a new pack, describe it; pack additions need separate sign-off. -->
+<!-- Which repo pack does this build on? See missions/_shared/repos/. If
+you need a new pack, describe it; pack additions need separate sign-off. -->
 
 ## Expected context shape
 

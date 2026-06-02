@@ -18,8 +18,10 @@ backend's OpenAPI schema. Since M5 the pipeline is:
 
 `src/api.ts` is a small hand-curated re-export surface on top of `api.gen.ts`
 that exposes the generated `components` map as named types and patches the
-few shapes the backend doesn't yet expose via Pydantic response models
-(notably `/me` and the JSONB fields of `SubmissionRead`).
+few shapes the backend expresses too loosely for the generator to capture
+(notably the JSONB fields of `SubmissionRead`). Shapes the backend now
+declares a Pydantic response model for — including the `GET /auth/me`
+`UserRead` — are sourced directly from the generated `components` map.
 
 `src/events.ts` and `src/mission.ts` remain hand-authored — the supervision
 event payloads are serialised by the backend as untyped `dict`, and the

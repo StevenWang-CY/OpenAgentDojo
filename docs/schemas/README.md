@@ -14,7 +14,7 @@ These schemas are the contract between mission authoring, the API, and the grade
 
 ## How CI consumes them
 
-`scripts/validate_missions.py` walks `missions/*/mission.yaml` and validates each against `mission.schema.json` using the `jsonschema` Python package. It also:
+`apps/api/scripts/validate_missions.py` walks `missions/*/mission.yaml` and validates each against `mission.schema.json` using the `jsonschema` Python package. It also:
 
 - Cross-checks that `mission.yaml.validators[].rules_file` paths exist and validate against `forbidden_changes.schema.json`.
 - Verifies an `acceptance.yaml` exists and validates against `acceptance.schema.json`.
@@ -25,7 +25,7 @@ The CLI is wired into `pnpm validate:missions` and runs on every PR.
 ## How the runtime consumes them
 
 - The mission loader (`apps/api/app/missions/loader.py`) re-validates every manifest at startup. A schema violation aborts startup.
-- The grader treats `event.schema.json` as advisory only — the Pydantic models in `apps/api/app/schemas/events.py` are the runtime check.
+- The grader treats `event.schema.json` as advisory only — the runtime shape is the `SupervisionEventRead` Pydantic model in `apps/api/app/schemas/workspace.py` (the timeline response model and the WS `/events` serialisation).
 - `score_report.schema.json` is asserted in unit tests against the output of `apps/api/app/grading/score.py`.
 
 ## How the frontend consumes them

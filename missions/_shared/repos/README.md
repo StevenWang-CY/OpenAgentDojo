@@ -19,19 +19,26 @@ the corresponding image (`infra/scripts/build_repo_pack.sh`).
 
 ## Workspace integration
 
-The packs themselves are registered as pnpm workspaces from the top-level
-[`pnpm-workspace.yaml`](../../../pnpm-workspace.yaml). That means:
+The packs are intentionally **not** registered in the top-level
+[`pnpm-workspace.yaml`](../../../pnpm-workspace.yaml) (which scopes only
+`apps/web` and `packages/*`). Each Node-based pack installs standalone
+from its own `pnpm-workspace.yaml` + `pnpm-lock.yaml`, so the sandbox
+provisioner can copy a pack without dragging in symlinks that point at
+this monorepo's `.pnpm` store. That means:
 
-- `pnpm install` from the monorepo root installs deps for every pack.
-- `pnpm --filter @demo/backend test:unit` runs a single pack's tests
-  without going through Docker — useful while authoring a mission.
+- `pnpm install` from the monorepo root does **not** touch the packs;
+  run `pnpm install` inside the pack directory instead.
+- `pnpm --filter @demo/backend test:unit` from inside a pack runs that
+  pack's tests without going through Docker — useful while authoring a
+  mission.
 
-Do **not** add a separate `pnpm-workspace.yaml` inside a repo pack. The
-monorepo's workspace file is the only one.
+Keep each pack's own `pnpm-workspace.yaml`; do **not** add the packs to
+the monorepo's workspace file.
 
 ## Current packs
 
 - **`fullstack-auth-demo/`** — Express + Vite/React + Vitest. Used by
-  Mission 01 (and planned Missions 02, 03, 05, 06, 09, 10).
-- _planned:_ **`data-api-demo/`** — FastAPI + SQLAlchemy + Pytest. Used by
+  Missions 00, 01, 02, 03, 05, 06, 09, 10.
+- **`data-api-demo/`** — FastAPI + SQLAlchemy + Pytest. Used by
   Missions 04, 07, 08.
+- **`go-orders-service/`** — Go + `go test`. Used by Missions 11, 12, 13.

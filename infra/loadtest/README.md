@@ -22,7 +22,7 @@ constant 25 RPS for 10 minutes and enforces `http_req_duration p(95) < 800ms`.
 k6 run \
   -e API_BASE=http://localhost:8000 \
   -e ARENA_SESSION_COOKIE="$(cat .arena-session-cookie)" \
-  -e MISSION_IDS="auth-cookie-expiration,wrong-file-edit,duplicate-submit-regression" \
+  -e MISSION_IDS="auth-cookie-expiration,agent-wrong-file,missing-regression-test" \
   infra/loadtest/k6.js
 ```
 

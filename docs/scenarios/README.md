@@ -22,7 +22,7 @@ The design note is independent of the executable manifest. The manifest is the c
 1. **Propose.** Open a design note from the template and circulate to the team.
 2. **Discuss.** Resolve concerns about realism, difficulty, overlap with other missions.
 3. **Build.** Author `mission.yaml`, agent patch, hidden tests, forbidden changes, ideal solution, prompts, acceptance.
-4. **Self-test.** Run `pnpm validate:missions` and the mission self-tests (`pnpm test:missions:01`).
+4. **Self-test.** Run `pnpm validate:missions` and the mission self-tests (`pnpm test:missions`).
 5. **Ship.** PR includes the design note and the manifest. The design note is the reviewer's primer.
 
 ## Relationship to other docs

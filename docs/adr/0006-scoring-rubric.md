@@ -1,6 +1,6 @@
 # ADR 0006: Scoring Rubric — Weighted-30 Over Flat-15
 
-- Status: Accepted
+- Status: Accepted (weight table superseded in part by [ADR 0011](0011-rubric-rebalance.md): Verification 20→15, Diff Minimality 5→10)
 - Date: 2026-05-21
 - Deciders: OpenAgentDojo team
 
@@ -27,6 +27,13 @@ Adopt **Weighted-30**:
 | Safety Awareness | 10 |
 | Diff Minimality | 5 |
 | **Total** | **100** |
+
+> The Verification (20) and Diff Minimality (5) weights above are the
+> *original* M-series decision. They were later rebalanced to **15** and
+> **10** respectively by [ADR 0011](0011-rubric-rebalance.md); the current
+> runtime source of truth is `apps/api/app/grading/dimensions.py`. The rest
+> of this ADR is preserved as the point-in-time rationale for the
+> weighted-30 *shape*.
 
 These weights are constants enforced by `mission.schema.json` (`const` per dimension). A mission that ships with different weights fails CI validation.
 

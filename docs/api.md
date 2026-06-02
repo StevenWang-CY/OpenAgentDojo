@@ -5,7 +5,7 @@ This document is a human-readable reference for the FastAPI surface defined in [
 ## Conventions
 
 - **Base path:** all REST routes live under `/api/v1`. The version segment is reserved for breaking changes; additive changes do not bump it.
-- **Auth:** session cookie (`arena_session`, HttpOnly, Secure, SameSite=Lax). All `POST`, `PUT`, `DELETE` require an `X-Csrf-Token` header matching the per-session token returned by `GET /me`.
+- **Auth:** session cookie (`arena_session`, HttpOnly, Secure, SameSite=Lax). CSRF is a double-submit cookie: the non-HttpOnly `arena_csrf` cookie is echoed back in an `X-Csrf-Token` header on all unsafe methods (`POST`, `PUT`, `PATCH`, `DELETE`). The token is returned by `GET /api/v1/auth/me`.
 - **Content type:** request and response bodies are JSON unless otherwise stated. Timestamps are ISO-8601 UTC. UUIDs are lowercase canonical.
 - **Errors:** plain `HTTPException` responses use FastAPI's default envelope `{ "detail": "string" }`. Structured failures raised as `ArenaError` (see `apps/api/app/main.py`) extend that envelope with a stable, machine-parsable code:
   ```json
@@ -31,20 +31,31 @@ Magic-link landing. Validates the JWT, sets the session cookie, redirects to `/m
 - 302 on success.
 - 400 `expired_or_used_token`.
 
+### `POST /api/v1/auth/magic-link/resend`
+Re-send the most recent magic link to an email, subject to a cooldown. 200 `{ "wait_seconds": number }` (the cooldown remaining before another resend is allowed). Anonymous.
+
 ### `POST /api/v1/auth/logout`
 Clears the cookie and invalidates the server-side session.
 
 - 204 on success.
 - Requires auth.
 
-### `GET /api/v1/me`
-Returns the current user plus a fresh CSRF token. (Same handler as `GET /api/v1/auth/me`; the path under `/auth` is the canonical OpenAPI tag.)
+### `GET /api/v1/auth/me`
+Returns the current user plus a fresh CSRF token. This is the canonical route; the legacy top-level `/api/v1/me` alias was retired.
 
 - 200 `{ "user": User, "csrf_token": string }`.
 - 401 if unauthenticated.
 
 ### `POST /api/v1/auth/csrf-refresh`
-Force-rotate the CSRF cookie. Useful for tooling that wants a fresh token without going through `/auth/callback`. 200 with the same shape as `/me`. Requires auth.
+Force-rotate the CSRF cookie. Useful for tooling that wants a fresh token without going through `/auth/callback`. 200 with the same shape as `/auth/me`. Requires auth.
+
+### GitHub OAuth (P0-7)
+
+GitHub sign-in/linking is shipped (gated behind the GitHub app credentials).
+
+- `GET /api/v1/auth/github/available` — `{ "enabled": boolean }`; whether GitHub OAuth is configured. Anonymous.
+- `GET /api/v1/auth/github/start` — begin the OAuth dance; redirects to GitHub.
+- `GET /api/v1/auth/github/callback` — OAuth landing; exchanges the code, sets the session cookie.
 
 ## Account self-service (P0-6)
 
@@ -63,10 +74,16 @@ Confirm the new email with the token from the email. 204 on success. Emits `acco
 Force-rotate `users.session_epoch` so every cookie issued under the previous epoch is rejected. 204.
 
 ### `POST /api/v1/auth/me/data-export`
-Enqueue a data-export job. 202 `{ export_id }`.
+Enqueue a data-export job. 202 `DataExportRead`. 403 if account deletion is pending.
 
 ### `GET /api/v1/auth/me/data-export/{export_id}`
-Poll the export. Returns `{ status: 'queued'|'running'|'ready'|'failed', signed_url? }`.
+Poll one export. 200 `DataExportRead { id, status, requested_at, ready_at?, expires_at?, bytes_total?, download_url?, error? }` where `status` is one of `queued | running | ready | failed | expired`.
+
+### `GET /api/v1/auth/me/data-export/latest`
+Return the most recent export for the user. 200 `DataExportRead`, or 204 No Content when the user has never requested one.
+
+### `POST /api/v1/auth/me/data-export/{export_id}/kick`
+Nudge a stuck export — re-enqueues (or marks failed) a row that has been `queued`/`running` too long with no worker progress. 200 `DataExportRead`.
 
 ### `POST /api/v1/auth/me/delete`
 Schedule account deletion with a grace window. 202. Emits `account.deletion_scheduled`. The cron at `scripts/process_deletion_grace.py` tombstones the row when the grace expires (emits `account.deleted`).
@@ -81,6 +98,14 @@ Returns the current consent state plus the active `CONSENT_POLICY_VERSION`.
 
 ### `POST /api/v1/auth/me/consent`
 Update the per-kind consent. Emits `consent.granted` or `consent.revoked` with `{kind, version}`. 204.
+
+## Coaching consent (P1-4)
+
+### `GET /api/v1/auth/me/coaching-consent`
+Returns whether the user has opted into LLM-backed coaching reflections.
+
+### `POST /api/v1/auth/me/coaching-consent`
+Update the coaching-consent flag.
 
 ## Tutorial (P0-1)
 
@@ -123,14 +148,19 @@ Mission details for the catalog/detail page. **Does not** include hidden tests o
 ### `POST /api/v1/sessions`
 Provision a new session for a mission.
 
-- Body: `{ "mission_id": "string" }`.
-- 201 `Session` (status=`provisioning`).
+- Body: `{ "mission_id": "string", "mode"?: "self_study"|"proctored", "previous_session_id"?: "uuid" }`. `mode` defaults to `self_study`; `proctored` (P0-8) enables integrity-signal collection.
+- 202 Accepted, `Session` (status=`provisioning`).
 - 400 `mission_not_found`; 409 `active_session_exists` (per-user cap of 1 active session); 429 `rate_limited`.
 - Auth required.
 
 ### `GET /api/v1/sessions/{id}`
 - 200 `SessionDetail`. Includes status, sandbox metadata, current commit, and counts (`agent_turns`, `command_runs`).
 - 404 `session_not_found`; 403 `not_session_owner`.
+
+### `GET /api/v1/sessions/{id}/ws-token`
+Mint a short-lived signed token for the WebSocket channels. Owner-only.
+
+- 200 `{ "token": string, "ttl_seconds": 60 }`. The token is bound to the session and the user's `session_epoch`; the client passes it as the `?token=…` query parameter when opening `/ws/...` and reconnects with a fresh token on disconnect.
 
 ### `POST /api/v1/sessions/{id}/context`
 Record the user's context selection for the current turn. Emits `context.selected`.
@@ -181,11 +211,38 @@ Returns the current file tree of `/workspace`.
 - 200 `{ "content": "string", "encoding": "utf-8"|"base64" }`.
 - 404 `file_not_found`.
 
+### `GET /api/v1/sessions/{id}/files/list` (P0-9)
+Quick, gitignore-aware listing of workspace files, fuzzy-filtered server-side. Backs the command-palette / file-open picker.
+
+- Query: `q?` (fuzzy filter), `limit?`.
+- 200 with the matching file paths.
+
+### `POST /api/v1/sessions/{id}/files/search` (P0-9)
+Repo-wide find-in-files, ripgrep-backed.
+
+- Body: `{ "query": "string", "regex"?: boolean, "case_sensitive"?: boolean, "glob"?: "string", "max_results"?: number }`.
+- 200 with the ranked matches (file, line, snippet).
+
 ### `GET /api/v1/sessions/{id}/diff`
 - 200 `{ "unified_diff": "string" }`. Diff is `current_commit` vs `initial_commit`.
 
 ### `GET /api/v1/sessions/{id}/timeline`
 - 200 `SupervisionEvent[]` ordered by `occurred_at`. Useful for replay and debugging. The live channel is `/ws/sessions/{id}/events`.
+
+### `GET /api/v1/sessions/{id}/note` · `PUT /api/v1/sessions/{id}/note` (P1-4)
+The per-session scratchpad. `GET` returns the current note; `PUT` upserts it (body `{ "body": "string" }`). Both 200.
+
+### `POST /api/v1/sessions/{id}/events/note-viewed` (P1-4)
+Record that the user focused the prompt composer while the scratchpad had content. Body `{ "bytes_at_view": number }`. 204.
+
+### `POST /api/v1/sessions/{id}/events/diff-opened`
+Record that the user opened the diff viewer (feeds scoring + badges). Optional body `{ "path"?: "string" }`. 204.
+
+### `POST /api/v1/sessions/{id}/events/tutorial-step` (P0-1)
+Record a tutorial coachmark step transition. Body `{ "step_id": "string", "action"?: "string" }`. 204.
+
+### `POST /api/v1/sessions/{id}/events/integrity` (P0-8)
+Proctored-mode only: record an integrity signal (blur, paste, devtools, etc.). Body `{ "kind": "string", "payload"?: object }`. 204.
 
 ### `POST /api/v1/sessions/{id}/submit`
 Freeze the sandbox, run hidden tests + validators, compute the score.
@@ -195,6 +252,17 @@ Freeze the sandbox, run hidden tests + validators, compute the score.
 
 ### `GET /api/v1/sessions/{id}/submission`
 - 200 `Submission { id, status, score_report, ... }` once grading completes; otherwise 425 Too Early.
+
+### `POST /api/v1/sessions/{id}/give-up` (P0-4)
+Forfeit the active session: reveal the ideal solution and persist a graded submission with the score capped at 50. Gated behind a minimum time-in-session (`give_up_min_seconds`).
+
+- 200 `Submission`.
+- Returns a structured error (`give_up_not_yet_available`, `give_up_not_supported_for_tutorial`, or a status mismatch) when the forfeit is not allowed.
+
+### `POST /api/v1/sessions/{id}/reset` (P0-12)
+Reset the workspace back to the mission's initial commit.
+
+- 200 `{ "files_reset": number, "new_head_commit": string, "reset_count": number }`.
 
 ## Submissions & Reports
 
@@ -215,6 +283,15 @@ Owner-or-share endpoint. Lifecycle:
 ### `POST /api/v1/reports/{submission_id}/render` (P0-11)
 Owner-only: force re-render (`{ kind: "pdf" | "png" }`). 202 with the new row. Idempotent during queued / running. Rate-limited at `report_render_force_daily_cap` per submission per 24h (429 `force_render_rate_limited` when exceeded).
 
+### `GET /api/v1/reports/{submission_id}/print`
+Owner-or-share, server-rendered print view used as the source for PDF/PNG rendering.
+
+### `GET /api/v1/submissions/{submission_id}/coaching` (P1-4)
+LLM-backed coaching reflection for a graded submission. Owner-only and gated on coaching consent. 200 with the reflection; 401/403 when not authorised, 404 when the submission is missing/not graded, 503 when the reflection is unavailable.
+
+### `GET /api/v1/submissions/{submission_id}/replay.json` · `replay.zip` (P1-6)
+Deterministic replay artefact of a graded session. `replay.json` returns an `application/json` object; `replay.zip` returns the bundle as `application/zip`. 404 when the submission is missing/not graded; 503 when the artefact is not ready.
+
 ## Verification (P0-11)
 
 ### `GET /api/v1/verify/{submission_id}`
@@ -228,15 +305,23 @@ Anonymous, no auth. Returns the canonical verification envelope plus `canonical_
 
 ## Profile
 
-### `GET /api/v1/profiles/{user_id}`
-Public profile. **No auth required.**
+### `GET /api/v1/profiles/{handle}`
+Public profile, keyed by the user's **handle** (not user_id). **No auth required.**
 
-- 200 `PublicProfile { handle, display_name, badges, mission_history, radar_averages }`.
-- `mission_history` includes only published submissions (the user can opt out per submission post-MVP).
+- 200 `PublicProfile { handle, display_name?, joined_at, badges, history, radar_averages, dimension_trends, total_missions, best_score?, ... }` (plus GitHub-link fields when the profile is GitHub-verified).
+- `history` includes only published submissions.
+
+### `GET /api/v1/profiles/me/skills`
+Authenticated: the caller's skills catalogue (failure-modes covered vs. total). 200 `SkillsCatalog`.
+
+### `GET /api/v1/me/recommendations` (P1-2)
+Authenticated: personalised next-mission recommendations.
+
+- 200 `RecommendationSet { diagnosis, recommendations (0..3 items), computed_at, cache_hit, weakest_dim? }`.
 
 ## WebSocket channels
 
-Both channels authenticate via a short-lived signed token issued by `GET /me` (`?token=…` query parameter). Tokens expire after 60 seconds; the client reconnects with a fresh token on disconnect.
+The WebSocket channels are not part of `openapi.json`. All three authenticate via a short-lived signed token minted by `GET /api/v1/sessions/{id}/ws-token` (passed as the `?token=…` query parameter). Tokens expire after 60 seconds; the client reconnects with a fresh token on disconnect.
 
 ### `/ws/sessions/{id}/terminal`
 Bidirectional PTY stream.
@@ -247,6 +332,7 @@ Bidirectional PTY stream.
 - **Server → client frames:**
   - `{ "type": "output", "data": "string" }` — stdout/stderr chunks.
   - `{ "type": "exit", "code": number }` — when the active command exits.
+  - `{ "type": "error", "code": "string", "detail": "string" }` — control frame sent before an abnormal close (e.g. `no_sandbox`, `attach_failed`).
 
 Frames are JSON. Binary (xterm raw mode) is supported via a `Sec-WebSocket-Protocol: arena.binary.v1` upgrade but defaults off for MVP.
 
@@ -256,6 +342,9 @@ Server-only stream of supervision events as they happen.
 - Frames match [docs/schemas/event.schema.json](./schemas/event.schema.json) (`event_type`, `payload`, `occurred_at`).
 - The frontend feeds these into the workspace store; `ScorePreview` recomputes its partial signals on each frame.
 - The channel is read-only; client frames are ignored (heartbeat handled by WebSocket pings).
+
+### `/ws/sessions/{id}/lsp` (P1-3)
+Language-server proxy. Forwards LSP traffic to a per-session language server for in-editor diagnostics, hover, and go-to-definition. Same ws-token auth as the other channels.
 
 ## OpenAPI & typed clients
 
@@ -276,8 +365,9 @@ Adding a new endpoint: tag it in the FastAPI router, run `pnpm --filter @arena/s
 
 ## Status & health
 
-- `GET /healthz` — liveness; returns `{ "ok": true, "version": "string" }`.
-- `GET /readyz` — readiness; checks Postgres, Redis, and the sandbox driver.
+- `GET /healthz` — liveness; cheap (no DB/Redis touch). Returns `{ "status": "ok", "sandbox_driver": "string", "env": "string", "version": "string" }`.
+- `GET /healthz/ready` — readiness; checks Postgres, Redis, and the sandbox driver (S3 is best-effort). Returns `{ "db": bool, "redis": bool, "s3": bool, "sandbox": bool, "sandbox_driver": "string", "version": "string" }` with HTTP 200, or the same body with HTTP 503 when DB/Redis/sandbox is unreachable.
+- `GET /status` and `GET /api/v1/status` — public status pages.
 - `GET /metrics` — Prometheus exposition. Behind an allowlist in prod.
 
 ## Versioning policy

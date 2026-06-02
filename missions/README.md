@@ -64,6 +64,9 @@ Run `pnpm validate:missions` before pushing.
 | 08 | `08-async-race-condition` | standard | shipped | `data-api-demo` |
 | 09 | `09-api-contract-drift` | standard | shipped | `fullstack-auth-demo` |
 | 10 | `10-typecheck-ignored` | standard | shipped | `fullstack-auth-demo` |
+| 11 | `11-goroutine-leak` | standard | shipped (P1-1) | `go-orders-service` |
+| 12 | `12-context-cancel-dropped` | standard | shipped (P1-1) | `go-orders-service` |
+| 13 | `13-error-shadowed-by-wrap` | standard | shipped (P1-1) | `go-orders-service` |
 
 `kind: tutorial` ([P0_DESIGN §P0-1](../P0_DESIGN.md)) short-circuits the grader — the runner marks the user's `tutorial_completed_at` and skips scoring / badge awards. Tutorial missions are exempt from the `acceptance.yaml` envelope checks but still validate against the manifest schema.
 

@@ -105,9 +105,11 @@ This is the HMAC secret behind the credentialing artifact. The hash stored on `s
    ```
 3. Run the one-shot re-signing script over every graded submission:
    ```bash
-   uv --project apps/api run python scripts/backfill_verification.py \
-       --rotate-signature
+   uv --project apps/api run python apps/api/scripts/backfill_verification.py \
+       --reseal --apply
    ```
+   (`--reseal` re-derives the signature for already-stamped rows under the
+   current secret; `--apply` is required — without it the script dry-runs.)
    The script re-computes `verification_signature = HMAC(verification_hash, new_secret)` and writes it back; it does **not** touch `verification_hash`. Replays remain deterministic.
 4. Validate by hitting a known `/api/v1/verify/{submission_id}` and asserting the signature changed from a pre-rotation snapshot.
 
@@ -139,7 +141,7 @@ The CI pipeline scans diffs for the `ABSK` prefix that Bedrock bearer tokens use
 - Database credentials (managed by Fly Postgres; rotate via Fly CLI separately).
 - Redis password (Upstash dashboard).
 - R2 access keys (Cloudflare dashboard).
-- GitHub OAuth client secret (post-MVP).
+- GitHub OAuth client secret (`GITHUB_OAUTH_CLIENT_SECRET`; shipped in P0-7 — rotate via the GitHub app settings + Fly secrets).
 - `IP_HASH_SALT` — rotate by setting a new value in Fly secrets; no re-signing needed, but the existing consent rows' IP-hash column becomes opaque (which is the point).
 
 Each gets its own runbook when it ships.

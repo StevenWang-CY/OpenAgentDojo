@@ -13,9 +13,9 @@ of three standard scenarios on one mission:
   applied at all. Models the "blank" baseline.
 
 For each scenario the calibration file declares an expected total and a
-per-dimension breakdown. `apps/api/tests/test_calibration.py` reconstructs
-the inputs (via the same fixture builders the acceptance-envelope tests
-use), runs the grading engine, and asserts:
+per-dimension breakdown. `apps/api/tests/missions/test_calibration.py`
+reconstructs the inputs (via the same fixture builders the
+acceptance-envelope tests use), runs the grading engine, and asserts:
 
 - `|actual_total - expected_total| <= TOTAL_TOLERANCE` (5 points)
 - `|actual_dim_score - expected_dim_score| <= DIMENSION_TOLERANCE`
@@ -76,8 +76,8 @@ scenarios:
 1. Add a new fixture builder to `apps/api/tests/missions/_fixtures.py`
    (mirroring the shape of `build_unmodified_submission`).
 2. Update each mission's `<mission_id>.yaml` with the new scenario name.
-3. Run `uv run pytest tests/test_calibration.py -v` to see the actual
-   grader output; copy the per-dimension scores into the YAML.
+3. Run `uv run pytest tests/missions/test_calibration.py -v` to see the
+   actual grader output; copy the per-dimension scores into the YAML.
 4. Commit. The bootstrap baseline is now locked in.
 
 ## Upgrading to human graders
