@@ -111,21 +111,27 @@ async def test_burst_preserves_first_put_occurred_at(
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
-        # Warm the request path (first ASGI dispatch, dependency
-        # resolution, the initial DB round-trip) BEFORE starting the
-        # wall-clock measurement. Otherwise the first PUT's server-side
-        # ``occurred_at`` is dominated by cold-start latency on a loaded
-        # CI runner — observed at ~0.4 s — which swamps the burst-anchor
-        # tolerances below and flakes the test. ``GET /note`` is
-        # explicitly side-effect-free (no row insert, no supervision
-        # event), so it warms the path that runs before ``put_note``
-        # stamps ``occurred_at`` without perturbing the coalescing
-        # contract (the event-count assertion below stays 1).
-        warm = await ac.get(
-            f"/api/v1/sessions/{session.id}/note",
+        # Warm the FULL supervision-event emit path BEFORE starting the
+        # wall-clock measurement. The first note.edited emit calls
+        # ``get_redis()`` — which opens a real Redis connection on a cold
+        # CI runner (~0.3 s) — and runs the first ``supervision_events``
+        # INSERT, and crucially ``EventEmitter.emit`` stamps
+        # ``occurred_at`` *after* that connection is established. Measuring
+        # the first PUT cold therefore charged that one-time connect cost
+        # to the burst-start drift and flaked the anchor assertions below.
+        #
+        # ``POST /events/note-viewed`` drives the identical
+        # ``EventEmitter.emit`` path (get_redis + INSERT) so it pays the
+        # connection cost up front. It writes a
+        # ``note.viewed_during_prompt`` event — a DIFFERENT type from
+        # ``note.edited`` — so the coalescing contract and the event-count
+        # assertion below (both filter on ``note.edited``) are unaffected.
+        warm = await ac.post(
+            f"/api/v1/sessions/{session.id}/events/note-viewed",
+            json={"bytes_at_view": 0},
             **_csrf_kwargs(),
         )
-        assert warm.status_code == 200, warm.text
+        assert warm.status_code == 204, warm.text
 
         before_first = datetime.now(UTC)
         # Five PUTs separated by tiny sleeps so wall-clock can distinguish
