@@ -30,7 +30,10 @@ class _FakeMission:
 
     class hidden_tests:  # noqa: N801
         # The runner.sh script we install below prints a JSON envelope.
-        command = "bash grader/hidden_tests/runner.sh"
+        # Per spec §9.3 runners reference the $GRADER_DIR env var (the
+        # grader is staged OUTSIDE the workspace), not a workspace-relative
+        # path.
+        command = 'bash "$GRADER_DIR/runner.sh"'
 
 
 def _write_hidden_tests(manifest_folder: Path) -> None:
@@ -94,10 +97,15 @@ async def test_freeze_and_grade_real_pipeline(tmp_path, monkeypatch) -> None:
         assert hidden["passed"] == 3
         assert hidden["failed"] == 0
 
-        # Hidden tests were copied into the sandbox.
-        copied = handle.workdir / "grader" / "hidden_tests" / "fixture.txt"
+        # Hidden tests were staged OUTSIDE the workspace (spec §9.3): a
+        # sibling ``<workdir>.grader`` dir, never under the workspace the
+        # user can list/read — and not so the language toolchain (e.g.
+        # ``go test ./...``) descends into them during the visible run.
+        grader_root = handle.workdir.parent / f"{handle.workdir.name}.grader"
+        copied = grader_root / "hidden_tests" / "fixture.txt"
         assert copied.exists()
         assert copied.read_text() == "mounted"
+        assert not (handle.workdir / "grader" / "hidden_tests" / "fixture.txt").exists()
     finally:
         await driver.destroy(handle)
 

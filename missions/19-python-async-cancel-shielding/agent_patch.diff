@@ -1,0 +1,10 @@
+--- a/backend/app/background.py
++++ b/backend/app/background.py
+@@ -46,4 +46,6 @@
+         await asyncio.sleep(WORKER_DELAY_S)
+         side_effects.append("done")
+ 
+-    await worker()
++    # Shield the worker so an in-flight request always finishes its unit of
++    # work even if the caller is cancelled.
++    await asyncio.shield(worker())

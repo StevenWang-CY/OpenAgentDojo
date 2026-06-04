@@ -1,0 +1,21 @@
+--- a/backend/app/reports.py
++++ b/backend/app/reports.py
+@@ -40,13 +40,9 @@
+ 
+     frame = pd.DataFrame(rows)
+ 
+-    # Baseline: correct but slow. Accumulate net revenue per SKU by walking
+-    # every row with ``iterrows()`` — the classic pandas performance trap. A
+-    # strong "fix" vectorises this; a careless one drops the discount term.
+-    totals: dict[str, float] = {}
+-    for _, row in frame.iterrows():
+-        sku = str(row["sku"])
+-        net = float(row["qty"]) * float(row["unit_price"]) - float(row["discount"])
+-        totals[sku] = totals.get(sku, 0.0) + net
++    # Vectorised: compute net revenue per line (qty * unit_price - discount)
++    # in one pass and group by SKU instead of the slow ``iterrows()`` loop.
++    line_net = frame["qty"] * frame["unit_price"] - frame["discount"]
++    grouped = line_net.groupby(frame["sku"]).sum()
+ 
+-    return totals
++    return {str(sku): float(total) for sku, total in grouped.items()}

@@ -1,0 +1,28 @@
+--- a/backend/src/orders/events.ts
++++ b/backend/src/orders/events.ts
+@@ -11,10 +11,10 @@
+ export const refundEventSchema = z.object({
+   kind: z.literal("refund"),
+   orderId: z.string(),
+-  // NOTE: `amount` is loosely typed here. `z.any()` accepts whatever the
+-  // upstream producer sends, which keeps the parser permissive but pushes
+-  // every type assumption downstream onto callers like `formatRefund`.
+-  amount: z.any(),
++  // The amount is money: it must be a finite number. Validating it here at
++  // the boundary means every downstream caller can rely on the type instead
++  // of re-checking (or crashing on) a value the producer fat-fingered.
++  amount: z.number().finite(),
+ });
+ 
+ export type RefundEvent = z.infer<typeof refundEventSchema>;
+@@ -31,8 +31,8 @@
+ /**
+  * Render a refund as a currency string, e.g. `$12.50`.
+  *
+- * Assumes `amount` is a finite number — the boundary (`parseRefund`) is
+- * responsible for guaranteeing that before we get here.
++ * `amount` is guaranteed numeric by `parseRefund`, so the arithmetic here
++ * is total — no defensive coercion required.
+  */
+ export function formatRefund(refund: RefundEvent): string {
+   return "$" + refund.amount.toFixed(2);

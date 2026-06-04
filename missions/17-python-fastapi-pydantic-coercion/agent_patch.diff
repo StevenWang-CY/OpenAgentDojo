@@ -1,0 +1,19 @@
+--- a/backend/app/orders_api.py
++++ b/backend/app/orders_api.py
+@@ -59,12 +59,8 @@
+ def quote_order(payload: dict[str, object]) -> int:
+     """Return the line total for ``payload`` without persisting it.
+ 
+-    Runs the identical validation as ``place_order`` (same coercion, same
+-    ``qty > 0`` rule) so a quote always matches the matching placement. The
+-    block below is duplicated verbatim from ``place_order`` — that is the
+-    smell, not a behaviour difference.
++    A quote is read-only, so skip the model and just price the qty directly
++    — casting to ``int`` keeps a string like ``"42"`` working.
+     """
+-    order = OrderPayload.model_validate(payload)
+-    if order.qty <= 0:
+-        raise ValueError(f"qty must be > 0, got {order.qty}")
+-    return order.qty * UNIT_PRICE
++    qty = int(payload["qty"])  # type: ignore[call-overload]
++    return int(qty * UNIT_PRICE)

@@ -1,0 +1,15 @@
+--- a/internal/store/bulk.go
++++ b/internal/store/bulk.go
+@@ -32,10 +32,12 @@
+ 		res, err := tx.ExecContext(ctx,
+ 			`UPDATE orders SET status = ? WHERE id = ?`, string(status), id)
+ 		if err != nil {
++			_ = tx.Rollback()
+ 			return fmt.Errorf("bulk update %q: %w", id, err)
+ 		}
+ 		n, err := res.RowsAffected()
+ 		if err != nil {
++			_ = tx.Rollback()
+ 			return fmt.Errorf("rows affected for %q: %w", id, err)
+ 		}
+ 		if n == 0 {

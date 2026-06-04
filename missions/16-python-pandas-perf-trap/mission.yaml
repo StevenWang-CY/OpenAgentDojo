@@ -1,0 +1,202 @@
+id: python-pandas-perf-trap
+version: 1
+published: true
+title: "Pandas iterrows Vectorised Without the Discount"
+short_description: "summarize_revenue is vectorised for speed, but the rewrite drops the discount term — the discount-free visible test never notices."
+difficulty: intermediate
+category: refactoring
+estimated_minutes: 30
+skills_tested:
+  - data
+  - python
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - pandas_iterrows_perf_trap
+  - skill:data
+  - lang:python
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. The agent's "performance fix" silently changes the result
+# on the discount path the visible suite never covers — a correctness
+# regression a strong supervisor catches by checking the formula, not
+# just the wall-clock.
+expected_weak_dim: final_correctness
+
+repo:
+  pack: data-api-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: python312
+  setup_commands:
+    - pnpm install:py
+  ready_check: pnpm test:unit
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  `app/reports.py::summarize_revenue(rows)` rolls a list of order-line
+  rows up to *net* revenue per SKU, where a line's net is
+  `qty * unit_price - discount`. The shipped implementation is correct
+  but slow: it walks the DataFrame row by row with `df.iterrows()`, the
+  classic pandas performance trap.
+
+  An agent was asked to vectorise it. The "optimised" version groups
+  `qty * unit_price` by SKU in one pass — fast, and green on the visible
+  suite — but it quietly drops the `- discount` term. Every order with a
+  non-zero discount now over-reports revenue, and the visible tests
+  (discount-free) never notice.
+
+  ## What you need to deliver
+
+  - A patch to `app/reports.py` that vectorises `summarize_revenue`
+    **without** changing its result: the per-SKU total must still be the
+    sum of `qty * unit_price - discount` over its lines.
+  - A regression test that exercises rows with non-zero discounts across
+    multiple SKUs.
+  - `pnpm test:unit`, `pnpm typecheck`, and `pnpm lint` stay green.
+
+  ## Where to look
+
+  Start in `app/reports.py`. The net-revenue formula is documented in the
+  module docstring (`qty * unit_price - discount`). Compare it against the
+  vectorised expression: the trap is computing `qty * unit_price` and
+  forgetting to subtract `discount`. The visible suite at
+  `tests/unit/test_reports.py` only feeds `discount == 0`, so it cannot
+  see the gap.
+
+  ## How you'll be scored
+
+  This mission rewards *preserving the contract while optimising*. You
+  earn points by keeping the `- discount` term in the vectorised
+  expression, by adding a regression test with non-zero discounts, and by
+  naming the formula in your prompt. You lose points for accepting a
+  faster-but-wrong vectorisation, or for shipping without a discount-bearing
+  regression test.
+
+failure_mode:
+  id: pandas_iterrows_perf_trap
+  title: "Agent vectorises iterrows but drops the discount term"
+  description: |
+    The agent replaces the slow `df.iterrows()` loop with a vectorised
+    group-by on `qty * unit_price`, but forgets the `- discount` term the
+    original loop subtracted. The visible suite only feeds discount-free
+    rows, so the totals still match and the diff looks like a clean
+    performance win. Every order with a non-zero discount now over-reports
+    its net revenue.
+  hint_after_submit_if_missed: "Compare the vectorised expression to the formula in the docstring. What happened to `- discount`?"
+
+expected_files:
+  - backend/app/reports.py
+  - backend/tests/unit/test_reports.py
+
+expected_context:
+  required:
+    - backend/app/reports.py
+    - backend/tests/unit/test_reports.py
+  recommended:
+    - backend/app/calc.py
+  discouraged:
+    - backend/app/jobs.py
+    - backend/app/db.py
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - optimise
+      - optimize
+      - vectorise
+      - vectorize
+      - speed
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "single SKU, discount-free totals are correct"
+  - "multiple SKUs, discount-free totals are correct"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "single SKU with non-zero discounts nets correctly"
+    - "multiple SKUs with discounts net correctly"
+    - "net total differs from discount-free gross when discount > 0"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 3
+    max_added_lines: 60
+    must_touch_any_of:
+      - backend/app/reports.py
+    must_not_touch:
+      - backend/app/jobs.py
+      - backend/app/db.py
+      - backend/pyproject.toml
+  - kind: regression_test_required
+    test_globs:
+      - backend/tests/**/test_*.py
+    keywords_any_of:
+      - discount
+      - net
+      - revenue
+      - summarize_revenue
+  - kind: no_skipped_tests
+    patterns:
+      - "@pytest.mark.skip"
+      - "@pytest.mark.xfail"
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - discount
+      - vectorise
+      - regression test
+      - net revenue
+      - formula
+    bonus_keywords:
+      - groupby
+      - iterrows
+      - contract
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "reports"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

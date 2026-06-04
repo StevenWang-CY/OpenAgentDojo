@@ -1,0 +1,200 @@
+id: react-shop-state-desync
+version: 1
+published: true
+title: "Optimistic Cart Update Never Rolls Back on a Rejected Add"
+short_description: "useCart adds an item optimistically but leaves it in the cart when the server rejects it, desyncing the UI from the server."
+difficulty: intermediate
+category: debugging
+estimated_minutes: 30
+skills_tested:
+  - react
+  - ui
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - optimistic_update_no_rollback
+  - skill:ui
+  - lang:typescript
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. The agent's patch adds an error message but never restores
+# the optimistic item, so the cart still shows a sku the server rejected —
+# the behaviour on the failure path is still wrong (final correctness).
+expected_weak_dim: final_correctness
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  The shop's cart uses an optimistic update: the `useCart` hook's
+  `addItem` appends the sku to `items` immediately so the UI feels
+  instant, then confirms with the server's `addToCart` call. When the
+  server *accepts* the item everything is fine. When the server *rejects*
+  it (out of stock, rate-limited, network error), the optimistically-added
+  item is never removed — so the cart keeps showing an item the server
+  refused. The local cart and the server have desynced.
+
+  The visible unit suite is green — it only drives a *succeeding* api, so
+  the rejected-add path is never exercised.
+
+  ## What you need to deliver
+
+  - A patch to `frontend/src/useCart.ts` so a *failed* `addItem` rolls the
+    optimistic update back: the rejected sku must not remain in `items`.
+  - A regression test that drives a rejecting `api.addToCart` and asserts
+    the sku is gone from `items` after the failure.
+  - `pnpm test:unit` and `pnpm typecheck` stay green.
+
+  ## Where to look
+
+  Start in `frontend/src/useCart.ts`. `addItem` applies the optimistic
+  update to `items` and then awaits the server — but there's no rollback
+  if that await rejects. `frontend/src/ShoppingCart.tsx` renders the hook.
+  The visible test lives in
+  `frontend/src/tests/unit/useCart.test.tsx`.
+
+  ## How you'll be scored
+
+  This mission rewards fixing the failure path, not just reporting it. You
+  earn points by snapshotting the pre-update cart and restoring it in the
+  `catch`, naming the optimistic-update / rollback contract in your
+  prompt, and adding a regression test that drives a rejecting api. You
+  lose points for a patch that only sets an `error` message while leaving
+  the rejected item in `items` — the desync the failure mode is about is
+  still there.
+
+failure_mode:
+  id: optimistic_update_no_rollback
+  title: "Agent surfaces an error but never rolls the optimistic item back"
+  description: |
+    The agent reads `useCart.ts`, wraps `await api.addToCart(sku)` in a
+    try/catch, and sets an `error` message on failure. The crash/unhandled
+    rejection goes away and the visible tests stay green — but the catch
+    never removes the optimistically-added sku, so a rejected item stays
+    in `items`. The cart still disagrees with the server. The real fix is
+    to snapshot the cart before the optimistic update and restore it in the
+    catch, so a failed add leaves `items` exactly as it was.
+  hint_after_submit_if_missed: "The catch sets an error but never touches `items`. What happens to the optimistically-added sku when the server says no?"
+
+expected_files:
+  - frontend/src/useCart.ts
+  - frontend/src/tests/unit/useCart.test.tsx
+
+expected_context:
+  required:
+    - frontend/src/useCart.ts
+    - frontend/src/tests/unit/useCart.test.tsx
+  recommended:
+    - frontend/src/ShoppingCart.tsx
+  discouraged:
+    - backend/src/auth/session.ts
+    - frontend/src/LoginForm.tsx
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+      - rollback
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "starts with an empty cart"
+  - "adds an item optimistically when the server accepts it"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "rolls back the optimistic item when the server rejects it"
+    - "keeps a confirmed item but rolls back a later rejected one"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 80
+    must_touch_any_of:
+      - frontend/src/useCart.ts
+    must_not_touch:
+      - backend/**
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - frontend/src/tests/**/*.test.tsx
+    keywords_any_of:
+      - rollback
+      - rejects
+      - rejected
+      - mockRejected
+      - not.toContain
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - root cause
+      - regression test
+      - rollback
+      - optimistic
+      - desync
+    bonus_keywords:
+      - snapshot
+      - revert
+      - failure path
+      - edge case
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "cart"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

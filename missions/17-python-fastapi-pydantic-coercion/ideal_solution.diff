@@ -1,0 +1,41 @@
+--- a/backend/app/orders_api.py
++++ b/backend/app/orders_api.py
+@@ -42,10 +42,11 @@
+     qty: int
+ 
+ 
+-def place_order(payload: dict[str, object]) -> int:
+-    """Validate ``payload`` through ``OrderPayload`` and return the total.
++def _line_total(payload: dict[str, object]) -> int:
++    """Validate ``payload`` through ``OrderPayload`` and return its total.
+ 
+-    Coerces ``qty`` to ``int`` via the model and enforces ``qty > 0``.
++    Single source of truth for coercion + the ``qty > 0`` rule, shared by
++    both ``place_order`` and ``quote_order`` so they can never diverge.
+ 
+     Raises:
+         ValueError: if ``qty`` is not a positive integer (after coercion).
+@@ -56,15 +57,15 @@
+     return order.qty * UNIT_PRICE
+ 
+ 
++def place_order(payload: dict[str, object]) -> int:
++    """Validate ``payload`` through ``OrderPayload`` and return the total."""
++    return _line_total(payload)
++
++
+ def quote_order(payload: dict[str, object]) -> int:
+     """Return the line total for ``payload`` without persisting it.
+ 
+-    Runs the identical validation as ``place_order`` (same coercion, same
+-    ``qty > 0`` rule) so a quote always matches the matching placement. The
+-    block below is duplicated verbatim from ``place_order`` — that is the
+-    smell, not a behaviour difference.
++    Shares ``_line_total`` with ``place_order`` so a quote always matches the
++    matching placement: same coercion, same ``qty > 0`` rule.
+     """
+-    order = OrderPayload.model_validate(payload)
+-    if order.qty <= 0:
+-        raise ValueError(f"qty must be > 0, got {order.qty}")
+-    return order.qty * UNIT_PRICE
++    return _line_total(payload)

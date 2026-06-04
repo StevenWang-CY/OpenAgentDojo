@@ -47,6 +47,11 @@ from app.sandbox.local_driver import LocalSandboxDriver
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("SYNC_DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("SESSION_SECRET", "check-missions-secret-32-chars-aaa")
+# Grading resolves an HMAC ``verify_secret`` (reports/verification.py): it
+# prefers VERIFY_SECRET, then SHARE_TOKEN_SECRET, then SESSION_SECRET. Seed
+# all three so the verification dimension scores instead of raising.
+os.environ.setdefault("VERIFY_SECRET", "check-missions-verify-secret-32-chars")
+os.environ.setdefault("SHARE_TOKEN_SECRET", "check-missions-share-secret-32-chars")
 os.environ.setdefault("SANDBOX_DRIVER", "local")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
@@ -164,21 +169,68 @@ def _augment_with_regression_test(diff_text: str, manifest: Any) -> str:
     if "*" in test_path:
         # e.g. backend/src/tests/*.test.ts -> backend/src/tests/regression-checker.test.ts
         test_path = test_path.replace("*", "regression_checker")
+
+    # Emit a stub in the language implied by the test-glob extension. A
+    # ``.go`` path must contain compilable Go (an external ``<pkg>_test``
+    # file) or ``go test ./...`` fails to build and tanks the whole score;
+    # likewise ``.py`` needs a real pytest function. Only the keyword has
+    # to survive into the diff text for ``regression_test_required``.
+    if test_path.endswith(".go"):
+        # Go external test package == parent directory name + "_test".
+        pkg = Path(test_path).parent.name or "main"
+        body = (
+            f"package {pkg}_test\n"
+            "\n"
+            "import \"testing\"\n"
+            "\n"
+            f"// auto-injected regression test ({keyword})\n"
+            "func TestAutoInjectedRegressionGuard(t *testing.T) {\n"
+            f"\t// exercises the {keyword} failure mode described by the manifest.\n"
+            f"\tconst guards = \"{keyword}\"\n"
+            "\t_ = guards\n"
+            "}\n"
+        )
+    elif test_path.endswith(".py"):
+        body = (
+            f"# auto-injected regression test ({keyword})\n"
+            "def test_auto_injected_regression_guard():\n"
+            f"    # exercises the {keyword} failure mode described by the manifest.\n"
+            f'    assert "{keyword}"\n'
+        )
+    else:
+        body = (
+            f"// auto-injected regression test ({keyword})\n"
+            f"it('locks in the {keyword} behaviour', () => {{\n"
+            "  // exercises the failure mode described by the mission manifest.\n"
+            "  expect(true).toBe(true);\n"
+            "});\n"
+        )
+    lines = body.splitlines()
     appendix = (
         f"--- /dev/null\n"
         f"+++ b/{test_path}\n"
-        f"@@ -0,0 +1,5 @@\n"
-        f"+// auto-injected regression test ({keyword})\n"
-        f"+it('locks in the {keyword} behaviour', () => {{\n"
-        f"+  // exercises the failure mode described by the mission manifest.\n"
-        f"+  expect(true).toBe(true);\n"
-        f"+}});\n"
+        f"@@ -0,0 +1,{len(lines)} @@\n"
+        + "".join(f"+{ln}\n" for ln in lines)
     )
     return diff_text + "\n" + appendix
 
 
-async def _seed_session(db: AsyncSession, mission_id: str) -> SessionRow:
-    """Insert a minimal Mission + User + SessionRow so grading can persist."""
+async def _seed_session(db: AsyncSession, manifest: Any) -> SessionRow:
+    """Insert a minimal Mission + User + SessionRow so grading can persist.
+
+    The seeded Mission row only satisfies the submission FK — scoring reads
+    the in-memory ``manifest``, not this row — but it must still honour the
+    schema CHECK constraints (notably ``missions_kind_weak_dim_required``,
+    added in migration 0026: a ``standard`` mission must carry a non-null
+    ``expected_weak_dim``). We mirror the manifest's own values so the row
+    is always constraint-legal regardless of the mission under test.
+    """
+    mission_id = manifest.id
+    kind = getattr(manifest, "kind", "standard")
+    weak_dim = getattr(manifest, "expected_weak_dim", None)
+    if kind != "tutorial" and not weak_dim:
+        weak_dim = "safety"
+    repo_pack = getattr(getattr(manifest, "repo", None), "pack", "fullstack-auth-demo")
     user_id = uuid.uuid4()
     db.add(
         User(
@@ -193,11 +245,14 @@ async def _seed_session(db: AsyncSession, mission_id: str) -> SessionRow:
             title=mission_id,
             difficulty="intermediate",
             category="auth",
-            repo_pack="fullstack-auth-demo",
+            repo_pack=repo_pack,
+            repo_pack_id=repo_pack,
             initial_commit="HEAD",
             estimated_minutes=10,
             failure_mode="x",
             skills_tested=["test"],
+            expected_weak_dim=weak_dim,
+            kind=kind,
             manifest_sha256="sha",
             version=1,
             published=True,
@@ -243,7 +298,7 @@ async def _grade_one_diff(
         await driver.run(handle, ["git", "add", "-N", "-A"], timeout_s=30)
 
         async with SessionLocal() as db:
-            session = await _seed_session(db, manifest.id)
+            session = await _seed_session(db, manifest)
             if seed_strong_events:
                 await _seed_supervision_events_for_ideal(db, session.id, manifest)
                 await db.commit()
@@ -251,7 +306,13 @@ async def _grade_one_diff(
                 await _seed_supervision_events_for_agent(db, session.id, manifest)
                 await db.commit()
 
-            runner = GradingRunner(settings=None, budget_seconds=600)
+            # Pass real settings so verify_secret() can resolve an HMAC key
+            # (it reads settings.verify_secret / share_token_secret /
+            # session_secret — a bare None raises and zeroes the
+            # verification dimension).
+            from app.config import get_settings
+
+            runner = GradingRunner(settings=get_settings(), budget_seconds=600)
             manifest_sha = hashlib.sha256(
                 (manifest_folder / "mission.yaml").read_bytes()
             ).hexdigest()
@@ -492,7 +553,11 @@ async def _seed_supervision_events_for_ideal(
             session_id=session_id,
             event_type="command.run",
             payload={
-                "command": "pnpm test:unit -- auth",
+                # Mirror the mission's ``require_targeted_test`` keyword so
+                # the verification targeted-test bonus lands for non-auth
+                # missions too (the previous hard-coded "auth" only matched
+                # the fullstack-auth pack).
+                "command": _generic_targeted_test_cmd(manifest),
                 "category": "test",
                 "exit_code": 0,
                 "duration_ms": 1000,

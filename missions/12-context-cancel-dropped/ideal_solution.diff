@@ -1,21 +1,14 @@
-diff --git a/internal/store/store.go b/internal/store/store.go
 --- a/internal/store/store.go
 +++ b/internal/store/store.go
-@@ -113,12 +113,7 @@ func (s *Store) Insert(ctx context.Context, o model.Order) error {
- }
-
- // Get returns the order with the given id or ``ErrOrderNotFound``.
--//
--// XXX (mission 12): we accept ``ctx`` from the caller but the query
--// below runs against a fresh ``context.Background()``. The request
--// cancellation never reaches the driver. This is the load-bearing bug
--// in the ``context-cancel-dropped`` mission.
+@@ -117,7 +117,6 @@
+ // cancellation never reaches the driver. This is the load-bearing bug
+ // in the ``context-cancel-dropped`` mission.
  func (s *Store) Get(ctx context.Context, id string) (model.Order, error) {
 -	_ = ctx
  	const q = `
  		SELECT id, sku, quantity, status, created_at
  		FROM   orders
-@@ -126,7 +121,7 @@ func (s *Store) Get(ctx context.Context, id string) (model.Order, error) {
+@@ -125,7 +124,7 @@
  	`
  	var o model.Order
  	var statusText string
@@ -24,14 +17,9 @@ diff --git a/internal/store/store.go b/internal/store/store.go
  	err := row.Scan(&o.ID, &o.SKU, &o.Quantity, &statusText, &o.CreatedAt)
  	if errors.Is(err, sql.ErrNoRows) {
  		return model.Order{}, ErrOrderNotFound
-@@ -141,16 +136,12 @@ func (s *Store) Get(ctx context.Context, id string) (model.Order, error) {
-
- // List returns every order ordered by ``created_at`` (oldest first).
- // Pagination is intentionally out of scope; the demo dataset is small.
--//
--// XXX (mission 12): the request ``ctx`` is shadowed by a fresh
--// ``context.Background()`` below. ``List`` keeps running even after
--// the inbound HTTP request has been cancelled.
+@@ -144,13 +143,12 @@
+ // ``context.Background()`` below. ``List`` keeps running even after
+ // the inbound HTTP request has been cancelled.
  func (s *Store) List(ctx context.Context) ([]model.Order, error) {
 -	_ = ctx
  	const q = `

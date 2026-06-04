@@ -1,0 +1,13 @@
+--- a/internal/store/bulk.go
++++ b/internal/store/bulk.go
+@@ -28,6 +28,10 @@
+ 	if err != nil {
+ 		return fmt.Errorf("begin bulk update: %w", err)
+ 	}
++	// Roll back on every return path. After a successful Commit this is a
++	// no-op (the tx is already done); on any early return it releases the
++	// pooled connection the transaction is holding.
++	defer func() { _ = tx.Rollback() }()
+ 	for _, id := range ids {
+ 		res, err := tx.ExecContext(ctx,
+ 			`UPDATE orders SET status = ? WHERE id = ?`, string(status), id)

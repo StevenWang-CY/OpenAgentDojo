@@ -1,0 +1,39 @@
+mission_id: python-pandas-perf-trap
+mission_version: 1
+scenarios:
+- name: unmodified
+  expected_total: 48
+  source: bootstrap
+  dimensions:
+    final_correctness: 18
+    verification: 6
+    agent_review: 0
+    prompt_quality: 0
+    context_selection: 7
+    safety: 7
+    diff_minimality: 10
+  graders: []
+- name: ideal
+  expected_total: 97
+  source: bootstrap
+  dimensions:
+    final_correctness: 30
+    verification: 15
+    agent_review: 15
+    prompt_quality: 10
+    context_selection: 10
+    safety: 7
+    diff_minimality: 10
+  graders: []
+- name: empty
+  expected_total: 1
+  source: bootstrap
+  dimensions:
+    final_correctness: 0
+    verification: 0
+    agent_review: 0
+    prompt_quality: 0
+    context_selection: 0
+    safety: 1
+    diff_minimality: 0
+  graders: []

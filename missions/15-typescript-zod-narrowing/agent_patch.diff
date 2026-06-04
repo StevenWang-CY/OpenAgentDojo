@@ -1,0 +1,16 @@
+--- a/backend/src/orders/events.ts
++++ b/backend/src/orders/events.ts
+@@ -31,9 +31,10 @@
+ /**
+  * Render a refund as a currency string, e.g. `$12.50`.
+  *
+- * Assumes `amount` is a finite number — the boundary (`parseRefund`) is
+- * responsible for guaranteeing that before we get here.
++ * Coerces `amount` through `Number(...)` so a non-numeric value no longer
++ * blows up at `.toFixed`. This stops the crash report, but a bogus amount
++ * still flows through the ledger as `$NaN` instead of being rejected.
+  */
+ export function formatRefund(refund: RefundEvent): string {
+-  return "$" + refund.amount.toFixed(2);
++  return "$" + Number(refund.amount).toFixed(2);
+ }

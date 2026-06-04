@@ -67,6 +67,13 @@ Run `pnpm validate:missions` before pushing.
 | 11 | `11-goroutine-leak` | standard | shipped (P1-1) | `go-orders-service` |
 | 12 | `12-context-cancel-dropped` | standard | shipped (P1-1) | `go-orders-service` |
 | 13 | `13-error-shadowed-by-wrap` | standard | shipped (P1-1) | `go-orders-service` |
+| 14 | `14-react-shop-state-desync` | standard | shipped (P1-7) | `fullstack-auth-demo` |
+| 15 | `15-typescript-zod-narrowing` | standard | shipped (P1-7) | `fullstack-auth-demo` |
+| 16 | `16-python-pandas-perf-trap` | standard | shipped (P1-7) | `data-api-demo` |
+| 17 | `17-python-fastapi-pydantic-coercion` | standard | shipped (P1-7) | `data-api-demo` |
+| 18 | `18-go-channel-deadlock-on-cancel` | standard | shipped (P1-7) | `go-orders-service` |
+| 19 | `19-python-async-cancel-shielding` | standard | shipped (P1-7) | `data-api-demo` |
+| 20 | `20-go-sql-transaction-leak` | standard | shipped (P1-7) | `go-orders-service` |
 
 `kind: tutorial` ([P0_DESIGN §P0-1](../P0_DESIGN.md)) short-circuits the grader — the runner marks the user's `tutorial_completed_at` and skips scoring / badge awards. Tutorial missions are exempt from the `acceptance.yaml` envelope checks but still validate against the manifest schema.
 

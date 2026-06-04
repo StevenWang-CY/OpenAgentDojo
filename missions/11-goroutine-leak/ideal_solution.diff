@@ -1,32 +1,11 @@
-diff --git a/internal/queue/queue.go b/internal/queue/queue.go
 --- a/internal/queue/queue.go
 +++ b/internal/queue/queue.go
-@@ -134,10 +134,6 @@ func (p *Pool) process(ctx context.Context, ev Event) error {
- 	return nil
- }
-
--// Stop marks the pool as stopped. Callers expect Stop to drain every
--// worker, but the canonical cancellation path is intentionally missing
--// here (see ``goroutine-leak`` mission). The agent's job is to wire
--// ``p.cancel()`` back in so the derived worker contexts terminate and
--// the WaitGroup unblocks; today the workers keep blocking on the
--// events channel and the goroutine count never collapses.
-+// Stop cancels every worker context and waits for the worker pool to
-+// drain before returning. Idempotent — calling Stop twice is safe.
- //
--// XXX (mission 11): Stop must call ``p.cancel`` and ``p.wg.Wait``.
--// Today it does neither — every Start leaks ``numWorkers`` goroutines
--// for the lifetime of the process.
-+// The cancellation-then-wait sequence is what keeps the live
-+// goroutine count flat across the process lifetime.
- func (p *Pool) Stop() {
- 	p.mu.Lock()
- 	if !p.started || p.stopped {
-@@ -148,6 +144,9 @@ func (p *Pool) Stop() {
+@@ -150,7 +150,11 @@
+ 		p.mu.Unlock()
  		return
  	}
- 	p.stopped = true
 +	cancel := p.cancel
+ 	p.stopped = true
  	p.mu.Unlock()
 -	// BUG: no p.cancel() call here, no p.wg.Wait().
 +	if cancel != nil {

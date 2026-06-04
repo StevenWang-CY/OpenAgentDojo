@@ -1,0 +1,27 @@
+--- a/backend/app/background.py
++++ b/backend/app/background.py
+@@ -28,6 +28,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import contextlib
+ 
+ #: How long the worker sleeps before recording its side effect.
+ WORKER_DELAY_S: float = 0.05
+@@ -46,4 +47,15 @@
+         await asyncio.sleep(WORKER_DELAY_S)
+         side_effects.append("done")
+ 
+-    await worker()
++    # Run the worker as a tracked task so a cancellation of run_request can
++    # propagate into it: cancel and await the task in the finally block so it
++    # is never left dangling, and the side effect is only recorded when the
++    # request actually ran to completion.
++    task = asyncio.ensure_future(worker())
++    try:
++        await task
++    finally:
++        if not task.done():
++            task.cancel()
++            with contextlib.suppress(asyncio.CancelledError):
++                await task

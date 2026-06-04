@@ -94,12 +94,17 @@ def validate_forbidden_changes(
                 total_penalty += penalty
 
         elif kind == "regex_present_in_diff":
-            # The pattern must NOT appear anywhere in the diff text.
-            full_diff = diff.full_diff_text()
-            if re.search(pattern_str, full_diff, re.MULTILINE):
+            # The pattern must NOT appear among the patch's ADDED lines.
+            # Scanning added lines only (not the full diff) is the
+            # documented intent — "that line is a forbidden addition". The
+            # full-diff text also contains removed (``-``) and context
+            # lines, so an *ideal* solution that REMOVES the bad pattern
+            # would otherwise trip a "kept_X" rule on its own deletion.
+            added_text = "\n".join(diff.all_added_lines())
+            if re.search(pattern_str, added_text, re.MULTILINE):
                 # Collect matching lines for evidence.
                 matching_lines = [
-                    line for line in full_diff.splitlines() if re.search(pattern_str, line)
+                    line for line in added_text.splitlines() if re.search(pattern_str, line)
                 ]
                 msg = f"rule '{rule_id}': forbidden pattern /{pattern_str}/ found in diff"
                 violations.append(msg)

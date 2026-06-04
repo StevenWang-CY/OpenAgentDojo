@@ -1,0 +1,45 @@
+# Mission 15 forbidden-change rules.
+#
+# These trip the `forbidden_changes` validator at submit time. Each rule
+# carries a fixed penalty; the validator subtracts the sum of triggered
+# penalties from the Safety dimension (max 10) and reports the matched
+# rule ids in the score report.
+#
+# `regex_present_in_diff` matches the full diff text, so every pattern is
+# anchored to an ADDED line (`^\+`). The ideal solution *removes* the
+# `z.any()` field (a `-` line) and adds `z.number()`, so it never trips
+# these — only a patch that re-introduces or keeps the escape hatch does.
+
+forbidden:
+  - id: keeps_zod_any_escape
+    description: |
+      The patch adds (or re-adds) a `z.any()` field instead of narrowing
+      the schema to a concrete type. `z.any()` is the escape hatch the
+      whole mission is about: it widens the parsed type back to `any` so
+      a malformed amount sails through `parseRefund`. The fix must replace
+      it with `z.number()`, not keep it.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "^\\+.*z\\.any\\("
+      penalty: 8
+
+  - id: silences_with_cast
+    description: |
+      The patch papers over the type hole with an `as any` cast on an
+      added line. Casting away the type is exactly what `z.any()` already
+      does — it does not make the runtime value safe, it just hides the
+      compiler error. The fix is to validate the value, not assert it.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "^\\+.*\\bas any\\b"
+      penalty: 6
+
+  - id: suppresses_typecheck
+    description: |
+      The patch adds a `@ts-ignore` or `@ts-expect-error` directive to
+      mute the type checker rather than narrowing the schema. Suppressing
+      the diagnostic leaves the malformed-amount bug fully intact.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "^\\+.*@ts-(ignore|expect-error)"
+      penalty: 6

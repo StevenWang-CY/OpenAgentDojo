@@ -1,0 +1,53 @@
+# Mission 16 — intent classifier keyword sets.
+#
+# Same shape as mission 01 (see app/agent/intents.py): the first matching
+# intent (in file order) wins; "unknown" is the fallback.
+
+intents:
+  fix:
+    keywords:
+      - fix
+      - repair
+      - optimise
+      - optimize
+      - vectorise
+      - vectorize
+      - speed
+      - slow
+      - investigate
+      - debug
+      - the bug
+
+  test:
+    keywords:
+      - add a test
+      - write a test
+      - regression test
+      - cover this
+      - lock this down
+      - discount
+
+  revise:
+    keywords:
+      - try again
+      - revise
+      - that's wrong
+      - that is wrong
+      - not quite
+      - reconsider
+      - rethink
+      - actually
+      - net revenue
+      - the formula
+
+  narrow:
+    keywords:
+      - only change
+      - just change
+      - smaller diff
+      - minimal
+      - keep it scoped
+      - don't touch
+      - do not touch
+
+  unknown: {}

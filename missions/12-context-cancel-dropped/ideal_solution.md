@@ -12,18 +12,38 @@ the driver.
 ```diff
 --- a/internal/store/store.go
 +++ b/internal/store/store.go
+@@ -117,7 +117,6 @@
+ // cancellation never reaches the driver. This is the load-bearing bug
+ // in the ``context-cancel-dropped`` mission.
  func (s *Store) Get(ctx context.Context, id string) (model.Order, error) {
--  _ = ctx
-   ...
--  row := s.db.QueryRowContext(context.Background(), q, id)
-+  row := s.db.QueryRowContext(ctx, q, id)
- }
+-	_ = ctx
+ 	const q = `
+ 		SELECT id, sku, quantity, status, created_at
+ 		FROM   orders
+@@ -125,7 +124,7 @@
+ 	`
+ 	var o model.Order
+ 	var statusText string
+-	row := s.db.QueryRowContext(context.Background(), q, id)
++	row := s.db.QueryRowContext(ctx, q, id)
+ 	err := row.Scan(&o.ID, &o.SKU, &o.Quantity, &statusText, &o.CreatedAt)
+ 	if errors.Is(err, sql.ErrNoRows) {
+ 		return model.Order{}, ErrOrderNotFound
+@@ -144,13 +143,12 @@
+ // ``context.Background()`` below. ``List`` keeps running even after
+ // the inbound HTTP request has been cancelled.
  func (s *Store) List(ctx context.Context) ([]model.Order, error) {
--  _ = ctx
-   ...
--  rows, err := s.db.QueryContext(context.Background(), q)
-+  rows, err := s.db.QueryContext(ctx, q)
- }
+-	_ = ctx
+ 	const q = `
+ 		SELECT id, sku, quantity, status, created_at
+ 		FROM   orders
+ 		ORDER  BY created_at ASC, id ASC
+ 	`
+-	rows, err := s.db.QueryContext(context.Background(), q)
++	rows, err := s.db.QueryContext(ctx, q)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("list orders: %w", err)
+ 	}
 ```
 
 Plus a regression test that pins the property:

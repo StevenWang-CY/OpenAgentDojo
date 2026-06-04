@@ -1,0 +1,21 @@
+# Mission 15 — score-envelope acceptance test.
+#
+# Used by the mission self-tests in apps/api/tests/missions/ and
+# apps/api/scripts/check_missions.py. Two synthetic event streams are
+# replayed against this mission:
+#
+#   - "unmodified": the user accepts the agent patch (coerce the symptom in
+#     formatRefund via `Number(...)`, leave `z.any()` in the schema)
+#     verbatim and submits without further edits or verification. The
+#     boundary still accepts a malformed amount; hidden tests stay red.
+#     Expected score lands in the embarrassing-middle band.
+#
+#   - "ideal": the user reads events.ts and the visible test before opening
+#     the diff, names the `z.any()` escape hatch / the parse boundary in the
+#     prompt, replaces `z.any()` with `z.number().finite()`, and adds a
+#     regression test that asserts a string/object amount throws a ZodError.
+
+acceptance:
+  min_unmodified: 25
+  max_unmodified: 62
+  min_ideal: 88

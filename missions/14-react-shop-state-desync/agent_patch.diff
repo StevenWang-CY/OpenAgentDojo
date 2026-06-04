@@ -1,0 +1,21 @@
+--- a/frontend/src/useCart.ts
++++ b/frontend/src/useCart.ts
+@@ -38,10 +38,14 @@
+       const next = [...snapshot, sku];
+       itemsRef.current = next;
+       setItems(next);
+-      // Confirm with the server. If this rejects we do nothing, so the
+-      // optimistically-added item stays in the cart even though the server
+-      // refused it — the local cart now disagrees with the server.
+-      await api.addToCart(sku);
++      try {
++        await api.addToCart(sku);
++      } catch (e) {
++        // Surface the failure to the user. NOTE: we report the error but
++        // do not remove the optimistic item, so the cart still shows a sku
++        // the server rejected — the local cart disagrees with the server.
++        setError(e instanceof Error ? e.message : "could not add item");
++      }
+     },
+     [api],
+   );

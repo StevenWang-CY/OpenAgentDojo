@@ -1,0 +1,29 @@
+--- a/frontend/src/useCart.ts
++++ b/frontend/src/useCart.ts
+@@ -32,16 +32,21 @@
+   const addItem = useCallback(
+     async (sku: string) => {
+       setError(null);
+-      // Snapshot the pre-update cart for reference.
++      // Snapshot the pre-update cart so we can restore it on failure.
+       const snapshot = itemsRef.current;
+       // Optimistic update: show the item right away.
+       const next = [...snapshot, sku];
+       itemsRef.current = next;
+       setItems(next);
+-      // Confirm with the server. If this rejects we do nothing, so the
+-      // optimistically-added item stays in the cart even though the server
+-      // refused it — the local cart now disagrees with the server.
+-      await api.addToCart(sku);
++      try {
++        await api.addToCart(sku);
++      } catch (e) {
++        // Roll back: the server refused the item, so restore the snapshot
++        // and surface the error.
++        itemsRef.current = snapshot;
++        setItems(snapshot);
++        setError(e instanceof Error ? e.message : "could not add item");
++      }
+     },
+     [api],
+   );

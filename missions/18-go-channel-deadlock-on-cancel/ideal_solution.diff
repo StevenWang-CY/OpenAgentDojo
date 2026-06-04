@@ -1,0 +1,20 @@
+--- a/internal/processor/processor.go
++++ b/internal/processor/processor.go
+@@ -64,8 +64,15 @@
+ // fix is to race the send against ``ctx.Done()`` so a shutting-down
+ // pipeline returns the caller's cancellation instead of deadlocking.
+ func (p *Processor) Submit(ctx context.Context, item string) error {
+-	p.in <- item
+-	return nil
++	// Race the send against cancellation: a shutting-down pipeline returns
++	// the caller's context error instead of blocking forever on a channel
++	// no worker is draining.
++	select {
++	case p.in <- item:
++		return nil
++	case <-ctx.Done():
++		return ctx.Err()
++	}
+ }
+ 
+ // Wait blocks until the worker has exited (after its Start context is

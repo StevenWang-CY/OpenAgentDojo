@@ -1,0 +1,205 @@
+id: python-async-cancel-shielding
+version: 1
+published: true
+title: "Shielded Worker Leaks a Side Effect on Cancellation"
+short_description: "A background worker is 'hardened' with asyncio.shield, so a cancelled request still records its side effect — a ghost write the visible suite never sees."
+difficulty: advanced
+category: debugging
+estimated_minutes: 35
+skills_tested:
+  - concurrency
+  - python
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - asyncio_shield_misuse
+  - skill:concurrency
+  - lang:python
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. The agent's "make it resilient" patch shields the worker
+# from cancellation, so a cancelled request still mutates state — a safety
+# regression a strong supervisor catches by testing the cancellation path.
+expected_weak_dim: safety
+
+repo:
+  pack: data-api-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: python312
+  setup_commands:
+    - pnpm install:py
+  ready_check: pnpm test:unit
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  `app/background.py::run_request(side_effects)` drives one unit of
+  background work: an inner `worker` sleeps briefly, then records a side
+  effect (appends `"done"`). The contract is that the side effect is
+  honoured **only if the request runs to completion** — if `run_request` is
+  cancelled mid-flight (client disconnect, timeout), the worker must be
+  cancelled too and `"done"` must NOT be recorded.
+
+  The shipped baseline honours that by simply `await`ing the worker, so a
+  cancellation propagates straight in. An agent asked to "make the
+  background work resilient" wraps the worker in `asyncio.shield` so it
+  "always finishes". Shield decouples the worker from the caller's
+  cancellation: a cancelled request now still records `"done"` — a ghost
+  write the contract forbids.
+
+  The visible suite only runs `run_request` to completion (no cancellation),
+  where the side effect *should* appear, so it never sees the leak.
+
+  ## What you need to deliver
+
+  - A patch to `app/background.py` so a cancellation of `run_request`
+    propagates into the worker: a cancelled request must record **no** side
+    effect, and the worker must not be left running in the background.
+  - A regression test that starts `run_request` as a task, cancels it
+    mid-flight, and asserts the side effect was not recorded.
+  - `pnpm test:unit`, `pnpm typecheck`, and `pnpm lint` stay green.
+
+  ## Where to look
+
+  Start in `app/background.py`. `asyncio.shield` is the trap: it protects the
+  worker from the caller's cancellation, so the worker keeps running and
+  records its side effect even though the request was cancelled. The fix is
+  to let cancellation reach the worker (drop the shield, or run the worker as
+  a tracked task you cancel on cleanup). The visible suite at
+  `tests/unit/test_background.py` never cancels, so it cannot see the leak.
+
+  ## How you'll be scored
+
+  This mission rewards *honouring cancellation*. You earn points by letting a
+  cancellation propagate into the worker, by adding a regression test that
+  cancels `run_request` mid-flight and asserts no side effect, and by naming
+  the cancellation/shield contract in your prompt. You lose points for
+  shielding the worker so a cancelled request still mutates state, or for
+  shipping without a cancellation regression test.
+
+failure_mode:
+  id: asyncio_shield_misuse
+  title: "Agent shields the worker, so a cancelled request still writes"
+  description: |
+    Asked to make the background work resilient, the agent wraps the worker
+    in `asyncio.shield(worker())`. Shield decouples the worker from the
+    caller's cancellation, so cancelling `run_request` mid-flight returns
+    control immediately while the worker keeps running and records its side
+    effect a moment later. The visible suite never cancels, so the diff looks
+    like a safe hardening — but a cancelled request now leaves a ghost write.
+  hint_after_submit_if_missed: "asyncio.shield protects the worker from the caller's cancellation. Cancel run_request mid-flight and check whether 'done' still gets appended."
+
+expected_files:
+  - backend/app/background.py
+  - backend/tests/unit/test_background.py
+
+expected_context:
+  required:
+    - backend/app/background.py
+    - backend/tests/unit/test_background.py
+  recommended:
+    - backend/app/jobs.py
+  discouraged:
+    - backend/app/calc.py
+    - backend/app/format.py
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - cancel
+      - cancellation
+      - shield
+      - resilient
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "run_request records the side effect when it runs to completion"
+  - "run_request appends once per call"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "cancelling mid-flight records no side effect"
+    - "a cancelled run_request ends cancelled"
+    - "without cancellation the side effect still appears"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 3
+    max_added_lines: 60
+    must_touch_any_of:
+      - backend/app/background.py
+    must_not_touch:
+      - backend/app/jobs.py
+      - backend/app/db.py
+      - backend/pyproject.toml
+  - kind: regression_test_required
+    test_globs:
+      - backend/tests/**/test_*.py
+    keywords_any_of:
+      - cancel
+      - cancellation
+      - shield
+      - run_request
+  - kind: no_skipped_tests
+    patterns:
+      - "@pytest.mark.skip"
+      - "@pytest.mark.xfail"
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - cancellation
+      - shield
+      - side effect
+      - regression test
+      - propagate
+    bonus_keywords:
+      - CancelledError
+      - create_task
+      - ghost write
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "background"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

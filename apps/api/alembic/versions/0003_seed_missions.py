@@ -48,6 +48,16 @@ _MISSION_IDS: tuple[str, ...] = (
     "goroutine-leak",
     "context-cancel-dropped",
     "error-shadowed-by-wrap",
+    # P1-7 — second mission wave (14-20). Upgrade() reads catalog rows from
+    # the missions/ tree at migration time; these literals exist so the
+    # validate_missions seed-presence check and downgrade() both see them.
+    "react-shop-state-desync",
+    "typescript-zod-narrowing",
+    "python-pandas-perf-trap",
+    "python-fastapi-pydantic-coercion",
+    "go-channel-deadlock-on-cancel",
+    "python-async-cancel-shielding",
+    "go-sql-transaction-leak",
 )
 
 

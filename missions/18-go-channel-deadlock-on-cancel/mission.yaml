@@ -1,0 +1,195 @@
+id: go-channel-deadlock-on-cancel
+version: 1
+published: true
+title: "Channel Deadlocks When Context Cancels"
+short_description: "processor.Submit blocks forever on an unbuffered channel once the worker has shut down."
+difficulty: intermediate
+category: debugging
+estimated_minutes: 30
+skills_tested:
+  - concurrency
+  - go
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - channel_deadlock_on_cancel
+  - skill:concurrency
+  - lang:go
+
+# P1-2 — the rubric dimension this mission primarily exercises. The
+# agent's goroutine hand-off hides the caller-side block while leaking a
+# stranded sender — a safety regression a careful supervisor catches.
+expected_weak_dim: safety
+
+repo:
+  pack: go-orders-service
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: go122
+  setup_commands:
+    - go mod download
+  ready_check: make test
+  test_commands:
+    unit: make test
+    lint: make vet
+
+brief: |
+  ## What's broken
+
+  `processor.Processor` feeds a single worker goroutine over an unbuffered
+  channel. During a graceful shutdown the service cancels the worker's
+  context — but any `Submit` that races the shutdown hangs forever: the
+  worker is gone, nothing drains the channel, and the send blocks.
+  Operators see shutdown occasionally wedge with a goroutine stuck in
+  `Submit`.
+
+  The visible test suite is green — it only submits while the worker is
+  running.
+
+  ## What you need to deliver
+
+  - A patch to `internal/processor/processor.go` so `Submit` races the
+    channel send against `ctx.Done()` and returns the context error
+    instead of blocking when the pipeline is shutting down.
+  - A regression test that cancels the worker and asserts a subsequent
+    `Submit` returns promptly with a non-nil error and leaks no goroutine.
+  - `make test` and `make vet` stay green.
+
+  ## Where to look
+
+  Start in `internal/processor/processor.go`. `Start` already selects on
+  `ctx.Done()` in the worker loop, so cancellation drains the worker — but
+  `Submit` does a bare `p.in <- item` with no escape hatch. The fix is a
+  `select` with a `case <-ctx.Done()` arm.
+
+  ## How you'll be scored
+
+  This mission rewards correct cancellation handling. You earn points by
+  reading `Start` before writing the fix, naming `select` / `ctx.Done()`
+  in your prompt, and writing a regression test that exercises a
+  post-shutdown submit. You lose points for hiding the block behind a
+  fire-and-forget goroutine (`go func() { p.in <- item }()`) — that
+  unblocks the caller but strands the sender on the channel and returns a
+  misleading `nil`.
+
+failure_mode:
+  id: channel_deadlock_on_cancel
+  title: "Agent hides the deadlock behind a fire-and-forget goroutine"
+  description: |
+    The agent sees `Submit` block and "fixes" it by spawning a goroutine
+    to do the send: `go func() { p.in <- item }()` followed by
+    `return nil`. The caller no longer blocks and the visible tests stay
+    green, but the spawned goroutine is now the one stranded on the
+    unbuffered channel — the deadlock became a goroutine leak — and Submit
+    reports success for an item that was never delivered.
+  hint_after_submit_if_missed: "Where does the item go if the worker has already returned? Follow the goroutine the patch spawns."
+
+expected_files:
+  - internal/processor/processor.go
+  - internal/processor/processor_test.go
+
+expected_context:
+  required:
+    - internal/processor/processor.go
+    - internal/processor/processor_test.go
+  recommended:
+    - cmd/orders/main.go
+    - internal/queue/queue.go
+  discouraged:
+    - internal/handlers/handlers.go
+    - internal/model/order.go
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+      - deadlock
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "TestProcessorHandlesSubmittedItems drains every submitted item"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "TestSubmitAfterShutdownReturnsError"
+    - "TestSubmitDoesNotLeakGoroutineAfterShutdown"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 80
+    must_touch_any_of:
+      - internal/processor/processor.go
+    must_not_touch:
+      - go.mod
+      - go.sum
+      - internal/handlers/**
+      - internal/model/**
+  - kind: regression_test_required
+    test_globs:
+      - internal/processor/*_test.go
+    keywords_any_of:
+      - ctx.Done
+      - select
+      - cancel
+      - NumGoroutine
+      - deadlock
+  - kind: no_skipped_tests
+    patterns:
+      - "t.Skip"
+      - "//go:build ignore"
+  - kind: no_new_dependencies
+    allowed: []
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - select
+      - ctx.Done
+      - cancellation
+      - regression test
+      - deadlock
+    bonus_keywords:
+      - goroutine
+      - unbuffered
+      - context
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "processor"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

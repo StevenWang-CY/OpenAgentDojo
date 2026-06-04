@@ -1,0 +1,204 @@
+id: typescript-zod-narrowing
+version: 1
+published: true
+title: "Zod `z.any()` Lets a Malformed Refund Amount Through the Boundary"
+short_description: "The refund schema types `amount` as `z.any()`, so a non-numeric amount passes validation and only breaks downstream."
+difficulty: intermediate
+category: api
+estimated_minutes: 30
+skills_tested:
+  - typescript
+  - typing
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - zod_any_escape
+  - skill:typing
+  - lang:typescript
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. The agent's patch silences the runtime symptom but leaves
+# the validation boundary accepting garbage — the parsed value is still
+# wrong, so the failure is fundamentally one of final correctness.
+expected_weak_dim: final_correctness
+
+repo:
+  pack: fullstack-auth-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: node20
+  setup_commands:
+    - pnpm install --frozen-lockfile
+  ready_check: pnpm test:unit --silent
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  The payments pipeline emits `refund` events that the ledger formats and
+  sums. A refund's `amount` is money — it must be a finite number. But the
+  zod schema in `backend/src/orders/events.ts` types `amount` as
+  `z.any()`, so `parseRefund` waves through *any* value: a string, an
+  object, even `NaN`. Validation succeeds, and the bad value only surfaces
+  later when `formatRefund` does arithmetic on the amount and either throws
+  or prints `$NaN` into the ledger.
+
+  The visible unit suite is green — it only feeds well-formed numeric
+  amounts, so it never exercises the hole.
+
+  ## What you need to deliver
+
+  - A patch to `backend/src/orders/events.ts` so `parseRefund` **rejects**
+    a non-numeric amount at the boundary (a `ZodError`), instead of
+    deferring the type assumption to `formatRefund`.
+  - A regression test that asserts a malformed amount is rejected at parse
+    time and that a valid numeric amount still round-trips.
+  - `pnpm test:unit`, `pnpm typecheck`, and `pnpm lint` stay green.
+
+  ## Where to look
+
+  Start in `backend/src/orders/events.ts`. The `amount: z.any()` field on
+  `refundEventSchema` is the escape hatch — `z.any()` makes
+  `RefundEvent.amount` typed `any`, which is why `formatRefund` compiles
+  even though it assumes a number. The visible test lives in
+  `backend/src/tests/unit/events.test.ts`.
+
+  ## How you'll be scored
+
+  This mission rewards fixing validation at the boundary, not papering
+  over the symptom. You earn points by narrowing the schema (`z.number()`)
+  so bad data is rejected where it enters the system, naming the `z.any()`
+  escape hatch in your prompt, and adding a regression test that asserts a
+  string/object amount throws. You lose points for a patch that only
+  coerces the value in `formatRefund` (e.g. `Number(amount)`) while
+  leaving `z.any()` in place — the validation hole the failure mode is
+  about is still open.
+
+failure_mode:
+  id: zod_any_escape
+  title: "Agent coerces the symptom in formatRefund but leaves z.any() in the schema"
+  description: |
+    The agent reads `events.ts`, sees `formatRefund` blowing up on a
+    non-numeric amount, and wraps the arithmetic in `Number(...)` so it no
+    longer throws. The crash report goes away and the visible tests stay
+    green — but `amount: z.any()` is untouched, so `parseRefund` still
+    accepts a string/object/NaN amount. The boundary never rejects the bad
+    event; it just renders it as `$NaN` downstream. The real fix is to
+    narrow the schema to `z.number()` so the malformed amount is rejected
+    where it enters the system.
+  hint_after_submit_if_missed: "Look at the schema, not the formatter. What type does `amount: z.any()` let through `parseRefund`?"
+
+expected_files:
+  - backend/src/orders/events.ts
+  - backend/src/tests/unit/events.test.ts
+
+expected_context:
+  required:
+    - backend/src/orders/events.ts
+    - backend/src/tests/unit/events.test.ts
+  recommended:
+    - backend/src/submissions/store.ts
+  discouraged:
+    - frontend/src/Dashboard.tsx
+    - backend/src/auth/session.ts
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+      - validate
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "parses a well-formed refund event"
+  - "formats a parsed refund as a currency string"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "rejects a string amount at parse time"
+    - "rejects an object amount at parse time"
+    - "rejects a NaN amount at parse time"
+    - "still accepts and formats a valid numeric amount"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 80
+    must_touch_any_of:
+      - backend/src/orders/events.ts
+    must_not_touch:
+      - frontend/**
+      - package.json
+      - pnpm-lock.yaml
+  - kind: regression_test_required
+    test_globs:
+      - backend/src/tests/**/*.test.ts
+    keywords_any_of:
+      - parseRefund
+      - z.number
+      - ZodError
+      - amount
+  - kind: no_skipped_tests
+    patterns:
+      - ".skip("
+      - "xit("
+      - "xdescribe("
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - root cause
+      - regression test
+      - boundary
+      - z.number
+      - validation
+    bonus_keywords:
+      - z.any
+      - narrow
+      - ZodError
+      - edge case
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+      - typecheck
+    bonus_if_run_before_patch: true
+    require_targeted_test: "events"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

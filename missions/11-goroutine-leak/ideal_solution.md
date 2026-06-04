@@ -16,15 +16,18 @@ events channel for the lifetime of the process.
 ```diff
 --- a/internal/queue/queue.go
 +++ b/internal/queue/queue.go
-@@ Stop()
-   p.stopped = true
-+  cancel := p.cancel
-   p.mu.Unlock()
--  // BUG: no p.cancel() call here, no p.wg.Wait().
-+  if cancel != nil {
-+    cancel()
-+  }
-+  p.wg.Wait()
+@@ -150,7 +150,11 @@
+ 		p.mu.Unlock()
+ 		return
+ 	}
++	cancel := p.cancel
+ 	p.stopped = true
+ 	p.mu.Unlock()
+-	// BUG: no p.cancel() call here, no p.wg.Wait().
++	if cancel != nil {
++		cancel()
++	}
++	p.wg.Wait()
  }
 ```
 

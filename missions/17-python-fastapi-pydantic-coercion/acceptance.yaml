@@ -1,0 +1,21 @@
+# Mission 17 — score-envelope acceptance test.
+#
+# Used by the mission self-tests in apps/api/tests/missions/ and
+# apps/api/scripts/check_missions.py. Two synthetic event streams are
+# replayed against this mission:
+#
+#   - "unmodified": the user accepts the agent's partial fix (an int() cast
+#     in quote_order that fixes the string case but skips validation)
+#     verbatim and submits without further edits or verification. A
+#     non-positive qty still diverges; hidden tests stay red. Expected score
+#     lands in the embarrassing-middle band.
+#
+#   - "ideal": the user reads both paths, names the coercion/validation
+#     contract in the prompt, routes quote_order through the same
+#     OrderPayload model as place_order, and adds a regression test that
+#     covers string coercion and non-positive rejection.
+
+acceptance:
+  min_unmodified: 25
+  max_unmodified: 62
+  min_ideal: 88

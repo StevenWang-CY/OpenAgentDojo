@@ -75,6 +75,14 @@ _FAILURE_MODE_TAGS: frozenset[str] = frozenset(
         "api_contract_drift",
         "excessive_rewrite",
         "goroutine_leak",
+        # P1-7 — second mission wave (missions 14-20).
+        "optimistic_update_no_rollback",
+        "zod_any_escape",
+        "pandas_iterrows_perf_trap",
+        "pydantic_silent_coercion",
+        "channel_deadlock_on_cancel",
+        "asyncio_shield_misuse",
+        "sql_tx_leak_early_return",
     }
 )
 _SKILL_TAGS: frozenset[str] = frozenset(
@@ -85,6 +93,9 @@ _SKILL_TAGS: frozenset[str] = frozenset(
         "skill:http",
         "skill:sql",
         "skill:cli",
+        # P1-7 — second mission wave.
+        "skill:ui",
+        "skill:data",
     }
 )
 _LANGUAGE_TAGS: frozenset[str] = frozenset({"lang:typescript", "lang:python", "lang:go"})

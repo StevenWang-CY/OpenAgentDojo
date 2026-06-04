@@ -133,6 +133,15 @@ FAILURE_MODE_TO_DIM: Final[dict[str, str]] = {
     "api_contract_drift": "prompt_quality",
     "excessive_rewrite": "diff_minimality",
     "goroutine_leak": "verification",
+    # P1-7 — second mission wave (14-20). Each maps to the dimension the
+    # mission is primarily designed to exercise (its ``expected_weak_dim``).
+    "optimistic_update_no_rollback": "final_correctness",
+    "zod_any_escape": "final_correctness",
+    "pandas_iterrows_perf_trap": "final_correctness",
+    "pydantic_silent_coercion": "final_correctness",
+    "channel_deadlock_on_cancel": "safety",
+    "asyncio_shield_misuse": "safety",
+    "sql_tx_leak_early_return": "safety",
 }
 
 # Difficulty bands. Drives the ``difficulty_match`` signal.

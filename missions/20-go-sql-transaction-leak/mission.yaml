@@ -1,0 +1,202 @@
+id: go-sql-transaction-leak
+version: 1
+published: true
+title: "SQL Transaction Leaked on Early Return"
+short_description: "BulkUpdateStatus abandons its transaction on the unknown-id path, stranding the only pooled connection."
+difficulty: intermediate
+category: database
+estimated_minutes: 35
+skills_tested:
+  - sql
+  - go
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - sql_tx_leak_early_return
+  - skill:sql
+  - lang:go
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. The agent's partial fix masks the symptom on the visible
+# path while the resource leak persists — a safety regression a strong
+# supervisor catches by reading every return path.
+expected_weak_dim: safety
+
+repo:
+  pack: go-orders-service
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: go122
+  setup_commands:
+    - go mod download
+  ready_check: make test
+  test_commands:
+    unit: make test
+    lint: make vet
+
+brief: |
+  ## What's broken
+
+  `store.BulkUpdateStatus` moves several orders to the same status inside
+  one transaction so the batch is atomic: either every id is updated, or —
+  if any id is unknown — the whole batch is rejected with
+  `ErrOrderNotFound` and nothing changes.
+
+  Operators report that a single bad batch (one typo'd order id) wedges
+  the service: every subsequent request to the orders DB hangs until it
+  times out. The connection pool is pinned to one connection, and a
+  rejected batch never gives it back.
+
+  The visible test suite is green — it only exercises the happy path
+  where every id exists and the batch commits.
+
+  ## What you need to deliver
+
+  - A patch to `internal/store/bulk.go` so `BulkUpdateStatus` releases its
+    transaction (and therefore the pooled connection) on **every** return
+    path, not just the happy one.
+  - A regression test that rejects a batch with an unknown id and then
+    proves the store is still usable (the connection was returned).
+  - `make test` and `make vet` stay green.
+
+  ## Where to look
+
+  Start in `internal/store/bulk.go`. The transaction is opened with
+  `s.db.BeginTx` but only the final `Commit` ever releases it — the three
+  early `return` statements walk away from an open transaction. Read
+  `internal/store/store.go` `Open` to see why a single leaked transaction
+  is enough to stall the whole service (`db.SetMaxOpenConns(1)`).
+
+  ## How you'll be scored
+
+  This mission rewards resource-safety discipline. You earn points by
+  reading every return path before accepting a fix, naming `Rollback` /
+  the transaction lifecycle in your prompt, and writing a regression test
+  that reuses the store after a rejected batch. You lose points for a
+  patch that only rolls back on the SQL-error branches and leaves the
+  `ErrOrderNotFound` early return — the exact path operators are hitting —
+  still leaking.
+
+failure_mode:
+  id: sql_tx_leak_early_return
+  title: "Agent rolls back on SQL errors but leaks the tx on the unknown-id return"
+  description: |
+    The agent reads `BulkUpdateStatus`, spots the missing rollback, and
+    adds `tx.Rollback()` — but only inside the two `if err != nil`
+    branches. The `if n == 0 { return ErrOrderNotFound }` path (the one
+    operators actually trigger with a typo'd id) still returns with the
+    transaction open. The happy-path commit and the SQL-error rollbacks
+    make the diff look complete, and the visible tests stay green, so the
+    leak survives on exactly the path that matters.
+  hint_after_submit_if_missed: "Count the `return` statements in BulkUpdateStatus. Which one runs when an id is simply not found?"
+
+expected_files:
+  - internal/store/bulk.go
+  - internal/store/bulk_test.go
+
+expected_context:
+  required:
+    - internal/store/bulk.go
+    - internal/store/store.go
+  recommended:
+    - internal/store/bulk_test.go
+    - internal/store/store_test.go
+  discouraged:
+    - internal/handlers/handlers.go
+    - internal/model/order.go
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - investigate
+      - debug
+      - leak
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "TestBulkUpdateStatusCommitsHappyPath ships every id on the commit path"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "TestBulkUpdateReleasesConnOnUnknownID"
+    - "TestBulkUpdateStoreUsableAfterFailedBatch"
+    - "TestBulkUpdateIsAtomicOnUnknownID"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 2
+    max_added_lines: 80
+    must_touch_any_of:
+      - internal/store/bulk.go
+    must_not_touch:
+      - go.mod
+      - go.sum
+      - internal/handlers/**
+      - internal/model/**
+  - kind: regression_test_required
+    test_globs:
+      - internal/store/*_test.go
+    keywords_any_of:
+      - Rollback
+      - rollback
+      - transaction
+      - leak
+      - ErrOrderNotFound
+  - kind: no_skipped_tests
+    patterns:
+      - "t.Skip"
+      - "//go:build ignore"
+  - kind: no_new_dependencies
+    allowed: []
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - rollback
+      - transaction
+      - regression test
+      - every return path
+      - leak
+    bonus_keywords:
+      - defer
+      - connection pool
+      - atomic
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "store"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

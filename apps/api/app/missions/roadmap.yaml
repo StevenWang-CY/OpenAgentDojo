@@ -7,8 +7,8 @@
 #
 # Authoring rules
 # ---------------
-# * Cap the list at ~6 entries — dropping below that reads as "we're done";
-#   stretching past reads as vapour.
+# * Cap the list at ~8 entries — dropping below ~4 reads as "we're done";
+#   stretching far past reads as vapour.
 # * Use ISO ``YYYY-MM-DD`` dates set to the 15th of a future month. The
 #   monthly cadence is the load-bearing user signal (see P1_DESIGN §P1-1
 #   open decisions). Past-dated placeholders are caught by the loader
@@ -18,42 +18,53 @@
 # * IMPORTANT: a placeholder ``id`` must NOT collide with any shipped
 #   mission id (or its kebab-stem). The roadmap loader cross-checks and
 #   drops the colliding entry at startup with a WARNING — keep that as
-#   a safety net, not a workflow. Use kebab-prefixes the catalog already
-#   does not own (``react-shop-*``, ``python-fastapi-*``, ``go-channel-*``).
+#   a safety net, not a workflow.
+#
+# P1-7 — the previous seven placeholders (react-shop-state-desync,
+# typescript-zod-narrowing, python-pandas-perf-trap,
+# python-fastapi-pydantic-coercion, go-channel-deadlock-on-cancel,
+# python-async-cancel-shielding, go-sql-transaction-leak) all SHIPPED in
+# the second mission wave (missions 14-20). This list is the next, fresh
+# set of comprehensively-missing failure modes, language-balanced.
 
 placeholders:
-  - id: react-shop-state-desync
-    title: "React shop: state desync vs. server"
-    target_release_date: "2026-07-15"
-    teaser: "Two-way state sync with optimistic UI under network failure."
-    language: typescript
-  - id: typescript-zod-narrowing
-    title: "TypeScript: zod schema parses but type narrowing escapes"
-    target_release_date: "2026-08-15"
-    teaser: "Agent uses ``z.any()`` to make a type error go away; runtime breaks downstream."
-    language: typescript
-  - id: python-pandas-perf-trap
-    title: "Pandas iterrows in a hot loop"
-    target_release_date: "2026-08-15"
-    teaser: "Quadratic on row count; the agent's vectorisation looks correct but is wrong."
+  - id: n-plus-1-query-explosion
+    title: "N+1 query explosion behind a tidy ORM loop"
+    target_release_date: "2027-01-15"
+    teaser: "A clean-looking ``for row in rows: row.children`` fires one query per row; the fix is one eager-load."
     language: python
-  - id: python-fastapi-pydantic-coercion
-    title: "FastAPI: Pydantic coerces a string into an int silently"
-    target_release_date: "2026-09-15"
-    teaser: "Loose schema lets ``\"42\"`` and ``42`` round-trip differently across endpoints."
+  - id: timezone-naive-comparison
+    title: "Naive vs. aware datetime comparison drops a day"
+    target_release_date: "2027-02-15"
+    teaser: "Mixing ``datetime.now()`` with an aware timestamp silently shifts the boundary across DST."
     language: python
-  - id: go-channel-deadlock-on-cancel
-    title: "Go: unbuffered channel deadlocks when context cancels"
-    target_release_date: "2026-10-15"
-    teaser: "Cancellation path leaves a sender blocked on a channel no one drains."
+  - id: toctou-file-race
+    title: "Time-of-check/time-of-use race on a temp file"
+    target_release_date: "2027-03-15"
+    teaser: "``if exists(): open()`` looks safe until two requests interleave on the same path."
+    language: python
+  - id: unbounded-cache-memory-leak
+    title: "Unbounded in-memory cache leaks until OOM"
+    target_release_date: "2027-04-15"
+    teaser: "A map keyed by request id never evicts; the agent caps the wrong dimension."
     language: go
-  - id: python-async-cancel-shielding
-    title: "Python: asyncio.shield used as a graceful-cancel band-aid"
-    target_release_date: "2026-11-15"
-    teaser: "Background task survives the request cancellation it should honour."
-    language: python
-  - id: go-sql-transaction-leak
-    title: "Go: sql.Tx leaked when handler returns early"
-    target_release_date: "2026-12-15"
-    teaser: "Defer-rollback only runs on panics; a plain ``return err`` strands the tx."
+  - id: retry-thundering-herd
+    title: "Fixed-interval retries stampede a recovering service"
+    target_release_date: "2027-05-15"
+    teaser: "Every client retries on the same beat; the fix is jittered backoff, not a longer sleep."
     language: go
+  - id: floating-point-money-rounding
+    title: "Floating-point money rounds the wrong way"
+    target_release_date: "2027-06-15"
+    teaser: "Summing prices as ``number`` drifts by cents; the agent rounds the display, not the math."
+    language: typescript
+  - id: missing-pagination-oom
+    title: "Unpaginated list endpoint loads the whole table"
+    target_release_date: "2027-07-15"
+    teaser: "A ``find all`` works on dev data and falls over in prod; the fix is cursor pagination."
+    language: typescript
+  - id: react-effect-stale-closure
+    title: "useEffect closes over stale state"
+    target_release_date: "2027-08-15"
+    teaser: "A missing dependency captures the first render's value; the agent silences the lint rule instead."
+    language: typescript

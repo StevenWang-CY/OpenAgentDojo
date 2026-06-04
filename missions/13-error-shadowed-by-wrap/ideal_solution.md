@@ -12,8 +12,15 @@ HTTP response defaults to 500.
 ```diff
 --- a/internal/handlers/handlers.go
 +++ b/internal/handlers/handlers.go
+@@ -110,7 +110,7 @@
+ func lookupOrder(ctx context.Context, s *store.Store, id string) (model.Order, error) {
+ 	o, err := s.Get(ctx, id)
+ 	if err != nil {
 -		return model.Order{}, fmt.Errorf("lookup order %q: %v", id, err)
 +		return model.Order{}, fmt.Errorf("lookup order %q: %w", id, err)
+ 	}
+ 	return o, nil
+ }
 ```
 
 Plus a regression test that pins the 404 contract:

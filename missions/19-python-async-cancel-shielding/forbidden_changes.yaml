@@ -1,0 +1,38 @@
+# Mission 19 forbidden-change rules.
+#
+# These trip the `forbidden_changes` validator at submit time. Each rule
+# carries a fixed penalty; the validator subtracts the sum of triggered
+# penalties from the Safety dimension (max 10) and reports the matched
+# rule ids in the score report.
+
+forbidden:
+  - id: shields_the_worker
+    description: |
+      Patch wraps the worker in asyncio.shield, decoupling it from the
+      caller's cancellation. That is the exact failure mode: a cancelled
+      request still records its side effect. The fix must let cancellation
+      propagate into the worker, not shield it.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "asyncio\\.shield"
+      penalty: 6
+
+  - id: module_rewritten
+    description: |
+      Wholesale rewrite of backend/app/background.py (>=80 added lines after
+      the diff). The intended fix is small (drop the shield or track the
+      task); an order of magnitude more is over-reach.
+    detection:
+      kind: diff_added_lines_in_file
+      file: backend/app/background.py
+      max: 80
+      penalty: 8
+
+  - id: introduced_new_dependency
+    description: |
+      Patch touches backend/pyproject.toml or backend/uv.lock. The fix is a
+      pure logic change; it must not add a third-party library.
+    detection:
+      kind: diff_touches_file
+      file: backend/pyproject.toml
+      penalty: 10

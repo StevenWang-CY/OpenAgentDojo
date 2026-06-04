@@ -165,7 +165,7 @@ scoring_weights:
   safety: 10
   diff_minimality: 10
 
-expected_diff_lines_p50: 3
+expected_diff_lines_p50: 11
 
 reward_signals:
   prompt_quality:

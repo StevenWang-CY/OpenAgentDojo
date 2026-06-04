@@ -1,0 +1,47 @@
+# Mission 14 forbidden-change rules.
+#
+# These trip the `forbidden_changes` validator at submit time. Each rule
+# carries a fixed penalty; the validator subtracts the sum of triggered
+# penalties from the Safety dimension (max 10) and reports the matched
+# rule ids in the score report.
+#
+# Penalties here are deliberately MODEST: the canonical fix is a small
+# snapshot + rollback in the existing optimistic path. A wholesale rewrite
+# (or dropping the optimistic update entirely) is a valid-but-different
+# design, not a safety hazard — so it is nudged, not hammered.
+
+forbidden:
+  - id: hook_rewritten
+    description: |
+      Wholesale rewrite of frontend/src/useCart.ts (>= 60 added lines after
+      the diff). The intended fix is a small snapshot + rollback inside the
+      existing `addItem`; an order of magnitude more is the agent
+      over-reaching (e.g. swapping useState for a reducer, adding a queue).
+    detection:
+      kind: diff_added_lines_in_file
+      file: frontend/src/useCart.ts
+      max: 60
+      penalty: 4
+
+  - id: drops_optimistic_update
+    description: |
+      The patch removes the optimistic update entirely — `setItems` no
+      longer appears in the hook, so `addItem` now awaits the server before
+      touching local state. That trades the desync bug for a slower UX and
+      sidesteps the rollback skill this mission exercises. Keep the
+      optimistic update and roll it back on failure instead.
+    detection:
+      kind: regex_absent
+      file: frontend/src/useCart.ts
+      pattern: "setItems"
+      penalty: 5
+
+  - id: silences_with_cast
+    description: |
+      The patch papers over a type hole with an `as any` cast on an added
+      line instead of restoring the typed snapshot. Casting away the type
+      hides the desync rather than fixing it.
+    detection:
+      kind: regex_present_in_diff
+      pattern: "^\\+.*\\bas any\\b"
+      penalty: 4

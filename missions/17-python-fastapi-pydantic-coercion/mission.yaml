@@ -1,0 +1,209 @@
+id: python-fastapi-pydantic-coercion
+version: 1
+published: true
+title: "Quote and Placement Diverge on a String qty"
+short_description: "place_order validates through Pydantic; quote_order reads the raw dict. A string qty and a non-positive qty take different paths."
+difficulty: intermediate
+category: api
+estimated_minutes: 30
+skills_tested:
+  - http
+  - python
+  - agent-review
+
+# P1-1 — closed-vocabulary tags. The failure-mode tag mirrors
+# `failure_mode.id` so the catalog filter and the report copy stay
+# locked together. See apps/api/app/missions/manifest.py::_KNOWN_TAGS.
+tags:
+  - pydantic_silent_coercion
+  - skill:http
+  - lang:python
+
+# P1-2 — the single rubric dimension this mission is primarily designed
+# to exercise. The agent's partial fix makes the visible string case agree
+# but leaves a second validation gap (non-positive qty) the visible suite
+# never covers — a correctness regression a strong supervisor catches by
+# unifying both paths on one model.
+expected_weak_dim: final_correctness
+
+repo:
+  pack: data-api-demo
+  initial_commit: HEAD
+  workdir: /workspace
+  language_runtime: python312
+  setup_commands:
+    - pnpm install:py
+  ready_check: pnpm test:unit
+  test_commands:
+    unit: pnpm test:unit
+    integration: pnpm test:integration
+    typecheck: pnpm typecheck
+    lint: pnpm lint
+
+brief: |
+  ## What's broken
+
+  `app/orders_api.py` prices an incoming order two ways that must agree — a
+  quote is just a placement you don't persist. Today both `place_order` and
+  `quote_order` run the payload through the `OrderPayload` Pydantic model
+  (so `qty` is coerced to `int`) and both reject `qty <= 0`, so they *do*
+  agree. The problem is that the validate-then-check block is duplicated
+  verbatim in both functions.
+
+  An agent asked to de-duplicate it "DRYs" the quote path by stripping
+  `quote_order` down to a raw read of the dict's `qty` that skips the model.
+  That drops the model's coercion guarantees and the `qty > 0` rule, so a
+  quote silently diverges from the matching placement — a non-positive `qty`
+  is now rejected by one path and priced by the other.
+
+  The visible suite only feeds an integer `qty`, where the lighter read
+  still agrees, so it never sees the gap.
+
+  ## What you need to deliver
+
+  - A patch to `app/orders_api.py` that removes the duplication **without**
+    changing behaviour: both `quote_order` and `place_order` must run the
+    same coercion and the same `qty > 0` rule, returning the same total for
+    the same payload.
+  - A regression test that feeds a string `qty` and a non-positive `qty` and
+    asserts the two paths agree (and reject the same bad input).
+  - `pnpm test:unit`, `pnpm typecheck`, and `pnpm lint` stay green.
+
+  ## Where to look
+
+  Start in `app/orders_api.py`. The validate-then-check block in
+  `place_order` and `quote_order` is identical — the right de-duplication is
+  to extract one shared helper both call, not to gut one path. The visible
+  suite at `tests/unit/test_orders_api.py` only feeds an integer `qty`, so
+  it cannot see a divergence introduced on the quote path.
+
+  ## How you'll be scored
+
+  This mission rewards *one validation path, not two*. You earn points by
+  extracting a shared helper both functions call, by adding a regression
+  test that covers string coercion **and** non-positive rejection, and by
+  naming the coercion/validation contract in your prompt. You lose points
+  for "DRYing" the quote path by removing its validation, which reintroduces
+  a divergence the visible suite never feeds.
+
+failure_mode:
+  id: pydantic_silent_coercion
+  title: "Agent de-duplicates by gutting the quote path's validation"
+  description: |
+    Asked to remove the duplicated validate-then-check block, the agent
+    strips `quote_order` to a raw `int(payload["qty"])` read instead of
+    extracting a shared helper. The visible integer-qty suite still agrees,
+    so the diff reads like a clean simplification — but the raw read drops
+    the model's coercion and the `qty > 0` rule, so a non-positive qty is now
+    rejected by `place_order` and priced by `quote_order`. The two paths
+    diverge on a case the visible suite never feeds.
+  hint_after_submit_if_missed: "place_order rejects qty <= 0 via the model. Does quote_order after your change? De-duplicate by extracting a shared helper, not by removing validation."
+
+expected_files:
+  - backend/app/orders_api.py
+  - backend/tests/unit/test_orders_api.py
+
+expected_context:
+  required:
+    - backend/app/orders_api.py
+    - backend/tests/unit/test_orders_api.py
+  recommended:
+    - backend/app/calc.py
+  discouraged:
+    - backend/app/jobs.py
+    - backend/app/db.py
+
+agent:
+  patch_file: agent_patch.diff
+  response_template: prompts/response.md
+  reasoning_template: prompts/reasoning.md
+  intents_file: prompts/intents.yaml
+  applies_when:
+    prompt_min_chars: 40
+    prompt_must_contain_any:
+      - fix
+      - repair
+      - address
+      - coercion
+      - validate
+      - mismatch
+      - duplicate
+      - duplication
+      - refactor
+      - investigate
+      - debug
+  apply_mode: on_user_confirm
+
+visible_tests:
+  - "place_order and quote_order agree for an integer qty"
+  - "place_order prices the typed qty"
+
+hidden_tests:
+  command: bash hidden_tests/runner.sh
+  expected_pass:
+    - "string qty quotes the same as it places"
+    - "string qty is priced as an int, never repeated"
+    - "non-positive qty rejected by both paths"
+
+validators:
+  - kind: forbidden_changes
+    rules_file: forbidden_changes.yaml
+  - kind: diff_scope
+    max_files_changed: 3
+    max_added_lines: 60
+    must_touch_any_of:
+      - backend/app/orders_api.py
+    must_not_touch:
+      - backend/app/jobs.py
+      - backend/app/db.py
+      - backend/pyproject.toml
+  - kind: regression_test_required
+    test_globs:
+      - backend/tests/**/test_*.py
+    keywords_any_of:
+      - quote_order
+      - place_order
+      - coercion
+      - qty
+  - kind: no_skipped_tests
+    patterns:
+      - "@pytest.mark.skip"
+      - "@pytest.mark.xfail"
+
+scoring_weights:
+  final_correctness: 30
+  verification: 15
+  agent_review: 15
+  prompt_quality: 10
+  context_selection: 10
+  safety: 10
+  diff_minimality: 10
+
+expected_diff_lines_p50: 16
+
+reward_signals:
+  prompt_quality:
+    must_include_any:
+      - coercion
+      - validate
+      - same model
+      - regression test
+      - consistent
+    bonus_keywords:
+      - pydantic
+      - model_validate
+      - qty
+    penalty_if_under_chars: 40
+  verification:
+    required_categories:
+      - test
+    bonus_if_run_before_patch: true
+    require_targeted_test: "orders"
+  agent_review:
+    require_diff_open: true
+    bonus_if_revert_or_edit_after_diff: true
+  safety:
+    must_not_run_commands:
+      - "rm -rf"
+      - "curl"
+    must_not_introduce_deps: true

@@ -1,0 +1,19 @@
+# Mission 18 — score-envelope acceptance test.
+#
+# Used by the mission self-tests in apps/api/tests/missions/ and
+# apps/api/scripts/check_missions.py. Two synthetic event streams:
+#
+#   - "unmodified": the user accepts the agent patch (a fire-and-forget
+#     goroutine send) verbatim and submits. The caller no longer blocks,
+#     but the sender is stranded; hidden tests stay red. Score lands in
+#     the embarrassing-middle band.
+#
+#   - "ideal": the user reads Start before the diff, names select /
+#     ctx.Done() in the prompt, replaces the goroutine hand-off with a
+#     select that races the send against cancellation, and adds a
+#     regression test for the post-shutdown submit.
+
+acceptance:
+  min_unmodified: 25
+  max_unmodified: 62
+  min_ideal: 88

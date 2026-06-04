@@ -1,0 +1,13 @@
+--- a/internal/processor/processor.go
++++ b/internal/processor/processor.go
+@@ -64,7 +64,9 @@
+ // fix is to race the send against ``ctx.Done()`` so a shutting-down
+ // pipeline returns the caller's cancellation instead of deadlocking.
+ func (p *Processor) Submit(ctx context.Context, item string) error {
+-	p.in <- item
++	// Don't block the caller if the worker is mid-item: hand the send off
++	// to a goroutine so Submit returns immediately.
++	go func() { p.in <- item }()
+ 	return nil
+ }
+ 

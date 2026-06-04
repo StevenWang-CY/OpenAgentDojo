@@ -553,9 +553,16 @@ class LocalSandboxDriver(SandboxDriver):
         # reference the GRADER_DIR env var passed below, not a workspace-
         # relative path. The previous compat double-mount inside
         # /workspace/hidden_tests/ was an information-disclosure hole.
+        # Stage the grader OUTSIDE the workdir (a sibling dir), matching the
+        # production ``/grader`` mount. Keeping it inside ``handle.workdir``
+        # both leaks the hidden tests to the user's /tree+/file endpoints AND
+        # — for module-scoped toolchains like Go — pollutes the visible
+        # suite: ``go test ./...`` would descend into ``grader/hidden_tests``
+        # and run the (still-red) hidden tests as part of the visible run.
+        grader_root = handle.workdir.parent / f"{handle.workdir.name}.grader"
         hidden_dir = manifest_folder / "hidden_tests" if manifest_folder is not None else None
         if hidden_dir is not None and hidden_dir.is_dir():
-            target = handle.workdir / "grader" / "hidden_tests"
+            target = grader_root / "hidden_tests"
             target.mkdir(parents=True, exist_ok=True)
             shutil.copytree(hidden_dir, target, dirs_exist_ok=True)
 
@@ -582,11 +589,34 @@ class LocalSandboxDriver(SandboxDriver):
             hidden_cmd = self._hidden_command(mission)
             # Mission runner scripts often hard-code "/workspace" — point
             # them at the real workdir in the local driver.
-            wrapped = (
-                f"WORKSPACE_DIR={shlex.quote(str(handle.workdir))} "
-                f"GRADER_DIR={shlex.quote(str(handle.workdir / 'grader' / 'hidden_tests'))} "
-                f"{hidden_cmd}"
-            )
+            #
+            # Go (and any cross-language) runners shell out to a shared
+            # runner bridge that the production image stages at
+            # ``/opt/runners``. The local sandbox only contains the repo
+            # pack, so that path is absent and the runner's in-tree
+            # fallback (``$GRADER_DIR/../../_shared/docker/runners``)
+            # resolves to a directory that was never copied in. Point
+            # ``RUNNERS_DIR`` at the real in-repo runners so go-runner.sh
+            # (and friends) resolve under the local driver. ``hidden_dir``
+            # is ``missions/<id>/hidden_tests`` → the runners live two
+            # parents up under ``_shared/docker/runners``.
+            runners_dir = hidden_dir.parent.parent / "_shared" / "docker" / "runners"
+            grader_dir = grader_root / "hidden_tests"
+            # ``export VAR; cmd`` — NOT inline ``VAR=val cmd "$VAR"``. The
+            # default hidden command is ``bash "$GRADER_DIR/runner.sh"``;
+            # with an inline env-prefix the outer ``bash -lc`` expands
+            # ``$GRADER_DIR`` *before* applying the assignment (POSIX
+            # ordering), so it resolves to the empty string and the runner
+            # is invoked as ``bash /runner.sh`` (exit 127). Exporting in a
+            # preceding statement makes the variable visible to the
+            # expansion in the same shell.
+            exports = [
+                f"export WORKSPACE_DIR={shlex.quote(str(handle.workdir))}",
+                f"export GRADER_DIR={shlex.quote(str(grader_dir))}",
+            ]
+            if runners_dir.is_dir():
+                exports.insert(0, f"export RUNNERS_DIR={shlex.quote(str(runners_dir))}")
+            wrapped = "; ".join(exports) + "; " + hidden_cmd
             tr = await self._run_test_phase(handle, "hidden", wrapped, timeout_s=180)
             test_results["hidden"] = _test_run_to_dict(tr)
             logs["hidden"] = tr.stdout + "\n--- stderr ---\n" + tr.stderr
@@ -716,6 +746,12 @@ class LocalSandboxDriver(SandboxDriver):
         except OSError:
             pass
         shutil.rmtree(handle.workdir, ignore_errors=True)
+        # Remove the sibling grader stage (hidden tests live OUTSIDE the
+        # workdir — see freeze_and_grade).
+        shutil.rmtree(
+            handle.workdir.parent / f"{handle.workdir.name}.grader",
+            ignore_errors=True,
+        )
 
 
 # --------------------------------------------------------------- helpers
