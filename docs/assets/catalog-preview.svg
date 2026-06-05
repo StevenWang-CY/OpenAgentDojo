@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 540" width="800" height="540" role="img" aria-label="OpenAgentDojo mission catalog — filterable cards across TypeScript, Python, and Go showing category, difficulty, and the deliberately-flawed failure mode, with one recommended card and an up-next placeholder">
+  <defs>
+    <clipPath id="cwin"><rect x="8" y="4" width="784" height="528" rx="12"/></clipPath>
+    <style>
+      .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;}
+      .sans{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Inter,sans-serif;}
+      .ink{fill:#13171D;}.mut{fill:#5C6B7C;}.pri{fill:#0A45F5;}.amb{fill:#B5790F;}.red{fill:#C2452F;}
+    </style>
+  </defs>
+  <rect x="8" y="12" width="784" height="524" rx="14" fill="#0B1B3A" opacity="0.10"/>
+  <g clip-path="url(#cwin)">
+    <rect x="8" y="4" width="784" height="528" fill="#FFFFFF"/>
+    <!-- chrome -->
+    <rect x="8" y="4" width="784" height="30" fill="#F4F6FA"/>
+    <circle cx="30" cy="19" r="5" fill="#FF5F57"/><circle cx="48" cy="19" r="5" fill="#FEBC2E"/><circle cx="66" cy="19" r="5" fill="#28C840"/>
+    <text x="400" y="23" text-anchor="middle" class="mono mut" font-size="11">openagentdojo.app / missions</text>
+    <line x1="8" y1="34" x2="792" y2="34" stroke="#E3E8EF"/>
+    <!-- app bar -->
+    <text x="26" y="61" class="mono pri" font-size="15" font-weight="700">&lt;|&gt;</text>
+    <text x="58" y="61" class="sans ink" font-size="15" font-weight="600">Missions</text>
+    <rect x="300" y="44" width="290" height="24" rx="6" fill="#F4F6FA" stroke="#E3E8EF"/>
+    <text x="314" y="60" class="mono mut" font-size="11">⌘P  search 21 missions…</text>
+    <text x="724" y="61" text-anchor="end" class="mono mut" font-size="11">14 / 21 done</text>
+    <circle cx="748" cy="55" r="12" fill="#E6ECF6"/><text x="748" y="59" text-anchor="middle" class="sans ink" font-size="11" font-weight="600">J</text>
+    <line x1="8" y1="78" x2="792" y2="78" stroke="#E3E8EF"/>
+    <!-- filter strip -->
+    <rect x="26" y="90" width="44" height="22" rx="11" fill="#EEF2FF"/><text x="48" y="105" text-anchor="middle" class="mono pri" font-size="11">All</text>
+    <text x="86" y="105" class="mono mut" font-size="11">TypeScript</text>
+    <text x="168" y="105" class="mono mut" font-size="11">Python</text>
+    <text x="228" y="105" class="mono mut" font-size="11">Go</text>
+    <text x="766" y="105" text-anchor="end" class="mono mut" font-size="11">// failure mode ▾</text>
+    <line x1="8" y1="122" x2="792" y2="122" stroke="#E3E8EF"/>
+
+    <!-- ── card 1 (recommended) — 01 auth ─────────────────── -->
+    <g>
+      <rect x="28" y="136" width="236" height="187" rx="10" fill="#FFFFFF" stroke="#CBD6EA"/>
+      <text x="44" y="160" class="mono pri" font-size="10" letter-spacing="0.6">// RECOMMENDED</text>
+      <text x="44" y="182" class="mono mut" font-size="11">01 <tspan class="ink">│ auth</tspan></text>
+      <text x="250" y="182" text-anchor="end" class="mono amb" font-size="10" letter-spacing="0.4">INTERMEDIATE</text>
+      <text x="44" y="206" class="sans ink" font-size="14.5" font-weight="600">Expired Session Cookie</text>
+      <text x="44" y="224" class="sans ink" font-size="14.5" font-weight="600">Still Grants Access</text>
+      <text x="44" y="246" class="sans mut" font-size="12">Users with expired session</text>
+      <text x="44" y="262" class="sans mut" font-size="12">cookies can still reach routes.</text>
+      <text x="44" y="288" class="mono mut" font-size="10.5">failure_mode · <tspan class="amb" font-weight="600">checks_presence…</tspan></text>
+      <line x1="28" y1="300" x2="264" y2="300" stroke="#EEF1F6"/>
+      <text x="44" y="316" class="mono mut" font-size="10.5">~35m · auth · security</text>
+      <text x="250" y="316" text-anchor="end" class="mono mut" font-size="10.5">// ts →</text>
+    </g>
+    <!-- ── card 2 — 05 security ───────────────────────────── -->
+    <g>
+      <rect x="282" y="136" width="236" height="187" rx="10" fill="#FFFFFF" stroke="#E3E8EF"/>
+      <text x="298" y="162" class="mono mut" font-size="11">05 <tspan class="ink">│ security</tspan></text>
+      <text x="504" y="162" text-anchor="end" class="mono red" font-size="10" letter-spacing="0.4">ADVANCED</text>
+      <text x="298" y="190" class="sans ink" font-size="14.5" font-weight="600">Security Validation Removed</text>
+      <text x="298" y="208" class="sans ink" font-size="14.5" font-weight="600">(Settings Update → 403)</text>
+      <text x="298" y="232" class="sans mut" font-size="12">Owners get 403 on their own</text>
+      <text x="298" y="248" class="sans mut" font-size="12">settings; the fix drops the guard.</text>
+      <text x="298" y="288" class="mono mut" font-size="10.5">failure_mode · <tspan class="amb" font-weight="600">security_check_removed</tspan></text>
+      <line x1="282" y1="300" x2="518" y2="300" stroke="#EEF1F6"/>
+      <text x="298" y="316" class="mono mut" font-size="10.5">~35m · security · auth</text>
+      <text x="504" y="316" text-anchor="end" class="mono mut" font-size="10.5">// ts →</text>
+    </g>
+    <!-- ── card 3 — 08 database ───────────────────────────── -->
+    <g>
+      <rect x="536" y="136" width="236" height="187" rx="10" fill="#FFFFFF" stroke="#E3E8EF"/>
+      <text x="552" y="162" class="mono mut" font-size="11">08 <tspan class="ink">│ database</tspan></text>
+      <text x="758" y="162" text-anchor="end" class="mono red" font-size="10" letter-spacing="0.4">ADVANCED</text>
+      <text x="552" y="190" class="sans ink" font-size="14.5" font-weight="600">Async Race Condition</text>
+      <text x="552" y="208" class="sans ink" font-size="14.5" font-weight="600">(Queue Processing)</text>
+      <text x="552" y="232" class="sans mut" font-size="12">Jobs process twice under load.</text>
+      <text x="552" y="248" class="sans mut" font-size="12">The fix is a check-then-act.</text>
+      <text x="552" y="288" class="mono mut" font-size="10.5">failure_mode · <tspan class="amb" font-weight="600">race_condition</tspan></text>
+      <line x1="536" y1="300" x2="772" y2="300" stroke="#EEF1F6"/>
+      <text x="552" y="316" class="mono mut" font-size="10.5">~40m · concurrency · sql</text>
+      <text x="758" y="316" text-anchor="end" class="mono mut" font-size="10.5">// py →</text>
+    </g>
+    <!-- ── card 4 — 11 debugging (go) ─────────────────────── -->
+    <g>
+      <rect x="28" y="339" width="236" height="187" rx="10" fill="#FFFFFF" stroke="#E3E8EF"/>
+      <text x="44" y="365" class="mono mut" font-size="11">11 <tspan class="ink">│ debugging</tspan></text>
+      <text x="250" y="365" text-anchor="end" class="mono amb" font-size="10" letter-spacing="0.4">INTERMEDIATE</text>
+      <text x="44" y="393" class="sans ink" font-size="14.5" font-weight="600">Goroutine Leak</text>
+      <text x="44" y="411" class="sans ink" font-size="14.5" font-weight="600">on Shutdown</text>
+      <text x="44" y="435" class="sans mut" font-size="12">Pool.Stop() returns without</text>
+      <text x="44" y="451" class="sans mut" font-size="12">cancelling its workers.</text>
+      <text x="44" y="491" class="mono mut" font-size="10.5">failure_mode · <tspan class="amb" font-weight="600">goroutine_leak</tspan></text>
+      <line x1="28" y1="503" x2="264" y2="503" stroke="#EEF1F6"/>
+      <text x="44" y="519" class="mono mut" font-size="10.5">~30m · concurrency · go</text>
+      <text x="250" y="519" text-anchor="end" class="mono mut" font-size="10.5">// go →</text>
+    </g>
+    <!-- ── card 5 — 16 refactoring (py) ───────────────────── -->
+    <g>
+      <rect x="282" y="339" width="236" height="187" rx="10" fill="#FFFFFF" stroke="#E3E8EF"/>
+      <text x="298" y="365" class="mono mut" font-size="11">16 <tspan class="ink">│ refactoring</tspan></text>
+      <text x="504" y="365" text-anchor="end" class="mono amb" font-size="10" letter-spacing="0.4">INTERMEDIATE</text>
+      <text x="298" y="393" class="sans ink" font-size="14.5" font-weight="600">Pandas iterrows Vectorised</text>
+      <text x="298" y="411" class="sans ink" font-size="14.5" font-weight="600">Without the Discount</text>
+      <text x="298" y="435" class="sans mut" font-size="12">Vectorised for speed, but the</text>
+      <text x="298" y="451" class="sans mut" font-size="12">rewrite drops the discount term.</text>
+      <text x="298" y="491" class="mono mut" font-size="10.5">failure_mode · <tspan class="amb" font-weight="600">pandas_iterrows_perf_trap</tspan></text>
+      <line x1="282" y1="503" x2="518" y2="503" stroke="#EEF1F6"/>
+      <text x="298" y="519" class="mono mut" font-size="10.5">~30m · data · python</text>
+      <text x="504" y="519" text-anchor="end" class="mono mut" font-size="10.5">// py →</text>
+    </g>
+    <!-- ── card 6 — up next ───────────────────────────────── -->
+    <g>
+      <rect x="536" y="339" width="236" height="187" rx="10" fill="#FAFBFD" stroke="#E3E8EF" stroke-dasharray="4 4"/>
+      <text x="552" y="365" class="mono mut" font-size="11">🕒 2026-07</text>
+      <text x="758" y="365" text-anchor="end" class="mono mut" font-size="10" letter-spacing="0.4">// UP NEXT</text>
+      <text x="552" y="397" class="sans mut" font-size="14.5" font-weight="600">More missions,</text>
+      <text x="552" y="415" class="sans mut" font-size="14.5" font-weight="600">shipping monthly</text>
+      <text x="552" y="439" class="sans mut" font-size="12">Dated placeholders keep the</text>
+      <text x="552" y="455" class="sans mut" font-size="12">roadmap honest until they land.</text>
+      <line x1="536" y1="503" x2="772" y2="503" stroke="#EEF1F6" stroke-dasharray="4 4"/>
+      <text x="552" y="519" class="mono mut" font-size="10.5">watch repo ↗</text>
+      <text x="758" y="519" text-anchor="end" class="mono mut" font-size="10.5">// go</text>
+    </g>
+  </g>
+  <rect x="8" y="4" width="784" height="528" rx="12" fill="none" stroke="#DCE2EB"/>
+</svg>

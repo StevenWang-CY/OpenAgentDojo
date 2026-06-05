@@ -1,0 +1,221 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 812" width="1280" height="812" role="img" aria-label="OpenAgentDojo workspace — reviewing a deliberately-flawed agent patch in mission 01">
+  <defs>
+    <clipPath id="win"><rect x="8" y="4" width="1264" height="796" rx="12"/></clipPath>
+    <style>
+      .mono { font-family: ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,monospace; }
+      .sans { font-family: ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Inter,sans-serif; }
+      .ink  { fill:#13171D; } .mut { fill:#5C6B7C; } .pri { fill:#0A45F5; }
+      .grn  { fill:#15A05B; } .red { fill:#D6493A; } .amb { fill:#B5790F; }
+    </style>
+  </defs>
+
+  <!-- soft drop shadow -->
+  <rect x="8" y="14" width="1264" height="792" rx="14" fill="#0B1B3A" opacity="0.10"/>
+
+  <g clip-path="url(#win)">
+    <!-- window base -->
+    <rect x="8" y="4" width="1264" height="796" fill="#FFFFFF"/>
+
+    <!-- ── window chrome ───────────────────────────────────────────── -->
+    <rect x="8" y="4" width="1264" height="34" fill="#F4F6FA"/>
+    <circle cx="32" cy="21" r="6" fill="#FF5F57"/>
+    <circle cx="52" cy="21" r="6" fill="#FEBC2E"/>
+    <circle cx="72" cy="21" r="6" fill="#28C840"/>
+    <text x="640" y="25" text-anchor="middle" class="mono mut" font-size="12">openagentdojo.app / workspace / 01-auth-cookie-expiration</text>
+    <line x1="8" y1="38" x2="1272" y2="38" stroke="#E3E8EF" stroke-width="1"/>
+
+    <!-- ── app top bar ─────────────────────────────────────────────── -->
+    <text x="26" y="69" class="mono pri" font-size="17" font-weight="700">&lt;|&gt;</text>
+    <text x="64" y="69" class="sans ink" font-size="14.5" font-weight="600">01 · Expired Session Cookie Still Grants Access</text>
+    <!-- difficulty chip -->
+    <rect x="486" y="55" width="104" height="22" rx="11" fill="#FBF1DE"/>
+    <text x="538" y="70" text-anchor="middle" class="mono amb" font-size="10.5" font-weight="600" letter-spacing="0.5">INTERMEDIATE</text>
+    <!-- honor-mode chip -->
+    <rect x="600" y="55" width="92" height="22" rx="11" fill="#EEF2FF"/>
+    <text x="646" y="70" text-anchor="middle" class="mono pri" font-size="10.5" font-weight="600" letter-spacing="0.5">HONOR MODE</text>
+    <!-- signals pill · give up · overflow · submit -->
+    <rect x="912" y="50" width="132" height="32" rx="8" fill="#FFFFFF" stroke="#D6DCE6"/>
+    <circle cx="930" cy="66" r="6" fill="none" stroke="#0A45F5" stroke-width="1.6"/><line x1="930" y1="66" x2="933" y2="62" stroke="#0A45F5" stroke-width="1.6" stroke-linecap="round"/>
+    <text x="944" y="71" class="mono ink" font-size="12" font-weight="600">4/4</text><text x="972" y="71" class="mono mut" font-size="12">signals ▾</text>
+    <text x="1066" y="71" class="sans mut" font-size="12.5">Give up</text>
+    <text x="1132" y="71" class="sans mut" font-size="16" font-weight="700">⋯</text>
+    <rect x="1158" y="50" width="94" height="32" rx="8" fill="#0A45F5"/>
+    <text x="1205" y="71" text-anchor="middle" class="sans" fill="#FFFFFF" font-size="13.5" font-weight="600">Submit ▶</text>
+    <line x1="8" y1="92" x2="1272" y2="92" stroke="#E3E8EF" stroke-width="1"/>
+
+    <!-- ════════════ LEFT — file tree + context selector ════════════ -->
+    <rect x="8" y="92" width="250" height="708" fill="#FAFBFD"/>
+    <line x1="258" y1="92" x2="258" y2="800" stroke="#E3E8EF" stroke-width="1"/>
+    <text x="26" y="118" class="mono mut" font-size="10.5" letter-spacing="0.4">// FILES · 2 OF 2 REQUIRED SELECTED</text>
+
+    <!-- tree rows -->
+    <g class="mono" font-size="12.5">
+      <text x="28"  y="146" class="mut">▾</text><text x="46" y="146" class="ink">backend/</text>
+      <!-- checked: required -->
+      <rect x="46"  y="160" width="13" height="13" rx="3" fill="#0A45F5"/>
+      <path d="M49 166.5 l2.4 2.4 l4-4.4" stroke="#FFFFFF" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="66" y="170" class="ink">auth/session.ts</text>
+      <rect x="46"  y="184" width="13" height="13" rx="3" fill="#0A45F5"/>
+      <path d="M49 190.5 l2.4 2.4 l4-4.4" stroke="#FFFFFF" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="66" y="194" class="ink">middleware/requireAuth.ts</text>
+      <!-- recommended, unchecked -->
+      <rect x="46"  y="208" width="13" height="13" rx="3" fill="#FFFFFF" stroke="#A7B2C2" stroke-dasharray="2 2"/>
+      <text x="66" y="218" class="mut">tests/auth.test.ts</text>
+      <text x="28"  y="244" class="mut">▾</text><text x="46" y="244" class="ink">frontend/</text>
+      <!-- discouraged -->
+      <rect x="46"  y="258" width="13" height="13" rx="3" fill="#FFFFFF" stroke="#D6DCE6"/>
+      <text x="66" y="268" fill="#9AA6B5">components/LoginForm.tsx</text>
+      <rect x="46"  y="282" width="13" height="13" rx="3" fill="#FFFFFF" stroke="#D6DCE6"/>
+      <text x="66" y="292" fill="#9AA6B5">styles/login.css</text>
+      <text x="28"  y="318" class="mut">▸</text><text x="46" y="318" class="ink">docs/</text>
+    </g>
+
+    <!-- context legend -->
+    <line x1="26" y1="344" x2="240" y2="344" stroke="#E3E8EF"/>
+    <g class="mono" font-size="10.5">
+      <rect x="26" y="360" width="10" height="10" rx="2" fill="#0A45F5"/><text x="44" y="369" class="mut">required</text>
+      <rect x="118" y="360" width="10" height="10" rx="2" fill="#FFFFFF" stroke="#A7B2C2" stroke-dasharray="2 2"/><text x="136" y="369" class="mut">recommended</text>
+      <rect x="26" y="380" width="10" height="10" rx="2" fill="#FFFFFF" stroke="#D6DCE6"/><text x="44" y="389" fill="#9AA6B5">discouraged — out of scope</text>
+    </g>
+
+    <!-- quick-open hint -->
+    <rect x="26" y="744" width="206" height="34" rx="8" fill="#FFFFFF" stroke="#E3E8EF"/>
+    <text x="40" y="765" class="mono mut" font-size="11">⌘P quick open · ⌘⇧F search</text>
+
+    <!-- ════════════ CENTER TOP — diff viewer ════════════ -->
+    <!-- tab strip -->
+    <text x="282" y="118" class="mono mut" font-size="12.5">Editor</text>
+    <text x="350" y="118" class="mono ink" font-size="12.5" font-weight="700">Diff</text>
+    <rect x="348" y="126" width="34" height="2.5" fill="#0A45F5"/>
+    <text x="410" y="118" class="mono mut" font-size="12.5">Brief</text>
+    <text x="884" y="118" text-anchor="end" class="mono mut" font-size="11">agent_patch.diff · +3 −2</text>
+    <line x1="258" y1="134" x2="900" y2="134" stroke="#E3E8EF"/>
+
+    <text x="282" y="160" class="mono mut" font-size="11">backend/auth/session.ts</text>
+
+    <!-- diff lines -->
+    <g class="mono" font-size="12.5">
+      <!-- ctx -->
+      <text x="290" y="190" class="mut">44</text>
+      <text x="330" y="190" class="ink">export function validate(raw: string): Session | null {</text>
+      <!-- del -->
+      <rect x="266" y="198" width="626" height="22" fill="#FBE9E7"/>
+      <text x="290" y="214" class="red" font-weight="700">−</text>
+      <text x="306" y="214" class="red">45</text>
+      <text x="330" y="214" class="ink">  const s = decode(raw)</text>
+      <!-- add -->
+      <rect x="266" y="220" width="626" height="22" fill="#E7F6EE"/>
+      <text x="290" y="236" class="grn" font-weight="700">+</text>
+      <text x="306" y="236" class="grn">45</text>
+      <text x="330" y="236" class="ink">  const s = decode(raw || "")</text>
+      <!-- del -->
+      <rect x="266" y="242" width="626" height="22" fill="#FBE9E7"/>
+      <text x="290" y="258" class="red" font-weight="700">−</text>
+      <text x="306" y="258" class="red">46</text>
+      <text x="330" y="258" class="ink">  return activeUids.has(s.uid)</text>
+      <!-- add -->
+      <rect x="266" y="264" width="626" height="22" fill="#E7F6EE"/>
+      <text x="290" y="280" class="grn" font-weight="700">+</text>
+      <text x="306" y="280" class="grn">47</text>
+      <text x="330" y="280" class="ink">  if (!s) return null</text>
+      <rect x="266" y="286" width="626" height="22" fill="#E7F6EE"/>
+      <text x="290" y="302" class="grn" font-weight="700">+</text>
+      <text x="306" y="302" class="grn">48</text>
+      <text x="330" y="302" class="ink">  return activeUids.has(s.uid)</text>
+    </g>
+
+    <!-- warning callout -->
+    <rect x="282" y="328" width="596" height="64" rx="8" fill="#FBF4E4"/>
+    <rect x="282" y="328" width="4" height="64" rx="2" fill="#B5790F"/>
+    <text x="302" y="352" class="sans amb" font-size="12.5" font-weight="600">⚠  Guard added against a missing cookie — but s.exp is never checked.</text>
+    <text x="302" y="374" class="sans mut" font-size="12">The agent fixed <tspan class="ink" font-weight="600">presence</tspan>, not <tspan class="ink" font-weight="600">expiration</tspan>. A hidden test will exercise an expired session.</text>
+
+    <line x1="258" y1="92" x2="258" y2="800" stroke="#E3E8EF"/>
+    <line x1="900" y1="92" x2="900" y2="800" stroke="#E3E8EF"/>
+
+    <!-- ════════════ CENTER BOTTOM — terminal + tests ════════════ -->
+    <line x1="258" y1="430" x2="900" y2="430" stroke="#E3E8EF"/>
+    <text x="282" y="456" class="mono ink" font-size="12.5" font-weight="700">Terminal</text>
+    <rect x="362" y="444" width="40" height="2.5" fill="#0A45F5"/>
+    <text x="430" y="456" class="mono mut" font-size="12.5">Tests</text>
+    <text x="884" y="456" text-anchor="end" class="mono mut" font-size="11">command.run × 6</text>
+
+    <!-- dark terminal panel -->
+    <rect x="266" y="470" width="626" height="318" rx="8" fill="#15191F"/>
+    <rect x="266" y="470" width="626" height="28" rx="8" fill="#1D232B"/>
+    <rect x="266" y="488" width="626" height="10" fill="#1D232B"/>
+    <text x="282" y="488" class="mono" fill="#8593A5" font-size="11">sandbox · fullstack-auth-demo · zsh · rootless docker</text>
+    <g class="mono" font-size="12.5">
+      <text x="282" y="524"><tspan class="pri">$</tspan> <tspan fill="#E6EBF2">pnpm test:integration auth</tspan></text>
+      <text x="282" y="548" fill="#8593A5">backend/tests/auth.test.ts  ......  <tspan class="grn">6 passed</tspan></text>
+      <text x="282" y="572" fill="#8593A5">backend/tests/refresh.test.ts  ✗  <tspan class="red">1 failing (hidden)</tspan></text>
+      <text x="282" y="600" fill="#C4CDDA">  ● expired session should redirect to /login</text>
+      <text x="282" y="624" class="red">  expect(res.status).toBe(302) — received 200</text>
+      <text x="282" y="660"><tspan class="pri">$</tspan> <tspan fill="#E6EBF2">pnpm typecheck</tspan></text>
+      <text x="282" y="684" fill="#8593A5">tsc --noEmit  ·  <tspan class="grn">no errors</tspan></text>
+      <text x="282" y="720"><tspan class="pri">$</tspan> <tspan fill="#E6EBF2">dojo submit --note </tspan><tspan fill="#7FD4C1">"expiry check + regression test"</tspan></text>
+      <text x="282" y="752" fill="#8593A5">freezing sandbox · mounting /grader · running hidden suite…</text>
+    </g>
+
+    <!-- ════════════ RIGHT — agent chat + score preview ════════════ -->
+    <text x="922" y="118" class="mono mut" font-size="10.5" letter-spacing="0.4">// AGENT · DETERMINISTIC SIMULATION</text>
+
+    <!-- user prompt bubble -->
+    <rect x="970" y="132" width="282" height="62" rx="10" fill="#EEF2FF"/>
+    <text x="958" y="148" text-anchor="end" class="mono pri" font-size="9.5">you</text>
+    <text x="986" y="154" class="sans ink" font-size="12">Investigate the expired-session bug.</text>
+    <text x="986" y="172" class="sans ink" font-size="12">Keep the fix minimal and add a</text>
+    <text x="986" y="190" class="sans ink" font-size="12">regression test for expiration.</text>
+
+    <!-- agent bubble -->
+    <rect x="922" y="206" width="300" height="92" rx="10" fill="#F4F6FA" stroke="#E3E8EF"/>
+    <text x="936" y="222" class="mono mut" font-size="9.5">agent</text>
+    <text x="936" y="240" class="sans ink" font-size="12">Added a presence guard so a missing</text>
+    <text x="936" y="258" class="sans ink" font-size="12">cookie no longer throws. The change</text>
+    <text x="936" y="276" class="sans ink" font-size="12">is small and self-contained. ✔</text>
+    <!-- apply chip -->
+    <rect x="936" y="306" width="120" height="28" rx="7" fill="#FFFFFF" stroke="#CBD3DF"/>
+    <text x="996" y="324" text-anchor="middle" class="sans ink" font-size="12" font-weight="600">Apply patch</text>
+    <text x="1070" y="324" class="mono grn" font-size="11">patch.applied ✓</text>
+
+    <!-- process signals panel (mirrors ScorePreview) -->
+    <line x1="922" y1="364" x2="1252" y2="364" stroke="#E3E8EF"/>
+    <circle cx="928" cy="388" r="6.5" fill="none" stroke="#0A45F5" stroke-width="1.5"/><line x1="928" y1="388" x2="931.5" y2="383.5" stroke="#0A45F5" stroke-width="1.5" stroke-linecap="round"/>
+    <text x="942" y="392" class="sans ink" font-size="13" font-weight="600">Process signals</text>
+    <text x="922" y="410" class="sans mut" font-size="11">Live indicators on the process dimensions.</text>
+    <text x="922" y="425" class="sans mut" font-size="11">Hidden tests stay hidden until you submit.</text>
+
+    <g class="sans" font-size="12">
+      <!-- ✓ context -->
+      <path d="M922,447 l3,3 l5.5,-6.5" fill="none" stroke="#15A05B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="940" y="450" class="ink">Context: <tspan font-weight="600">2/2</tspan> required selected</text>
+      <!-- ✓ verification -->
+      <path d="M922,475 l3,3 l5.5,-6.5" fill="none" stroke="#15A05B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="940" y="478" class="ink">Verification: <tspan font-weight="600">1</tspan> check run</text>
+      <!-- ✓ diff -->
+      <path d="M922,503 l3,3 l5.5,-6.5" fill="none" stroke="#15A05B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="940" y="506" class="ink">Diff: <tspan font-weight="600">1</tspan> file changed</text>
+      <!-- ✓ agent review -->
+      <path d="M922,531 l3,3 l5.5,-6.5" fill="none" stroke="#15A05B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="940" y="534" class="ink">Agent review: diff opened</text>
+      <!-- ✗ final correctness (hidden) -->
+      <text x="924" y="562" class="mut" font-size="12">✕</text>
+      <text x="940" y="562" class="mut">Final correctness: hidden until submit</text>
+    </g>
+
+    <!-- timeline strip -->
+    <line x1="922" y1="606" x2="1252" y2="606" stroke="#E3E8EF"/>
+    <text x="922" y="632" class="mono mut" font-size="10.5" letter-spacing="0.4">// SUPERVISION TIMELINE</text>
+    <g class="mono" font-size="11">
+      <circle cx="928" cy="656" r="3" fill="#0A45F5"/><text x="942" y="660" class="mut">context.selected · 2 files</text>
+      <circle cx="928" cy="680" r="3" fill="#0A45F5"/><text x="942" y="684" class="mut">prompt.submitted · "minimal + regression…"</text>
+      <circle cx="928" cy="704" r="3" fill="#0A45F5"/><text x="942" y="708" class="mut">patch.applied · +3 −2</text>
+      <circle cx="928" cy="728" r="3" fill="#0A45F5"/><text x="942" y="732" class="mut">diff.opened · session.ts</text>
+      <circle cx="928" cy="752" r="3" fill="#15A05B"/><text x="942" y="756" class="mut">command.run · pnpm test:integration</text>
+      <circle cx="928" cy="776" r="3" fill="#B5790F"/><text x="942" y="780" class="mut">submission.requested · grading…</text>
+    </g>
+  </g>
+
+  <!-- crisp outer border -->
+  <rect x="8" y="4" width="1264" height="796" rx="12" fill="none" stroke="#DCE2EB" stroke-width="1"/>
+</svg>

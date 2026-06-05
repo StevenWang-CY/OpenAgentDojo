@@ -5,7 +5,7 @@ Single source of truth for the load-bearing nouns and conventions used across co
 ## Nouns
 
 - **Mission** — a curated supervision exercise. (Product doc calls them "Scenarios"; in code & DB we use **Mission**.)
-- **Repo Pack** — a frozen base repository the mission runs against (e.g. `fullstack-auth-demo@v1`). Lives under [missions/_shared/repos/](missions/_shared/repos/).
+- **Repo Pack** — a frozen base repository the mission runs against (e.g. `fullstack-auth-demo@v1`). Lives under [missions/_shared/repos/](missions/_shared/repos/). Three packs ship today, one per language runtime: `fullstack-auth-demo` (TypeScript/Node), `data-api-demo` (Python/FastAPI), and `go-orders-service` (Go 1.22).
 - **Session** — one user's attempt at one mission. Pairs a row in `sessions` with an ephemeral sandbox container.
 - **Workspace** — the in-browser environment serving an active Session (file tree, editor, terminal, diff, chat, brief, timeline).
 - **Agent Turn** — one prompt → response cycle. Each turn records the user prompt, selected context, agent response, and optional applied patch.
@@ -74,8 +74,14 @@ Single source of truth for the load-bearing nouns and conventions used across co
 | Data-export jobs (P0-6) | `data_exports` |
 | Magic-link issuance | `magic_link_tokens` |
 | GitHub OAuth identity (P0-7) | `users.github_id` / `github_login` / `github_avatar_url` / `github_html_url` / `github_verified_at` |
+| Session mode (self-study vs proctored, P0-8) | `sessions.mode` |
+| Repo-pack metadata + mission tags (P1-1) | `repo_packs`, `missions.repo_pack_id` / `tags` |
+| Adaptive next-mission cache (P1-2) | `user_recommendations`, `missions.expected_weak_dim` |
+| Per-session scratchpad (P1-4) | `session_notes` |
+| Cached LLM-generated prose (P1-1/2/4) | `llm_cache` |
+| Coaching-reflection opt-out (P1-4) | `users.coaching_opt_out` |
 
-See [IMPLEMENTATION_PLAN.md §6](IMPLEMENTATION_PLAN.md) for the original DDL and [P0_DESIGN.md](P0_DESIGN.md) / [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md) for the migrations 0011–0019 that added the rest.
+See [IMPLEMENTATION_PLAN.md §6](IMPLEMENTATION_PLAN.md) for the original DDL, and [P0_DESIGN.md](P0_DESIGN.md) / [P0_DESIGN_11_13.md](P0_DESIGN_11_13.md) / [P1_DESIGN.md](P1_DESIGN.md) for the migrations (0011–0033) that added the rest. The migrations under [`apps/api/alembic/versions/`](apps/api/alembic/versions/) are always the runtime truth.
 
 ## Architectural decisions of record
 

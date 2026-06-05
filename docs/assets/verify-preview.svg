@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 540" width="800" height="540" role="img" aria-label="OpenAgentDojo public verification page — a minimal, server-signed credential showing the score, mission, identity, and the verification hash and signature">
+  <defs>
+    <clipPath id="vwin"><rect x="8" y="4" width="784" height="528" rx="12"/></clipPath>
+    <style>
+      .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;}
+      .sans{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Inter,sans-serif;}
+      .ink{fill:#13171D;}.mut{fill:#5C6B7C;}.pri{fill:#0A45F5;}.grn{fill:#15A05B;}
+    </style>
+  </defs>
+  <rect x="8" y="12" width="784" height="524" rx="14" fill="#0B1B3A" opacity="0.10"/>
+  <g clip-path="url(#vwin)">
+    <rect x="8" y="4" width="784" height="528" fill="#FBFCFE"/>
+    <!-- chrome -->
+    <rect x="8" y="4" width="784" height="30" fill="#F4F6FA"/>
+    <circle cx="30" cy="19" r="5" fill="#FF5F57"/><circle cx="48" cy="19" r="5" fill="#FEBC2E"/><circle cx="66" cy="19" r="5" fill="#28C840"/>
+    <text x="400" y="23" text-anchor="middle" class="mono mut" font-size="11">openagentdojo.app / verify / 7c41a9b2…f9</text>
+    <line x1="8" y1="34" x2="792" y2="34" stroke="#E3E8EF"/>
+
+    <!-- eyebrow row -->
+    <text x="130" y="66" class="mono mut" font-size="10" letter-spacing="1.8">// VERIFIED REPORT</text>
+    <text x="670" y="66" text-anchor="end" class="mono mut" font-size="10" letter-spacing="1.8">OPENAGENTDOJO.APP</text>
+
+    <!-- proctored mode banner -->
+    <rect x="130" y="80" width="540" height="34" rx="8" fill="#EEF2FF" stroke="#B9C8F6"/>
+    <path d="M150,90 L158,93 L158,99 Q158,105 150,107 Q142,105 142,99 L142,93 Z" fill="none" stroke="#0A45F5" stroke-width="1.4"/>
+    <path d="M146.5,98 l2.4,2.4 l4.2,-4.8" fill="none" stroke="#0A45F5" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="172" y="102" class="sans ink" font-size="12">Identity verified</text>
+
+    <!-- score card -->
+    <rect x="130" y="124" width="540" height="120" rx="16" fill="#FFFFFF" stroke="#E3E8EF"/>
+    <text x="400" y="186" text-anchor="middle" class="mono ink" font-size="52" font-weight="600" letter-spacing="-1">78<tspan class="mut" font-size="26" font-weight="500"> / 100</tspan></text>
+    <text x="400" y="212" text-anchor="middle" font-size="12.5"><tspan class="sans ink" font-weight="600">Expired Session Cookie Still Grants Access</tspan><tspan class="mono mut"> · auth-cookie-expiration</tspan></text>
+    <text x="400" y="232" text-anchor="middle" class="mono mut" font-size="11">@jane (Jane Doe) · attempt 2</text>
+
+    <!-- status list card -->
+    <rect x="130" y="256" width="540" height="54" rx="12" fill="#FFFFFF" stroke="#E3E8EF"/>
+    <path d="M147,279 l3,3 l5.5,-6.5" fill="none" stroke="#15A05B" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="166" y="282" class="sans mut" font-size="11.5">Failure mode identified</text>
+    <text x="148" y="300" class="mono mut" font-size="11">· Graded 2026-05-23 18:42 UTC · rubric <tspan class="ink">v1</tspan></text>
+
+    <!-- signature card -->
+    <rect x="130" y="322" width="540" height="126" rx="12" fill="#FFFFFF" stroke="#E3E8EF"/>
+    <path d="M150,334 L158,337 L158,343 Q158,349 150,351 Q142,349 142,343 L142,337 Z" fill="none" stroke="#0A45F5" stroke-width="1.3"/>
+    <path d="M146.5,342 l2.4,2.4 l4.2,-4.8" fill="none" stroke="#0A45F5" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="168" y="346" class="mono mut" font-size="10.5" letter-spacing="1.2">SERVER-SIGNED ENVELOPE</text>
+    <text x="148" y="370" class="sans mut" font-size="11">Issued by OpenAgentDojo. This page was rendered from a server-signed</text>
+    <text x="148" y="386" class="sans mut" font-size="11">envelope; it cannot be fabricated client-side.</text>
+    <line x1="148" y1="400" x2="652" y2="400" stroke="#EEF1F6"/>
+    <text x="148" y="420" class="mono mut" font-size="11">verification_hash</text>
+    <text x="652" y="420" text-anchor="end" class="mono ink" font-size="11">3a4b9e07…f12c  ⧉</text>
+    <text x="148" y="438" class="mono mut" font-size="11">signature</text>
+    <text x="652" y="438" text-anchor="end" class="mono ink" font-size="11">0xde91c4…a7b3  ⧉</text>
+
+    <!-- note card -->
+    <rect x="130" y="460" width="540" height="50" rx="12" fill="#FFFFFF" stroke="#E3E8EF"/>
+    <text x="148" y="482" class="sans mut" font-size="11">This page intentionally hides prompts, events, and code edits.</text>
+    <text x="148" y="500" class="mono pri" font-size="11">Open full report (auth required) →</text>
+
+    <!-- footer -->
+    <text x="400" y="526" text-anchor="middle" class="mono mut" font-size="9.5" letter-spacing="1.2">SCHEMA V1 · OPENAGENTDOJO.APP</text>
+  </g>
+  <rect x="8" y="4" width="784" height="528" rx="12" fill="none" stroke="#DCE2EB"/>
+</svg>

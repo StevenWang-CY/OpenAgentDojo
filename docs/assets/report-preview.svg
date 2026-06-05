@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 540" width="800" height="540" role="img" aria-label="OpenAgentDojo score report — a large total score, failure-mode and hidden-test status, an honor-mode chip, a seven-axis supervision radar, and per-dimension breakdown bars with signal lines">
+  <defs>
+    <clipPath id="rwin"><rect x="8" y="4" width="784" height="528" rx="12"/></clipPath>
+    <style>
+      .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;}
+      .sans{font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Inter,sans-serif;}
+      .ink{fill:#13171D;}.mut{fill:#5C6B7C;}.pri{fill:#0A45F5;}.grn{fill:#15A05B;}
+    </style>
+  </defs>
+  <rect x="8" y="12" width="784" height="524" rx="14" fill="#0B1B3A" opacity="0.10"/>
+  <g clip-path="url(#rwin)">
+    <rect x="8" y="4" width="784" height="528" fill="#FFFFFF"/>
+    <!-- chrome -->
+    <rect x="8" y="4" width="784" height="30" fill="#F4F6FA"/>
+    <circle cx="30" cy="19" r="5" fill="#FF5F57"/><circle cx="48" cy="19" r="5" fill="#FEBC2E"/><circle cx="66" cy="19" r="5" fill="#28C840"/>
+    <text x="400" y="23" text-anchor="middle" class="mono mut" font-size="11">openagentdojo.app / report / 7c41a9b2…f9</text>
+    <line x1="8" y1="34" x2="792" y2="34" stroke="#E3E8EF"/>
+
+    <!-- breadcrumb -->
+    <text x="26" y="56" class="mono mut" font-size="11">← missions <tspan opacity="0.5">/</tspan> <tspan class="ink">report · 7c41a9b2c3d4…</tspan></text>
+
+    <!-- header -->
+    <text x="26" y="128" class="mono ink" font-size="62" font-weight="600" letter-spacing="-2">72<tspan class="mut" font-size="22" font-weight="500"> / 100</tspan></text>
+    <text x="250" y="84" class="mono mut" font-size="10" letter-spacing="0.8">SUBMISSION · 7C41A9B2-C3D4-…</text>
+    <text x="250" y="108" class="grn sans" font-size="13" font-weight="600">✓ Failure mode identified</text>
+    <text x="250" y="128" class="mono mut" font-size="11">3 / 4 hidden tests passing</text>
+    <!-- share -->
+    <rect x="648" y="70" width="118" height="30" rx="8" fill="#FFFFFF" stroke="#CBD3DF"/>
+    <text x="707" y="89" text-anchor="middle" class="sans ink" font-size="12.5" font-weight="500">▾ Share</text>
+    <text x="766" y="120" text-anchor="end" class="mono mut" font-size="10">share links last 30 days</text>
+    <line x1="26" y1="148" x2="766" y2="148" stroke="#E3E8EF"/>
+    <!-- honor chip -->
+    <rect x="26" y="160" width="214" height="22" rx="11" fill="#FFFFFF" stroke="#E3E8EF"/>
+    <text x="40" y="175" class="mono mut" font-size="11">// honor mode · practice score</text>
+
+    <!-- section eyebrow -->
+    <text x="26" y="208" class="mono mut" font-size="11" font-weight="600" letter-spacing="1.5">// PERFORMANCE OVERVIEW</text>
+
+    <!-- ── radar (ink) ─────────────────────────────────────── -->
+    <polygon points="150,255 232.1,294.6 252.4,383.4 195.6,454.6 104.4,454.6 47.6,383.4 67.9,294.6" fill="none" stroke="#E3E8EF"/>
+    <polygon points="150,290.7 204.2,316.8 217.6,375.5 180.1,422.4 119.9,422.4 82.4,375.5 95.8,316.8" fill="none" stroke="#E8ECF2"/>
+    <g stroke="#E3E8EF">
+      <line x1="150" y1="360" x2="150" y2="255"/><line x1="150" y1="360" x2="232.1" y2="294.6"/><line x1="150" y1="360" x2="252.4" y2="383.4"/>
+      <line x1="150" y1="360" x2="195.6" y2="454.6"/><line x1="150" y1="360" x2="104.4" y2="454.6"/><line x1="150" y1="360" x2="47.6" y2="383.4"/><line x1="150" y1="360" x2="67.9" y2="294.6"/>
+    </g>
+    <polygon points="150,297 204.7,316.4 225.1,377.2 191,445.1 118.1,426.2 78.3,376.4 67.9,294.6" fill="#13171D" fill-opacity="0.08" stroke="#13171D" stroke-width="1.4"/>
+    <g fill="#FFFFFF" stroke="#13171D" stroke-width="1.3">
+      <circle cx="150" cy="297" r="2.4"/><circle cx="204.7" cy="316.4" r="2.4"/><circle cx="225.1" cy="377.2" r="2.4"/><circle cx="191" cy="445.1" r="2.4"/><circle cx="118.1" cy="426.2" r="2.4"/><circle cx="78.3" cy="376.4" r="2.4"/><circle cx="67.9" cy="294.6" r="2.4"/>
+    </g>
+    <g class="mono mut" font-size="10">
+      <text x="150" y="244" text-anchor="middle">correctness</text>
+      <text x="240" y="292" text-anchor="start">verification</text>
+      <text x="258" y="388" text-anchor="start">agent review</text>
+      <text x="196" y="474" text-anchor="middle">prompt</text>
+      <text x="104" y="474" text-anchor="middle">context</text>
+      <text x="42" y="388" text-anchor="end">safety</text>
+      <text x="62" y="292" text-anchor="end">minimality</text>
+    </g>
+
+    <line x1="312" y1="200" x2="312" y2="510" stroke="#E3E8EF"/>
+
+    <!-- ── breakdown (thin ink bars + signals) ─────────────── -->
+    <g>
+      <!-- 1 final correctness 18/30 -->
+      <text x="332" y="218" class="sans ink" font-size="12.5" font-weight="500">Final patch correctness</text>
+      <text x="772" y="218" text-anchor="end" class="mono mut" font-size="11"><tspan class="ink" font-weight="600">18</tspan> / 30</text>
+      <rect x="332" y="225" width="440" height="3" rx="1" fill="#EAEEF3"/><rect x="332" y="225" width="264" height="3" rx="1" fill="#13171D"/>
+      <text x="332" y="241" class="mono mut" font-size="10.5">visible green · no regression · root cause touched · capped</text>
+      <!-- 2 verification 10/15 -->
+      <text x="332" y="263" class="sans ink" font-size="12.5" font-weight="500">Verification discipline</text>
+      <text x="772" y="263" text-anchor="end" class="mono mut" font-size="11"><tspan class="ink" font-weight="600">10</tspan> / 15</text>
+      <rect x="332" y="270" width="440" height="3" rx="1" fill="#EAEEF3"/><rect x="332" y="270" width="293" height="3" rx="1" fill="#13171D"/>
+      <text x="332" y="286" class="mono mut" font-size="10.5">auth tests ran &amp; passed · +regression test · no typecheck</text>
+      <!-- 3 agent review 11/15 -->
+      <text x="332" y="308" class="sans ink" font-size="12.5" font-weight="500">Agent output review</text>
+      <text x="772" y="308" text-anchor="end" class="mono mut" font-size="11"><tspan class="ink" font-weight="600">11</tspan> / 15</text>
+      <rect x="332" y="315" width="440" height="3" rx="1" fill="#EAEEF3"/><rect x="332" y="315" width="323" height="3" rx="1" fill="#13171D"/>
+      <text x="332" y="331" class="mono mut" font-size="10.5">diff opened · edited the agent's line</text>
+      <!-- 4 prompt 9/10 -->
+      <text x="332" y="353" class="sans ink" font-size="12.5" font-weight="500">Prompt quality</text>
+      <text x="772" y="353" text-anchor="end" class="mono mut" font-size="11"><tspan class="ink" font-weight="600">9</tspan> / 10</text>
+      <rect x="332" y="360" width="440" height="3" rx="1" fill="#EAEEF3"/><rect x="332" y="360" width="396" height="3" rx="1" fill="#13171D"/>
+      <text x="332" y="376" class="mono mut" font-size="10.5">scoped · mentions regression test · uses 'expiration'</text>
+      <!-- 5 context 7/10 -->
+      <text x="332" y="398" class="sans ink" font-size="12.5" font-weight="500">Context selection</text>
+      <text x="772" y="398" text-anchor="end" class="mono mut" font-size="11"><tspan class="ink" font-weight="600">7</tspan> / 10</text>
+      <rect x="332" y="405" width="440" height="3" rx="1" fill="#EAEEF3"/><rect x="332" y="405" width="308" height="3" rx="1" fill="#13171D"/>
+      <text x="332" y="421" class="mono mut" font-size="10.5">selected both required files</text>
+      <!-- 6 safety 7/10 -->
+      <text x="332" y="443" class="sans ink" font-size="12.5" font-weight="500">Safety awareness</text>
+      <text x="772" y="443" text-anchor="end" class="mono mut" font-size="11"><tspan class="ink" font-weight="600">7</tspan> / 10</text>
+      <rect x="332" y="450" width="440" height="3" rx="1" fill="#EAEEF3"/><rect x="332" y="450" width="308" height="3" rx="1" fill="#13171D"/>
+      <text x="332" y="466" class="mono mut" font-size="10.5">no forbidden change · no new deps</text>
+      <!-- 7 minimality 10/10 -->
+      <text x="332" y="488" class="sans ink" font-size="12.5" font-weight="500">Diff minimality</text>
+      <text x="772" y="488" text-anchor="end" class="mono mut" font-size="11"><tspan class="ink" font-weight="600">10</tspan> / 10</text>
+      <rect x="332" y="495" width="440" height="3" rx="1" fill="#EAEEF3"/><rect x="332" y="495" width="440" height="3" rx="1" fill="#13171D"/>
+      <text x="332" y="511" class="mono mut" font-size="10.5">churn = 12 vs p50 18 → ratio 0.67</text>
+    </g>
+  </g>
+  <rect x="8" y="4" width="784" height="528" rx="12" fill="none" stroke="#DCE2EB"/>
+</svg>

@@ -33,6 +33,13 @@ Conventions:
 7. Post-mission report + public skill profile.
 8. Landing page strong enough for a recruiter cold-open.
 
+> **Since the MVP shipped, the catalog has grown.** Items 1–2 above describe
+> the *original* MVP target (10 missions, 2 repo packs). The shipped catalog is
+> now **21 missions** (a guided tutorial + 20 graded) across **3 repo packs /
+> 3 language runtimes** — TypeScript/Node, Python/FastAPI, and Go 1.22. The
+> canonical, always-current inventory is [missions/README.md](missions/README.md);
+> §14 below retains the full specs for the original ten as authored.
+
 **The single hardest design constraint:** *the platform grades the human's supervision process, not only the final patch*. Every system decision must preserve the audit trail (prompt, context selection, diff inspection, command runs, test runs, corrections) with high fidelity and replayability.
 
 ---
@@ -368,6 +375,26 @@ Migrations 0004–0019 layer additional tables/columns on top of the initial sch
 | 0017 | `account_events` table | P0-6 audit log |
 | 0018 | `account.deleted` event type allowed in 0017's check | tombstoning |
 | 0019 | `submissions.verification_hash`, `submissions.verification_signature`, `report_renders` table | P0-11 (credentialing artifact) |
+| 0020 | `session.reset` event type + covering index | P0-12 (reset-to-initial) / ADR 0010 sibling |
+| 0021 | `users.github_id` / `github_login` / `github_avatar_url` / `github_html_url` / `github_verified_at` | P0-7 (GitHub OAuth) |
+| 0022 | `sessions.mode` (`self_study` \| `proctored`) | P0-8 (proctored mode) |
+| 0023 | merge revision (OAuth + session-mode heads) | branch reconciliation |
+| 0024 | `magic_link_tokens.next_path` | post-login redirect target |
+| 0025 | `repo_packs` table, `missions.repo_pack_id`, `missions.tags` | P1-1 (catalog expansion) |
+| 0026 | `user_recommendations` cache, `missions.expected_weak_dim` | P1-2 (adaptive next-mission) |
+| 0027 | `user_recommendations.extras` (cache-rebuild fidelity payload) | P1-2 |
+| 0028 | `session_notes` table + `note.*` event types | P1-4 (scratchpad) |
+| 0029 | covering index on `supervision_events(session_id, occurred_at, id)` | P1-6 (replay artifact) |
+| 0030 | `llm_cache` table | P1-1/2/4 (cached LLM-generated prose) |
+| 0031 | `users.coaching_opt_out` | P1-4 (coaching reflection consent) |
+| 0032 | coaching-cache → producing-user link index | P1-4 |
+| 0033 | `session_notes` byte-length check constraint | P1-4 hardening |
+
+> The runtime tree is at **0033** ([`apps/api/alembic/versions/`](apps/api/alembic/versions/)).
+> Note: the per-batch design docs ([P0_DESIGN_11_13.md](P0_DESIGN_11_13.md),
+> [P1_DESIGN.md](P1_DESIGN.md)) reserved provisional migration numbers that
+> shifted as the branches landed; the table above reflects the **as-shipped**
+> numbering, which is the one that matters.
 
 ### 6.2 Supervision event types (enum)
 
@@ -1063,7 +1090,18 @@ Disallowed pre-submit:
 
 ## 14. The 10 Missions (Full Specs)
 
-All missions live in `missions/<NN-id>/`. Two repo packs back them:
+> **Historical scope note.** This section is the full spec for the *original
+> ten* MVP missions. The shipped catalog has since grown to 21 (a tutorial +
+> 20 graded) across a third repo pack — see the
+> [§1 forward note](#1-north-star-summary) and
+> [missions/README.md](missions/README.md) for the current inventory, including
+> missions 11–13 (Go: goroutine leak, dropped context, error-wrap shadowing)
+> and 14–20 (React/TS/Python/Go second wave). The grading, manifest, and
+> validator contracts below apply unchanged to every mission regardless of
+> pack.
+
+All missions live in `missions/<NN-id>/`. The original ten are backed by two
+repo packs (a third, `go-orders-service`, was added in the P1-1 expansion):
 
 - `fullstack-auth-demo` (Express + Vite + TypeScript) — Scenarios 1, 2, 3, 5, 6, 9, 10.
 - `data-api-demo` (FastAPI + SQLAlchemy + Pytest) — Scenarios 4, 7, 8.
@@ -1347,7 +1385,12 @@ Milestones M0–M8 land the MVP product. The follow-up work is tracked in [FEATU
 | P0-12 | Reset-to-initial workspace | ✅ shipped | `apps/api/app/sessions/router.py` (`POST /sessions/{id}/reset`), migration `0020_session_reset_event.py` |
 | P0-13 | LICENSE + CONTRIBUTING + rubric reconciliation | ✅ shipped | LICENSE Apache 2.0, CONTRIBUTING/SECURITY/CODE_OF_CONDUCT, [ADR 0011](docs/adr/0011-rubric-rebalance.md) |
 
-P1 / P2 work is tracked in the same docs but not milestoned here.
+The P1 batch ([P1_DESIGN.md](P1_DESIGN.md), items 1–6) has also shipped:
+P1-1 catalog expansion (the `go-orders-service` pack + missions 11–20), P1-2
+adaptive next-mission engine, P1-3 in-sandbox LSP (TS/Python/Go), P1-4
+scratchpad + LLM-backed coaching reflection, P1-5 user-vs-ideal side-by-side
+diff, and P1-6 the deterministic replay artifact. Remaining P1/P2 work is
+tracked in [FEATURE_GAPS.md](FEATURE_GAPS.md) but not milestoned here.
 
 ---
 
