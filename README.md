@@ -29,7 +29,7 @@
   <img alt="Languages" src="https://img.shields.io/badge/missions-TypeScript%20·%20Python%20·%20Go-13171D?style=flat-square">
   <img alt="Grading" src="https://img.shields.io/badge/grading-deterministic%20·%20zero%20LLM-15A05B?style=flat-square">
   <img alt="DCO" src="https://img.shields.io/badge/commits-DCO%20signed-13171D?style=flat-square">
-  <img alt="Status" src="https://img.shields.io/badge/status-v1%20·%20MVP%20%2B%20P0%2FP1%20shipped-0A45F5?style=flat-square">
+  <img alt="Status" src="https://img.shields.io/badge/status-v1-0A45F5?style=flat-square">
 </p>
 
 <p align="center">
@@ -72,10 +72,6 @@ OpenAgentDojo is a flight simulator for that skill. Every mission is a **real re
     </td>
   </tr>
 </table>
-
-> The workspace at the top of this README and the four screens above are
-> hand-authored SVG mockups that track the real components in
-> [`apps/web`](apps/web/components) — swap in live screen captures any time.
 
 ---
 
@@ -324,12 +320,14 @@ CI mirrors these and adds three trust gates: **contract drift** (`openapi.json` 
 
 ## 📦 Project status
 
-**v1 — MVP plus the full P0 and P1 batches have shipped.** Milestones M0–M8 (bootstrap → data layer → sandbox → workspace → agent → grading → 10 missions → public profile/landing → hardening) landed the MVP. Since then:
+**v1 — feature-complete and running end-to-end.** The platform provisions sandboxes, runs the deterministic agent, grades the seven-dimension rubric, and renders reports, public profiles, and verifiable credentials. Shipped today:
 
-- **P0 (launch-blocking) — all shipped:** onboarding tutorial · post-mortem walkthrough · multi-attempt policy · give-up affordance · legal pages + cookie consent · account self-service · GitHub OAuth · proctored mode · find-in-files / quick-open · email-deliverability fallback · verifiable report artifact · reset-to-initial · LICENSE + CONTRIBUTING + rubric reconciliation.
-- **P1 (full goal alignment) — shipped:** mission-catalog expansion (the Go pack + missions 11–20) · adaptive next-mission engine · in-sandbox LSP · scratchpad + coaching reflection · user-vs-ideal diff · supervision-event replay artifact.
+- **Learning loop** — guided onboarding, an evidence-linked post-mortem walkthrough, multi-attempt history, a give-up-with-reveal affordance, and an adaptive next-mission engine.
+- **Workspace** — Monaco editor, terminal, three-way diff, quick-open + ripgrep search, a scratchpad, per-language LSP, and reset-to-initial.
+- **Credentials** — proctored vs honor mode, signed verify pages, and PDF / PNG report exports.
+- **Accounts** — magic-link + GitHub sign-in, cookie consent, and self-service export / email change / deletion.
 
-The forward-looking gap analysis is in [FEATURE_GAPS.md](FEATURE_GAPS.md); the engineering source-of-truth and milestone breakdown is in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
+See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the engineering deep-dive.
 
 ---
 
@@ -345,10 +343,10 @@ Commits must be sign-off-certified to the [DCO](https://developercertificate.org
 
 ## 🔒 Security
 
-- `keys.md` is **gitignored** and holds the Bedrock bearer token. Never commit it; CI scans for the `ABSK` prefix.
 - Sandboxes run rootless with `--cap-drop=ALL`, no host mounts, and no network by default.
 - All grading paths are deterministic — the LLM is never invoked on a hot path.
-- Disclosures and the full posture: [SECURITY.md](SECURITY.md) · [docs/security.md](docs/security.md). Credential rotation: [docs/runbooks/rotate-secrets.md](docs/runbooks/rotate-secrets.md).
+- Secrets are read from the environment and never committed.
+- Found a vulnerability? See [SECURITY.md](SECURITY.md) for responsible disclosure; the full posture is in [docs/security.md](docs/security.md).
 
 ---
 

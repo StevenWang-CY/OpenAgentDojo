@@ -6,7 +6,7 @@ investigate before details become public.
 
 ## Reporting
 
-Email **`security@openagentdojo.app`** with:
+Email **`steveenwang@gmail.com`** with:
 
 - A description of the vulnerability.
 - Reproduction steps (URL, payload, expected vs actual behaviour).
@@ -16,9 +16,6 @@ We acknowledge receipt within **2 business days**, share a remediation
 timeline within **5 business days**, and disclose publicly — with credit
 if you wish — after the fix has shipped. Our window is **90 days** from
 the report, or earlier if the fix is already deployed.
-
-> Maintainer note: the security mailbox above is a placeholder. Replace
-> with a real, monitored address before publicising this file.
 
 ## In scope
 
