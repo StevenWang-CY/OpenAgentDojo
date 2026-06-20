@@ -17,7 +17,7 @@
  */
 
 import * as React from "react";
-import { BadgeCheck, Github, Loader2 } from "lucide-react";
+import { BadgeCheck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { User } from "@arena/shared-types";
@@ -25,6 +25,7 @@ import { ApiError, account } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
+import { GithubMark } from "@/components/layout/GithubMark";
 import { SectionLabel } from "./AccountView";
 import { EmailChangeForm } from "./EmailChangeForm";
 import { SignOutAllButton } from "./SignOutAllButton";
@@ -264,10 +265,7 @@ export function ProfileForm({ user, locked }: ProfileFormProps) {
               <p className="font-mono text-sm">
                 {user.github_login ? (
                   <>
-                    <Github
-                      className="mr-1 inline size-3.5"
-                      aria-hidden
-                    />
+                    <GithubMark className="mr-1 inline size-3.5" />
                     @{user.github_login}
                   </>
                 ) : (

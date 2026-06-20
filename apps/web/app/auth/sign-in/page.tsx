@@ -3,10 +3,11 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, ChevronDown, Github, Loader2, Mail } from "lucide-react";
+import { ArrowRight, ChevronDown, Loader2, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, auth } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
+import { GithubMark } from "@/components/layout/GithubMark";
 import { track } from "@/lib/telemetry";
 import { Input } from "@/components/ui/Input";
 import { BrandMark } from "@/components/layout/BrandMark";
@@ -275,7 +276,7 @@ export default function SignInPage() {
                       onClick={handleGithubClick}
                       data-testid="signin-github-button"
                     >
-                      <Github className="size-4" aria-hidden />
+                      <GithubMark className="size-4" />
                       Continue with GitHub
                     </Button>
                     <div
@@ -492,7 +493,7 @@ function PostSendCard({
             className="w-full justify-center"
             title="Sign in with GitHub instead"
           >
-            <Github className="size-4" aria-hidden />
+            <GithubMark className="size-4" />
             Or sign in with GitHub
           </Button>
         ) : (
