@@ -9,7 +9,7 @@
 #   docker build -f infra/docker/node20.Dockerfile -t agentarena/node20:1 .
 # ---------------------------------------------------------------------------
 
-FROM node:20.18-bookworm-slim
+FROM node:26.3-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
