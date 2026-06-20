@@ -15,9 +15,10 @@ const nextConfig: NextConfig = {
   // stale default at config-load time and shadows the real value.
   // Monaco / xterm are heavy — keep them out of the server bundle.
   transpilePackages: ["monaco-editor"],
-  eslint: {
-    ignoreDuringBuilds: false,
-  },
+  // Next 16 removed the `eslint` config key (and `next build` no longer runs
+  // linting); ESLint now runs as a standalone `eslint` step in the `lint`
+  // script. The `typescript` key is retained so `next build` still fails on
+  // type errors.
   typescript: {
     ignoreBuildErrors: false,
   },
