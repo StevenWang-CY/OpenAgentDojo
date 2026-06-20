@@ -79,7 +79,11 @@ export interface ReconnectingSocketOptions {
 }
 
 export interface ReconnectingSocketHandle {
-  send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void;
+  // Mirror the native ``WebSocket.send`` parameter type. TS 6 narrowed it to
+  // ``BufferSource | Blob | string`` (where ``BufferSource`` is backed by a
+  // concrete ``ArrayBuffer``), dropping the ``SharedArrayBuffer`` arm that
+  // ``ArrayBufferLike`` would otherwise admit.
+  send(data: string | ArrayBuffer | ArrayBufferView<ArrayBuffer> | Blob): void;
   close(): void;
   status(): ReconnectingSocketStatus;
 }

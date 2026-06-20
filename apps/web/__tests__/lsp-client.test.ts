@@ -39,7 +39,9 @@ interface FakeSocketHandle {
 
 class FakeSocket implements Partial<WebSocket> {
   url: string;
-  readyState = 0;
+  // TS 6 types ``WebSocket.readyState`` as the literal union ``0 | 1 | 2 | 3``,
+  // so annotate explicitly rather than letting it widen to ``number``.
+  readyState: WebSocket["readyState"] = 0;
   binaryType: BinaryType = "blob";
   onopen: ((ev: Event) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
