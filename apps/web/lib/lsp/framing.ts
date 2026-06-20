@@ -30,8 +30,15 @@ export interface JsonRpcMessage {
   error?: { code: number; message: string; data?: unknown };
 }
 
-/** Encode a JSON-RPC object into a framed UTF-8 byte buffer. */
-export function encodeFrame(message: JsonRpcMessage): Uint8Array {
+/**
+ * Encode a JSON-RPC object into a framed UTF-8 byte buffer.
+ *
+ * The result is explicitly backed by a concrete ``ArrayBuffer`` (it always
+ * allocates a fresh ``new Uint8Array(n)``) so it satisfies ``WebSocket.send``,
+ * whose TS 6 ``BufferSource`` signature rejects the ``SharedArrayBuffer`` arm
+ * of the default ``Uint8Array<ArrayBufferLike>``.
+ */
+export function encodeFrame(message: JsonRpcMessage): Uint8Array<ArrayBuffer> {
   const body = JSON.stringify(message);
   // ``TextEncoder`` is used so multibyte chars (rare in JSON-RPC, but cheap
   // to be correct about) compute the right Content-Length.

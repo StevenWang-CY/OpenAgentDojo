@@ -111,11 +111,13 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
     // full, we drop newest frames and surface a single toast so the user
     // knows their typing is no longer reaching the PTY.
     const PENDING_BUFFER_BYTES = 64 * 1024;
-    const pendingFrames: (string | Uint8Array)[] = [];
+    // ``Uint8Array<ArrayBuffer>`` (not the default ``ArrayBufferLike``) so the
+    // frames satisfy ``WebSocket.send``'s ``BufferSource`` signature under TS 6.
+    const pendingFrames: (string | Uint8Array<ArrayBuffer>)[] = [];
     let pendingBytes = 0;
     let warnedBufferFull = false;
 
-    function frameSize(frame: string | Uint8Array): number {
+    function frameSize(frame: string | Uint8Array<ArrayBuffer>): number {
       // String → UTF-8 byte length is the worst-case payload for `send`.
       if (typeof frame === "string") {
         // Cheap upper bound — every char is at most 4 UTF-8 bytes.
@@ -124,7 +126,7 @@ export function Terminal({ sessionId, token, className }: TerminalProps) {
       return frame.byteLength;
     }
 
-    function bufferFrame(frame: string | Uint8Array): void {
+    function bufferFrame(frame: string | Uint8Array<ArrayBuffer>): void {
       const size = frameSize(frame);
       if (pendingBytes + size > PENDING_BUFFER_BYTES) {
         if (!warnedBufferFull) {
@@ -406,7 +408,10 @@ function StatusBadge({
  * frame the backend expects (see `apps/api/app/ws/terminal.py` parser).
  * Exported so the unit test can pin the wire format.
  */
-export function encodeResizeFrame(cols: number, rows: number): Uint8Array {
+export function encodeResizeFrame(
+  cols: number,
+  rows: number
+): Uint8Array<ArrayBuffer> {
   const safe = (n: number) =>
     Math.max(0, Math.min(0xffff, Math.floor(Number.isFinite(n) ? n : 0)));
   const c = safe(cols);
