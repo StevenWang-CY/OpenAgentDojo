@@ -267,7 +267,11 @@ function radarPolygon(dims: ScoreBreakdown, radius: number): string {
   const points: string[] = [];
   DIMENSION_ORDER.forEach((key, i) => {
     const dim = dims[key];
-    if (dim.score == null) return;
+    // Defensive: a partial / legacy ``score_report`` may omit a dimension
+    // entirely. Skip a missing dimension (same as a pending one) rather
+    // than dereferencing ``undefined.score`` and throwing — the OG image
+    // then renders with whatever axes ARE present instead of 500ing.
+    if (!dim || dim.score == null) return;
     const ratio = dim.max > 0 ? dim.score / dim.max : 0;
     const angle = (Math.PI * 2 * i) / DIMENSION_ORDER.length - Math.PI / 2;
     const x = Math.cos(angle) * radius * ratio;

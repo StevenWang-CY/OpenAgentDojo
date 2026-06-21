@@ -1,12 +1,14 @@
 # syntax=docker/dockerfile:1.7
 # ---------------------------------------------------------------------------
-# OpenAgentDojo web — production image for apps/web (Next.js 15 standalone).
+# OpenAgentDojo web — production image for apps/web (Next.js 16 standalone).
 #
 # Build context MUST be the repository root (uses the pnpm workspace).
 #   docker build -f infra/docker/web.Dockerfile -t agentarena/web:dev .
 # ---------------------------------------------------------------------------
 
-ARG NODE_VERSION=20.18
+# Node 22 to match CI (.github/workflows) and the ESLint 10 engine floor
+# (^20.19 || ^22.13 || >=24); see .nvmrc.
+ARG NODE_VERSION=22.21
 
 # ---------- deps ----------
 FROM node:${NODE_VERSION}-alpine AS deps

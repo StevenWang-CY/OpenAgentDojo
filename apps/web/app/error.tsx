@@ -35,17 +35,26 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Scrub once and reuse for both the structured log AND the rendered
+  // copy. The raw ``error.message`` can carry user data (an email that
+  // tripped a validator, a leaked bearer token in a fetch error) — we must
+  // never paint it verbatim into the DOM.
+  const scrubbed = scrubError(error);
+
   React.useEffect(() => {
     // Structured single-line log so log aggregators can parse it. Avoid
     // dumping the raw Error object (which can carry framework internals
     // and stack frames with absolute paths in dev).
-    const scrubbed = scrubError(error);
     if (typeof window !== "undefined") {
       // Use `warn` (not `error`) so this doesn't break Next.js's
       // build-time CI checks that scan for stray console.error calls.
       // We still get the entry in the browser console + telemetry.
       console.warn("[arena.route_error]", JSON.stringify(scrubbed));
     }
+    // Depend on ``error`` (stable identity per thrown error) rather than the
+    // freshly-derived ``scrubbed`` object so we log once per error, not once
+    // per render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [error]);
 
   return (
@@ -58,8 +67,9 @@ export default function GlobalError({
           We hit an unexpected error.
         </h1>
         <p className="mt-3 text-sm text-[var(--color-muted-foreground)]">
-          {error.message || "An unknown error occurred while rendering this page."}
-          {error.digest ? ` (digest ${error.digest})` : null}
+          {scrubbed.message ||
+            "An unknown error occurred while rendering this page."}
+          {scrubbed.digest ? ` (digest ${scrubbed.digest})` : null}
         </p>
         <div className="mt-6 flex items-center justify-center gap-3">
           <Button onClick={reset}>Try again</Button>

@@ -57,13 +57,17 @@ export function ScorePreview({
           : undefined,
     });
 
-    // Verification — did the user run any test/typecheck command?
+    // Verification — did the user run any test/typecheck command that
+    // actually *passed*? A command exiting 127 (e.g. ``pnpm`` missing in a
+    // Go/Python sandbox) or otherwise failing earns no credit, mirroring
+    // the backend grader's ``exit_code == 0`` gate.
     const testRuns = events.filter(
       (e) =>
         e.event_type === "command.run" &&
         (e.payload.category === "test" ||
           e.payload.category === "typecheck" ||
-          e.payload.category === "lint")
+          e.payload.category === "lint") &&
+        e.payload.exit_code === 0
     );
     out.push({
       label:

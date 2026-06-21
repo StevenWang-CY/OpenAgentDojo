@@ -25,6 +25,7 @@ from app.models.agent_turn import AgentTurn
 from app.models.badge import Badge
 from app.models.data_export import EXPORT_STATUS_READY, DataExport
 from app.models.mission import Mission
+from app.models.report_render import ReportRender
 from app.models.session import SessionRow
 from app.models.submission import Submission
 from app.models.user import User
@@ -229,6 +230,7 @@ async def test_export_bundle_contains_only_owners_data(db_engine, monkeypatch) -
         "file_changes.jsonl",
         "command_runs.jsonl",
         "submissions.jsonl",
+        "report_renders.jsonl",
         "supervision_events.jsonl",
         "badges.jsonl",
         "consents.jsonl",
@@ -270,3 +272,131 @@ async def test_export_bundle_contains_only_owners_data(db_engine, monkeypatch) -
     raw_blob = data
     assert b"other-only" not in raw_blob, "another user's data leaked into the export bundle"
     assert str(other_id).encode() not in raw_blob, "another user's id leaked into the export bundle"
+
+
+@pytest.mark.asyncio
+async def test_export_includes_report_renders(db_engine, monkeypatch) -> None:
+    """A user with a report render must get a ``report_renders.jsonl`` line.
+
+    The deletion worker already treats report_renders as user-owned (it
+    deletes their S3 objects on hard-delete), so the export must ship them
+    too — joining ``report_renders → submissions → sessions`` and signing
+    ``s3_key`` with the export TTL the way command_runs does.
+    """
+    session_local = await _bound(db_engine)
+    me_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    submission_id = uuid.uuid4()
+    render_key = "report-renders/me/report.pdf"
+
+    async with session_local() as db:
+        db.add(
+            Mission(
+                id="render-mission",
+                title="Render",
+                difficulty="beginner",
+                category="auth",
+                repo_pack="x",
+                initial_commit="HEAD",
+                estimated_minutes=5,
+                failure_mode="x",
+                skills_tested=["x"],
+                manifest_sha256="sha",
+                version=1,
+                published=True,
+                expected_weak_dim="safety",
+            )
+        )
+        db.add(
+            User(
+                id=me_id,
+                email="render-me@example.com",
+                handle="render-me",
+                session_epoch=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        db.add(
+            SessionRow(
+                id=session_id,
+                user_id=me_id,
+                mission_id="render-mission",
+                status="graded",
+                started_at=datetime.now(UTC) - timedelta(hours=1),
+                completed_at=datetime.now(UTC),
+            )
+        )
+        db.add(
+            Submission(
+                id=submission_id,
+                session_id=session_id,
+                final_diff="",
+                visible_test_results=[],
+                hidden_test_results=[],
+                validator_results=[],
+                score_report={"total": 80, "dimensions": {}},
+                total_score=80,
+            )
+        )
+        db.add(
+            ReportRender(
+                id=uuid.uuid4(),
+                submission_id=submission_id,
+                kind="pdf",
+                status="ready",
+                s3_key=render_key,
+                bytes=4096,
+            )
+        )
+        await db.commit()
+
+    export_id = uuid.uuid4()
+    async with session_local() as db:
+        db.add(DataExport(id=export_id, user_id=me_id, status="queued"))
+        await db.commit()
+
+    captured_uploads: list[tuple[str, bytes]] = []
+
+    def _fake_put(key, body, *, content_type):
+        if hasattr(body, "read"):
+            body.seek(0)
+            data = body.read()
+        else:
+            data = bytes(body)
+        captured_uploads.append((key, data))
+        return len(data)
+
+    def _fake_sign(key, *, expires_in):
+        return f"https://signed.test/{key}?ttl={expires_in}"
+
+    monkeypatch.setattr("app.storage.put_object", _fake_put)
+    monkeypatch.setattr("app.workers.account_export.put_object", _fake_put)
+    monkeypatch.setattr("app.storage.generate_download_url", _fake_sign)
+    monkeypatch.setattr("app.workers.account_export.generate_download_url", _fake_sign)
+
+    from app.db import session as session_module
+
+    original = session_module.AsyncSessionLocal
+    session_module.AsyncSessionLocal = session_local  # type: ignore[assignment]
+    try:
+        from app.workers.account_export import _async_build_user_export
+
+        await _async_build_user_export(export_id)
+    finally:
+        session_module.AsyncSessionLocal = original  # type: ignore[assignment]
+
+    assert len(captured_uploads) == 1
+    _key, data = captured_uploads[0]
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        names = set(zf.namelist())
+        assert "report_renders.jsonl" in names, "report_renders.jsonl missing from export"
+        render_lines = [
+            ln for ln in zf.read("report_renders.jsonl").decode().splitlines() if ln.strip()
+        ]
+
+    assert len(render_lines) == 1, "expected exactly one render row in the export"
+    render_row = json.loads(render_lines[0])
+    assert render_row["s3_key"] == render_key
+    # The raw key is signed into a download URL scoped to the export TTL.
+    assert render_row["s3_key_download_url"] == f"https://signed.test/{render_key}?ttl={86400 * 7}"

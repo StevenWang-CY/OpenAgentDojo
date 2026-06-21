@@ -205,12 +205,31 @@ class ValidatorNoSkippedTests(BaseModel):
 class ValidatorNoNewDependencies(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["no_new_dependencies"]
+    # RESERVED / NOT-YET-CONSUMED: the registered ``no_new_dependencies``
+    # validator calls ``validate_no_new_deps(diff)`` with no allow-list, so
+    # ``allowed`` is parsed and round-tripped but has ZERO effect on grading
+    # today. It is retained (rather than dropped) because curated missions
+    # already declare it; do not assume editing it changes any score until a
+    # validator change wires it in. See the module note on reserved fields.
     allowed: list[str] = Field(default_factory=list)
 
 
 class ValidatorNoSecretsExposed(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["no_secrets_exposed"]
+
+
+class ValidatorNoValidationRemoved(BaseModel):
+    # Matches the registered ``no_validation_removed`` validator
+    # (app/grading/validators/no_validation_removed.py), which flags removal
+    # of auth/validation guard clauses from the diff. ``patterns`` is optional
+    # and is *appended* to the validator's built-in guard-clause defaults — a
+    # mission only needs to declare it to widen the default set, never to
+    # bootstrap it. Without this union variant the registered validator was
+    # unreachable from any manifest (P2 contract-integrity fix).
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["no_validation_removed"]
+    patterns: list[str] = Field(default_factory=list)
 
 
 def _validator_discriminator(v: Any) -> str:
@@ -225,7 +244,8 @@ Validator = Annotated[
     | Annotated[ValidatorRegressionTestRequired, Tag("regression_test_required")]
     | Annotated[ValidatorNoSkippedTests, Tag("no_skipped_tests")]
     | Annotated[ValidatorNoNewDependencies, Tag("no_new_dependencies")]
-    | Annotated[ValidatorNoSecretsExposed, Tag("no_secrets_exposed")],
+    | Annotated[ValidatorNoSecretsExposed, Tag("no_secrets_exposed")]
+    | Annotated[ValidatorNoValidationRemoved, Tag("no_validation_removed")],
     Discriminator(_validator_discriminator),
 ]
 
@@ -278,29 +298,64 @@ class ScoringWeights(BaseModel):
         return self
 
 
+# RESERVED-FIELD POLICY (P1/P2 contract-honesty note)
+# ----------------------------------------------------
+# Several ``reward_signals`` sub-fields below are parsed + schema-validated but
+# NOT YET CONSUMED by ``app.grading.score`` — editing them has zero effect on
+# any computed score. They are documented here (and flagged inline) so the
+# drift between "the schema accepts it" and "the grader honours it" is explicit
+# rather than a silent config-that-does-nothing trap. They are retained (not
+# deleted) because curated mission YAMLs already declare them and the loader is
+# ``extra="forbid"``; removing them would break the loader/calibration. Each
+# reserved field is annotated below; the CONSUMED fields are left unannotated.
+#
+# Currently CONSUMED by score.py:
+#   * PromptQualitySignals.must_include_any, .bonus_keywords
+#   * VerificationSignals.require_targeted_test
+#   * SafetySignals.must_not_run_commands
+# Currently RESERVED (not consumed): every field tagged ``RESERVED`` below.
+
+
 class PromptQualitySignals(BaseModel):
     model_config = ConfigDict(extra="forbid")
     must_include_any: list[str] = Field(default_factory=list)
     bonus_keywords: list[str] = Field(default_factory=list)
+    # RESERVED / NOT-YET-CONSUMED: the prompt-quality scorer hard-codes its
+    # short-prompt penalty thresholds (40/80 chars); this field is parsed but
+    # never read. Editing it does not change any score.
     penalty_if_under_chars: int = 40
 
 
 class VerificationSignals(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # RESERVED / NOT-YET-CONSUMED: the verification scorer credits typecheck +
+    # lint by event category directly and never reads this list. Parsed but
+    # inert — editing it does not change any score.
     required_categories: list[str] = Field(default_factory=list)
+    # RESERVED / NOT-YET-CONSUMED: no "ran before patch" bonus is implemented.
+    # Parsed but inert.
     bonus_if_run_before_patch: bool = False
     require_targeted_test: str | None = None
 
 
 class AgentReviewSignals(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    # RESERVED / NOT-YET-CONSUMED: the agent-review scorer always credits a
+    # post-patch ``diff.opened`` (with dwell gating); it never gates that
+    # credit on this flag. Parsed but inert.
     require_diff_open: bool = True
+    # RESERVED / NOT-YET-CONSUMED: the revert/edit-after-diff bonus is awarded
+    # unconditionally from the event log, never gated on this flag. Parsed but
+    # inert.
     bonus_if_revert_or_edit_after_diff: bool = True
 
 
 class SafetySignals(BaseModel):
     model_config = ConfigDict(extra="forbid")
     must_not_run_commands: list[str] = Field(default_factory=list)
+    # RESERVED / NOT-YET-CONSUMED: the safety scorer credits "no new deps" from
+    # the ``no_new_dependencies`` validator result, never from this flag.
+    # Parsed but inert.
     must_not_introduce_deps: bool = True
 
 

@@ -34,10 +34,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.llm import (
-    PROMPT_VERSION,
     GeneratedOutput,
     canonical_content_hash,
     get_or_generate,
+    get_prompt_version,
     render_prompt,
 )
 from app.llm.client import build_anthropic_client
@@ -240,7 +240,7 @@ async def generate_diagnosis(
             db,
             domain=_DIAGNOSIS_DOMAIN,
             content_hash=content_hash,
-            prompt_version=PROMPT_VERSION,
+            prompt_version=get_prompt_version(),
             model_id=_MODEL_ID,
             generator=_generator,
             fallback=fallback,
@@ -335,7 +335,7 @@ async def generate_why(
             db,
             domain=_WHY_DOMAIN,
             content_hash=content_hash,
-            prompt_version=PROMPT_VERSION,
+            prompt_version=get_prompt_version(),
             model_id=_MODEL_ID,
             generator=_generator,
             fallback=fallback,

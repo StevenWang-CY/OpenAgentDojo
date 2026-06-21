@@ -457,6 +457,21 @@ class AgentService:
         if turn is None:
             return PatchResult(applied=False, error=f"turn {turn_id} not found")
 
+        # -- Idempotency guard -------------------------------------------------
+        # A double POST to /patches/{turn_id}/apply must not re-invoke the
+        # driver. ``turn.applied_patch`` is the persisted success marker — it is
+        # set (alongside ``patch_applied_at``) only after the driver reports a
+        # successful apply. If it's already populated the diff is on the
+        # workspace; re-running ``apply_diff`` would have ``git apply`` reject
+        # the already-applied hunk and emit a spurious ``patch.failed`` for a
+        # turn that actually SUCCEEDED, corrupting the grader's replayed event
+        # stream. Short-circuit with the prior success and emit NO event.
+        #
+        # A genuinely-FAILED prior attempt leaves ``applied_patch`` None (the
+        # failure branches never touch the row), so it stays retryable.
+        if turn.applied_patch is not None:
+            return PatchResult(applied=True)
+
         # -- Locate the diff on disk ------------------------------------------
         mission_folder = _find_mission_folder(session.mission_id, settings.missions_root)
         if mission_folder is None:

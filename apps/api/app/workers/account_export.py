@@ -44,6 +44,7 @@ from app.models.data_export import (
 )
 from app.models.file_change import FileChange
 from app.models.llm_cache import LLMCache
+from app.models.report_render import ReportRender
 from app.models.session import SessionRow
 from app.models.session_note import SessionNote
 from app.models.submission import Submission
@@ -444,6 +445,30 @@ async def _build_zip(
                 _to_jsonl(coaching_cache_rows, _serialise_llm_cache_row),
             )
 
+            # Phase 4.A.10 — render artifacts. The deletion worker already
+            # treats report_renders as user-owned (it deletes their S3
+            # objects on hard-delete), so they belong in the export too.
+            # report_renders has no direct user_id / session_id FK — it
+            # hangs off submissions — so we walk
+            # ``report_renders → submissions → sessions`` to constrain by
+            # ``SessionRow.user_id`` and sign ``s3_key`` with the same
+            # ``_SignContext`` TTL ``command_runs`` uses, keeping the
+            # export self-contained for its lifetime.
+            render_rows = list(
+                (
+                    await db.execute(
+                        select(ReportRender)
+                        .join(Submission, Submission.id == ReportRender.submission_id)
+                        .join(SessionRow, SessionRow.id == Submission.session_id)
+                        .where(SessionRow.user_id == user.id)
+                    )
+                ).scalars()
+            )
+            zf.writestr(
+                "report_renders.jsonl",
+                _to_jsonl(render_rows, _serialise_report_render(sign_ctx)),
+            )
+
             if _UserConsentCls is not None and _AccountEventCls is not None:
                 consents = (
                     (
@@ -573,6 +598,22 @@ def _serialise_submission(row: Submission) -> dict[str, Any]:
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
 
 
+def _serialise_report_render(sign_ctx: _SignContext):
+    def _inner(row: ReportRender) -> dict[str, Any]:
+        out = {c.name: getattr(row, c.name) for c in row.__table__.columns}
+        # The rendered PDF/PNG lives in S3; surface it as a signed URL so
+        # the export is self-contained for the duration of its TTL (same
+        # treatment as command_runs' stdout / stderr keys).
+        key = out.get("s3_key")
+        if isinstance(key, str) and key:
+            out["s3_key_download_url"] = generate_download_url(
+                key, expires_in=sign_ctx.expires_in_seconds
+            )
+        return out
+
+    return _inner
+
+
 def _serialise_supervision_event(row: SupervisionEvent) -> dict[str, Any]:
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
 
@@ -640,6 +681,7 @@ this file can be regenerated from the /account page.
 | `file_changes.jsonl` | Every file the agent or you wrote during a session. |
 | `command_runs.jsonl` | Every command run inside a sandbox. Includes signed URLs for stdout / stderr. |
 | `submissions.jsonl` | Every graded submission. |
+| `report_renders.jsonl` | Every PDF/PNG render of your report cards. Includes a signed `s3_key_download_url` for each rendered artifact. |
 | `supervision_events.jsonl` | Timeline events emitted while you worked. |
 | `session_notes.jsonl` | Per-session scratchpad bodies (the "// notes" pane in the workspace). |
 | `badges.jsonl` | Badges you earned (`UserBadge`). |

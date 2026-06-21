@@ -91,8 +91,14 @@ export function WorkspaceTopBar({
   const isMac = useIsMac();
   const submitTriggerRef = React.useRef<HTMLButtonElement | null>(null);
   const summary = React.useMemo(
-    () => summarisePillSignals(expectedRequiredContext, selectedContext, events),
-    [expectedRequiredContext, selectedContext, events]
+    () =>
+      summarisePillSignals(
+        expectedRequiredContext,
+        selectedContext,
+        events,
+        diffChangedFiles
+      ),
+    [expectedRequiredContext, selectedContext, events, diffChangedFiles]
   );
 
   // Global ⌘⏎ / Ctrl+⏎ to open the submit dialog. Ignored when focus is on a
@@ -370,21 +376,30 @@ function WorkspaceOverflowMenu({ sessionId }: { sessionId: string }) {
 function summarisePillSignals(
   expectedRequiredContext: string[],
   selectedContext: string[],
-  events: SupervisionEvent[]
+  events: SupervisionEvent[],
+  diffChangedFiles?: string[]
 ): { hit: number; total: number } {
   // Mirrors ScorePreview's 4 process signals.
   const selected = new Set(selectedContext);
   const requiredHit =
     expectedRequiredContext.length === 0 ||
     expectedRequiredContext.every((p) => selected.has(p));
+  // Require a clean exit — a 127 (e.g. ``pnpm`` missing in a Go/Python
+  // sandbox) earns no verification credit, matching ScorePreview and the
+  // backend grader.
   const ranVerification = events.some(
     (e) =>
       e.event_type === "command.run" &&
       (e.payload.category === "test" ||
         e.payload.category === "typecheck" ||
-        e.payload.category === "lint")
+        e.payload.category === "lint") &&
+      e.payload.exit_code === 0
   );
-  const hasDiff = events.some((e) => e.event_type === "patch.applied");
+  // Source the Diff signal from the same changed-files set ScorePreview's
+  // Diff signal reads, so the pill and the panel it expands never
+  // contradict — a supervisor who hand-edits files (no ``patch.applied``)
+  // still produces a non-empty diff and the pill reflects it.
+  const hasDiff = (diffChangedFiles?.length ?? 0) > 0;
   const diffOpened = events.some((e) => e.event_type === "diff.opened");
 
   const hit =

@@ -5,7 +5,7 @@
   "description": "OpenAgentDojo — browser-based simulator for supervising deliberately-flawed coding agents.",
   "packageManager": "pnpm@9.12.0",
   "engines": {
-    "node": ">=20.10.0",
+    "node": ">=20.19.0",
     "pnpm": ">=9.0.0"
   },
   "scripts": {

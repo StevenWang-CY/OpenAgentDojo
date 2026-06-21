@@ -101,6 +101,7 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
   const pushAgentTurn = store((s) => s.pushAgentTurn);
   const setSandboxDriver = store((s) => s.setSandboxDriver);
   const openFile = store((s) => s.openFile);
+  const clearFileBuffers = store((s) => s.clearFileBuffers);
   const toggleContextPath = store((s) => s.toggleContextPath);
   const setSelectedContext = store((s) => s.setSelectedContext);
   // P0-9 — quick-open / find-in-files / help overlay surfaces.
@@ -395,12 +396,19 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
             if (turn) pushAgentTurn(turn);
           }
           if (parsed.event_type === "patch.applied") {
-            queryClient.invalidateQueries({
-              queryKey: ["session", sessionId, "tree"],
-            });
-            queryClient.invalidateQueries({
-              queryKey: ["session", sessionId, "diff"],
-            });
+            // The agent just rewrote files under us. Invalidate the tree +
+            // diff as before, then derive the changed paths from the fresh
+            // diff and (a) drop their now-stale persisted buffers so the
+            // editor stops preferring localStorage over server content, and
+            // (b) invalidate each ``["file", …]`` query so an open file
+            // refetches. The ``patch.applied`` WS frame only carries a
+            // ``file_count`` (not the paths), so we read them off the
+            // refetched diff. (No ``file.updated`` backend event exists.)
+            void reconcileAfterPatch(
+              queryClient,
+              sessionId,
+              clearFileBuffers
+            );
           }
           if (parsed.event_type === "submission.failed") {
             const payload = parsed.payload as { stage?: string; detail?: string };
@@ -438,6 +446,7 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
     pushEvent,
     pushAgentTurn,
     queryClient,
+    clearFileBuffers,
     redirectToSignIn,
   ]);
 
@@ -903,7 +912,12 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
                     )
                   }
                   onApplyPatch={(turnId) =>
-                    handleApplyPatch(queryClient, sessionId, turnId)
+                    handleApplyPatch(
+                      queryClient,
+                      sessionId,
+                      turnId,
+                      clearFileBuffers
+                    )
                   }
                 />
               </div>
@@ -925,7 +939,10 @@ export function WorkspaceShell({ sessionId }: WorkspaceShellProps) {
             label: "Tests",
             content: (
               <div data-tutorial-anchor="test-panel" className="contents">
-                <TestPanel sessionId={sessionId} />
+                <TestPanel
+                  sessionId={sessionId}
+                  languageRuntime={mission.language_runtime}
+                />
               </div>
             ),
           },
@@ -1006,7 +1023,8 @@ async function handleAgentSubmit(
 async function handleApplyPatch(
   queryClient: ReturnType<typeof useQueryClient>,
   sessionId: string,
-  turnId: string
+  turnId: string,
+  clearFileBuffers: (paths: string[]) => void
 ): Promise<void> {
   try {
     const result = await applyPatch(sessionId, turnId);
@@ -1019,6 +1037,19 @@ async function handleApplyPatch(
     );
     queryClient.invalidateQueries({ queryKey: ["session", sessionId, "tree"] });
     queryClient.invalidateQueries({ queryKey: ["session", sessionId, "diff"] });
+    // The patch rewrote ``result.files_changed`` — drop their stale
+    // persisted buffers and refetch each open file so the editor shows the
+    // post-patch content instead of the previous localStorage buffer. We
+    // have the exact paths here (the REST result carries them), so no diff
+    // re-derivation is needed.
+    if (result.files_changed.length > 0) {
+      clearFileBuffers(result.files_changed);
+      for (const path of result.files_changed) {
+        queryClient.invalidateQueries({
+          queryKey: ["file", sessionId, path],
+        });
+      }
+    }
   } catch (err) {
     toast.error(
       err instanceof ApiError ? err.message : "Failed to apply patch."
@@ -1114,6 +1145,50 @@ function firstInvalidAgentRespondedField(value: unknown): string | null {
     return "response_summary";
   }
   return null;
+}
+
+/**
+ * Reconcile open files after a live ``patch.applied`` event.
+ *
+ * The WS frame only carries a ``file_count`` (not the paths), so we
+ * invalidate the tree + diff, refetch the diff to learn *which* files the
+ * patch touched, then (a) drop their now-stale persisted buffers — without
+ * this the editor's seed effect would keep preferring the localStorage
+ * buffer over fresh server content, even across a reload — and (b)
+ * invalidate each ``["file", …]`` query so an open file refetches. All
+ * best-effort: a diff-refetch failure still leaves the tree/diff
+ * invalidations in place.
+ */
+async function reconcileAfterPatch(
+  queryClient: ReturnType<typeof useQueryClient>,
+  sessionId: string,
+  clearFileBuffers: (paths: string[]) => void
+): Promise<void> {
+  await queryClient.invalidateQueries({
+    queryKey: ["session", sessionId, "tree"],
+  });
+  await queryClient.invalidateQueries({
+    queryKey: ["session", sessionId, "diff"],
+  });
+  let changed: string[] = [];
+  try {
+    const fresh = await queryClient.fetchQuery({
+      queryKey: ["session", sessionId, "diff"],
+      queryFn: ({ signal }) => getDiff(sessionId, signal),
+    });
+    changed = fresh?.unified_diff ? extractChangedFiles(fresh.unified_diff) : [];
+  } catch {
+    // best-effort — the diff query above is already invalidated, so the
+    // mounted ``diffQuery`` will refetch on its own schedule.
+    return;
+  }
+  if (changed.length === 0) return;
+  clearFileBuffers(changed);
+  for (const path of changed) {
+    await queryClient.invalidateQueries({
+      queryKey: ["file", sessionId, path],
+    });
+  }
 }
 
 /** Pull the changed paths out of a unified diff for the ScorePreview hint. */

@@ -239,9 +239,28 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   const contentType = response.headers.get("content-type") ?? "";
   const isJson = contentType.includes("application/json");
-  const payload: unknown = isJson
-    ? await response.json().catch(() => null)
-    : await response.text().catch(() => null);
+  // Read the raw text first so we can tell a *legitimately empty* body
+  // (some 200/202 endpoints documented to return no content) apart from a
+  // truncated / mangled JSON payload. ``response.json()`` collapses both to
+  // a parse error, which is what previously let a corrupt success body slip
+  // through as ``null`` and surface as a far-away ``TypeError`` in the caller.
+  const rawText: string | null = await response.text().catch(() => null);
+  let payload: unknown = null;
+  let jsonParseFailed = false;
+  if (isJson) {
+    // An empty body (length 0 after trimming) is the legitimate "no content"
+    // case — leave ``payload`` as ``null``. A non-empty body that fails to
+    // parse is a real malformed-response error.
+    if (rawText !== null && rawText.trim() !== "") {
+      try {
+        payload = JSON.parse(rawText);
+      } catch {
+        jsonParseFailed = true;
+      }
+    }
+  } else {
+    payload = rawText;
+  }
 
   if (!response.ok) {
     const body = (isJson ? payload : null) as ApiErrorBody | null;
@@ -292,6 +311,18 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
       }
     }
     throw new ApiError(detail, response.status, body, retryAfterSeconds);
+  }
+
+  // Success-path parse failure (truncated / mangled JSON on a 2xx with a
+  // non-empty body): previously this resolved as ``null as T`` and the caller
+  // would dereference it and throw a ``TypeError`` far from the source, with
+  // success-path corruption indistinguishable from a legitimate ``null``.
+  // Throw a typed ApiError at the source instead. The empty-body path (204 —
+  // short-circuited above — and 200/202 endpoints documented to return no
+  // content) is preserved because ``jsonParseFailed`` is only set for a
+  // non-empty body that fails to parse.
+  if (jsonParseFailed) {
+    throw new ApiError("malformed response body", response.status, null);
   }
 
   return payload as T;

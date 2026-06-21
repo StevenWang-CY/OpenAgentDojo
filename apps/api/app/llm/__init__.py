@@ -21,8 +21,8 @@ Usage
         GeneratedOutput,
         canonical_content_hash,
         get_or_generate,
+        get_prompt_version,
         render_prompt,
-        PROMPT_VERSION,
     )
     from app.llm.client import build_anthropic_client
 
@@ -55,7 +55,7 @@ Usage
         db,
         domain="recommendation_diagnosis",
         content_hash=content_hash,
-        prompt_version=PROMPT_VERSION,
+        prompt_version=get_prompt_version(),
         model_id="claude-haiku-4-5",
         generator=_generate,
         fallback="You skip the diff most of the time — try these three.",
@@ -74,7 +74,13 @@ from app.llm.cache import (
     get_or_generate,
 )
 from app.llm.client import build_anthropic_client, resolve_model_id
-from app.llm.domains import ALLOWED_DOMAINS, PROMPT_VERSION, LLMDomain, is_known_domain
+from app.llm.domains import (
+    ALLOWED_DOMAINS,
+    PROMPT_VERSION,
+    LLMDomain,
+    get_prompt_version,
+    is_known_domain,
+)
 from app.llm.hashing import canonical_content_hash
 from app.llm.prompt_loader import render_prompt
 
@@ -88,6 +94,7 @@ __all__ = [
     "build_anthropic_client",
     "canonical_content_hash",
     "get_or_generate",
+    "get_prompt_version",
     "is_known_domain",
     "render_prompt",
     "resolve_model_id",

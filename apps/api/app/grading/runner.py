@@ -24,7 +24,14 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Annotation-only import — the runtime uses inline ``from datetime import
+    # …`` in the helpers below (the file's existing idiom), so we only need
+    # ``datetime`` visible to the type checker for the ``submitted_at``
+    # parameter annotations (P2).
+    from datetime import datetime
 
 from loguru import logger
 from sqlalchemy import select
@@ -237,6 +244,7 @@ class GradingRunner:
         manifest: Any,
         manifest_folder: Path,
         manifest_sha256: str,
+        submitted_at: datetime | None = None,
     ) -> GradingResult:
         """Execute the grading pipeline with a wall-clock budget.
 
@@ -247,6 +255,19 @@ class GradingRunner:
         ``Submission.manifest_sha256`` column so an edit to a mission's
         prompts / intents / forbidden rules invalidates stale judgements
         per the determinism contract in CONTEXT.md.
+
+        ``submitted_at`` (P2) is the wall-clock moment the user's submit POST
+        was accepted at the route/claim boundary. The
+        ``submission.requested`` event's ``occurred_at`` is anchored to it so
+        the rushed-submit signal (score.py) and missed_corrective_window
+        diagnostic (diagnostics.py) diff the REAL submit instant against
+        ``agent.responded`` — not the grading-start instant, which under slow
+        provisioning can be many seconds later and silently flip a genuine
+        sub-15s rushed submit to "not rushed" on the first grade. ``None``
+        falls back to the emit-time ``now()`` (existing behaviour) so
+        callers that don't carry a submit boundary — e.g. the
+        ``check_missions.py`` CLI and the calibration fixtures — are
+        unaffected.
 
         On timeout, sets the session's status to ``'error'``, emits
         ``submission.failed``, and raises :class:`asyncio.TimeoutError`.
@@ -266,6 +287,20 @@ class GradingRunner:
         # Flush so subscribers can see the event during the pipeline, but do
         # NOT commit — the route's get_db owns the commit (P0-B3).
         await db.flush()
+
+        # P2 — re-anchor the just-emitted ``submission.requested`` row's
+        # ``occurred_at`` to the real submit boundary. ``EventEmitter.emit``
+        # always stamps ``occurred_at = now()`` at emit time (grading start),
+        # which under slow provisioning can be tens of seconds after the user
+        # actually pressed submit. Both the rushed-submit signal and the
+        # missed_corrective_window diagnostic read the row's top-level
+        # ``occurred_at``, so a late grading-start can suppress the moment on
+        # the FIRST grade. We override the timestamp here (a tz-aware UTC
+        # value rounded to seconds matches the resolution other event rows
+        # carry) so the persisted row reflects the submit instant. No-op when
+        # ``submitted_at`` is None (back-compat: emit-time now() wins).
+        if submitted_at is not None:
+            await self._anchor_submission_requested(db, session_id, submitted_at)
 
         try:
             return await asyncio.wait_for(
@@ -568,6 +603,7 @@ class GradingRunner:
         manifest: Any,
         manifest_folder: Path,
         manifest_sha256: str,
+        submitted_at: datetime | None = None,
     ) -> tuple[Submission, GradingResult]:
         """Run the pipeline and persist a ``submissions`` row.
 
@@ -577,6 +613,11 @@ class GradingRunner:
         function with ``manifest.kind == "tutorial"`` is a contract
         violation and we surface it loudly rather than silently grading
         the tutorial as a real attempt.
+
+        ``submitted_at`` (P2) is threaded straight through to :meth:`run` so
+        the ``submission.requested`` event reflects the real submit boundary
+        rather than the grading-start instant. ``None`` preserves the legacy
+        emit-time timestamp (the CLI / calibration callers pass nothing).
         """
         if getattr(manifest, "kind", "standard") == "tutorial":
             raise RuntimeError(
@@ -585,7 +626,14 @@ class GradingRunner:
                 "missions must not be graded through the standard pipeline."
             )
         result = await self.run(
-            db, session, driver, handle, manifest, manifest_folder, manifest_sha256
+            db,
+            session,
+            driver,
+            handle,
+            manifest,
+            manifest_folder,
+            manifest_sha256,
+            submitted_at=submitted_at,
         )
         emitter = EventEmitter(db=db)
 
@@ -917,6 +965,59 @@ class GradingRunner:
             event_type=event_type,
             payload=payload,
         )
+
+    async def _anchor_submission_requested(
+        self,
+        db: AsyncSession,
+        session_id: uuid.UUID,
+        submitted_at: datetime,
+    ) -> None:
+        """Re-stamp the latest ``submission.requested`` row's ``occurred_at``.
+
+        ``EventEmitter.emit`` always stamps ``occurred_at = now()`` at emit
+        time (grading start); this re-anchors that row to the real submit
+        boundary so the rushed-submit signal + missed_corrective_window
+        diagnostic diff against the instant the user pressed submit rather
+        than the instant provisioning let grading begin (P2).
+
+        We re-query the just-flushed row (it's the most recent
+        ``submission.requested`` for this session in the open transaction)
+        and override ``occurred_at`` on the ORM instance — keeping the change
+        inside the same unit of work the route commits. The override is
+        normalised to a tz-aware UTC value rounded to seconds so it carries
+        the same resolution the other event rows store and so two grading
+        replays of the same submit produce byte-identical timestamps.
+        """
+        from datetime import UTC
+
+        ts = submitted_at
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        ts = ts.astimezone(UTC).replace(microsecond=0)
+
+        row = (
+            await db.execute(
+                select(SupervisionEvent)
+                .where(
+                    SupervisionEvent.session_id == session_id,
+                    SupervisionEvent.event_type == "submission.requested",
+                )
+                .order_by(SupervisionEvent.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            # Defensive: the emit above always inserts the row, so this
+            # should be unreachable. Log + skip rather than crash the grade
+            # if a future refactor changes the emit ordering.
+            logger.warning(
+                "[grader] submission.requested row not found to re-anchor "
+                "occurred_at for session={}",
+                session_id,
+            )
+            return
+        row.occurred_at = ts
+        await db.flush()
 
 
 # ---------------------------------------------------------------------------

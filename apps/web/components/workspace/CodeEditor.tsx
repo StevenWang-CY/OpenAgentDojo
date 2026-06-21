@@ -3,7 +3,7 @@
 import * as React from "react";
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Loader2, RefreshCcw, RotateCcw } from "lucide-react";
+import { AlertCircle, FileWarning, Loader2, RefreshCcw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, getFile, getWsToken, revertFile, writeFile } from "@/lib/api";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -177,16 +177,37 @@ export function CodeEditor({
     },
   });
 
-  // Seed the local buffer once the file loads (if the user hasn't already
-  // typed into it). We keep the *buffer* as the source of truth so the user
-  // doesn't lose unsaved typing on a refetch.
+  // Tracks paths the user has unsaved edits in. A path is "dirty" from the
+  // first keystroke until the next save/revert/seed reconciles it. We seed
+  // (or re-seed) the buffer from server content only for *clean* paths —
+  // never clobbering real user edits. Without this, a ``patch.applied``
+  // refetch (which delivers fresh server content) would be ignored because
+  // the seed effect short-circuited on any existing buffer, leaving the
+  // editor showing stale pre-patch content (even across reload, since
+  // ``fileBuffers`` is persisted).
+  const dirtyPathsRef = React.useRef<Set<string>>(new Set());
+
+  // Seed (or re-seed) the local buffer from server content. We keep the
+  // *buffer* as the source of truth so the user doesn't lose unsaved typing
+  // on a refetch — but only while the buffer is dirty. A clean buffer is
+  // overwritten with fresh server content so a ``patch.applied``-driven
+  // refetch surfaces the post-patch text instead of a stale localStorage
+  // value. Base64 (binary) files are never seeded as an editable buffer
+  // (see the read-only branch below) so autosave can't corrupt them.
+  const serverContent = fileQuery.data?.content;
+  const serverEncoding = fileQuery.data?.encoding;
   React.useEffect(() => {
     if (!path) return;
-    if (!fileQuery.data) return;
-    if (fileBuffers[path] !== undefined) return;
-    setActiveFileContent(path, fileQuery.data.content);
+    if (serverContent === undefined) return;
+    if (serverEncoding === "base64") return;
+    // Dirty buffer → leave the user's unsaved edits alone.
+    if (dirtyPathsRef.current.has(path)) return;
+    // Clean buffer with identical content → nothing to do (avoids a
+    // redundant store write + render on every refetch).
+    if (fileBuffers[path] === serverContent) return;
+    setActiveFileContent(path, serverContent);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, fileQuery.data]);
+  }, [path, serverContent, serverEncoding]);
 
   // P0-9 — honour a pending line-focus when the file content lands. Runs
   // after the editor is already mounted (the onMount handler covers the
@@ -303,6 +324,10 @@ export function CodeEditor({
       void writeFile(sessionId, targetPath, value)
         .then(() => {
           if (revertingRef.current) return;
+          // The saved buffer now matches what the server holds, so this
+          // path is no longer dirty — a subsequent server refetch may
+          // freely re-seed it.
+          dirtyPathsRef.current.delete(targetPath);
           setSavingState("saved");
           queryClient.invalidateQueries({
             queryKey: ["session", sessionId, "diff"],
@@ -321,6 +346,9 @@ export function CodeEditor({
     if (!path) return;
     if (revertingRef.current) return;
     const value = next ?? "";
+    // Mark dirty so the seed effect won't clobber this unsaved edit with a
+    // server refetch (e.g. a ``patch.applied``-driven invalidation).
+    dirtyPathsRef.current.add(path);
     setActiveFileContent(path, value);
     scheduleWrite(path, value);
     // P1-3 — push the unsaved buffer to the language server so hover,
@@ -375,6 +403,9 @@ export function CodeEditor({
         queryFn: ({ signal }) => getFile(sessionId, revertPath, signal),
       });
       if (epoch !== revertEpochRef.current) return;
+      // Reverted content is, by definition, the clean server state — drop
+      // the dirty mark so future refetches may re-seed this path.
+      dirtyPathsRef.current.delete(revertPath);
       setActiveFileContent(revertPath, refreshed.content);
       toast.success(`Reverted ${revertPath}.`);
     } catch (err) {
@@ -650,6 +681,12 @@ export function CodeEditor({
 
   const buffered = fileBuffers[path];
   const value = buffered ?? fileQuery.data?.content ?? "";
+  // P2 contract — ``GET /sessions/{id}/file`` returns ``encoding: "base64"``
+  // for binary files. Seeding Monaco with raw base64 (and autosaving it back)
+  // would corrupt the sandbox file, so we render a read-only "binary file"
+  // state instead of an editable buffer. The seed effect above already skips
+  // base64, so ``fileBuffers[path]`` is never populated for these.
+  const isBinary = fileQuery.data?.encoding === "base64";
 
   return (
     <div className={cn("flex h-full flex-col", className)}>
@@ -664,15 +701,17 @@ export function CodeEditor({
             saved={savingState === "saved"}
             loading={fileQuery.isLoading}
           />
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => void handleRevert()}
-            aria-label={`Revert ${path}`}
-          >
-            <RotateCcw className="size-3.5" aria-hidden />
-            Revert
-          </Button>
+          {isBinary ? null : (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void handleRevert()}
+              aria-label={`Revert ${path}`}
+            >
+              <RotateCcw className="size-3.5" aria-hidden />
+              Revert
+            </Button>
+          )}
         </div>
       </div>
       <div className="flex-1">
@@ -701,6 +740,24 @@ export function CodeEditor({
               <RefreshCcw className="size-3.5" aria-hidden />
               Retry
             </Button>
+          </div>
+        ) : isBinary ? (
+          <div
+            className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center"
+            data-testid="code-editor-binary"
+          >
+            <FileWarning
+              className="size-5 text-[var(--color-muted-foreground)]"
+              aria-hidden
+            />
+            <p className="text-xs text-[var(--color-muted-foreground)]">
+              <span className="font-mono">{path}</span> is a binary file and
+              can&rsquo;t be edited here.
+            </p>
+            <p className="text-[11px] text-[var(--color-muted-foreground)]">
+              Editing it in the browser would corrupt the sandbox copy, so
+              it&rsquo;s shown read-only.
+            </p>
           </div>
         ) : (
           <MonacoEditor

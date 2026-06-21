@@ -106,11 +106,29 @@ except (TypeError, ValueError):
 def get_prompt_version() -> int:
     """Return the active LLM prompt version.
 
-    Function form for callers that want to pick up an env / Settings
-    change without re-importing the module. Reads
-    :data:`PROMPT_VERSION` so the two stay in lockstep.
+    Resolves the canonical Settings field ``prompt_version`` so the LLM
+    cache key reflects the operator-configured value — pydantic-settings
+    loads ``PROMPT_VERSION`` from ``.env`` into Settings but NEVER into
+    ``os.environ``, so the module-level :data:`PROMPT_VERSION` constant
+    (which reads the env directly at import) stays pinned to its default
+    and bumping the documented knob would silently fail to invalidate the
+    cache.
+
+    The :func:`app.config.get_settings` import is done lazily INSIDE the
+    function to avoid the import cycle (``config`` → ``observability`` →
+    ``llm`` → ``domains``) that an import-time dependency would create at
+    boot. ``get_settings`` is ``lru_cache``-d, so there is no per-call
+    overhead. When Settings is unavailable for any reason (e.g. a misconfig
+    that would otherwise crash at request time) we fall back to the
+    import-time :data:`PROMPT_VERSION` constant so this never becomes a new
+    failure surface.
     """
-    return PROMPT_VERSION
+    try:
+        from app.config import get_settings
+
+        return int(get_settings().prompt_version)
+    except Exception:
+        return PROMPT_VERSION
 
 
 # Closed vocabulary; one Literal per LLM use site below.

@@ -14,7 +14,11 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.auth.session_cookie import issue_session_cookie
+from app.auth.session_cookie import (
+    _mark_revoked,
+    clear_revoked_jtis,
+    issue_session_cookie,
+)
 from app.config import get_settings
 from app.db.base import Base
 from app.models.user import User
@@ -128,6 +132,47 @@ async def test_get_requests_pass_through_lockout(client_with_db, db_engine) -> N
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["deletion_scheduled_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_revoked_cookie_does_not_leak_deletion_state(client_with_db, db_engine) -> None:
+    """A logged-out (jti-revoked) cookie must NOT trigger the 403 lockout body.
+
+    ``revoke_session_cookie`` (logout) marks the jti revoked but does NOT
+    bump ``session_epoch``, so a logged-out-but-unexpired cookie still
+    passes the epoch check. Without the revocation short-circuit the
+    middleware would emit ``code='deletion_scheduled'`` (incl
+    ``scheduled_for``), leaking the deletion-grace timestamp to a
+    terminated session. The request must instead fall through to route
+    auth (401) and never carry the deletion code.
+    """
+    from jose import jwt
+
+    clear_revoked_jtis()
+    try:
+        session_local = await _bound(db_engine)
+        _user_id, cookie = await _seed_scheduled_user(session_local)
+
+        settings = get_settings()
+        # Revoke this cookie's jti WITHOUT bumping the user's epoch —
+        # exactly the state logout leaves behind.
+        payload = jwt.decode(cookie, settings.session_secret, algorithms=["HS256"])
+        _mark_revoked(payload["jti"])
+
+        client_with_db.cookies.set(settings.session_cookie_name, cookie)
+        client_with_db.cookies.set("arena_csrf", "tok")
+
+        resp = await client_with_db.post(
+            "/api/v1/auth/me/tutorial/replay",
+            headers={"X-Csrf-Token": "tok"},
+        )
+        # Fall-through to route auth — a revoked cookie is unauthenticated.
+        assert resp.status_code == 401, resp.text
+        # The body MUST NOT leak the deletion grace timestamp.
+        assert resp.json().get("code") != "deletion_scheduled"
+        assert "scheduled_for" not in resp.json()
+    finally:
+        clear_revoked_jtis()
 
 
 @pytest.mark.asyncio

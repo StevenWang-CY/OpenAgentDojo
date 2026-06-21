@@ -11,6 +11,29 @@ current session_epoch (not the stale one from the incoming token). On WS
 close with code 4401 the frontend will mint a fresh token via the REST
 API and reconnect.
 
+Close-code contract (P1)
+------------------------
+All three WS endpoints (terminal, events, lsp) share one token-rejection
+contract, driven by :func:`classify_ws_token`:
+
+* ``WsTokenStatus.VALID``   → proceed with the upgrade.
+* ``WsTokenStatus.EXPIRED`` → otherwise-valid token whose ``expires_at``
+  has lapsed. Closed with **4401** so the frontend re-mints a fresh
+  token via the REST ``/ws-token`` endpoint and reconnects. A 60s token
+  expiring mid-session is recoverable, not fatal.
+* ``WsTokenStatus.INVALID`` → malformed / forged signature / wrong
+  payload version / session-id mismatch / stale-epoch / missing user.
+  Closed with **1008** (policy violation); the frontend treats it as
+  fatal and does NOT reconnect.
+
+Origin gating (P1-3)
+--------------------
+Every WS endpoint additionally gates the upgrade on
+:func:`is_allowed_origin` (``Origin`` ∈ ``settings.cors_origins``;
+``*`` = dev mode) and closes **4403 / origin_forbidden** before
+``accept`` when a browser presents a disallowed Origin. ``CORSMiddleware``
+does not cover the WS upgrade, so this check lives in every handler.
+
 Epoch enforcement (P0-2)
 ------------------------
 Every token bakes the user's ``session_epoch`` into the signed payload.
@@ -30,6 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import enum
 import hmac
 import time
 import uuid
@@ -148,19 +172,45 @@ def _verify_signature_and_parse(token: str, secret: str) -> tuple[str, str, int,
     return _parse_v1_payload(payload)
 
 
-def verify_ws_token(token: str, session_id: str, secret: str | None = None) -> bool:
-    """Return True if ``token`` is a valid, non-expired, current-epoch claim.
+class WsTokenStatus(enum.Enum):
+    """Outcome of :func:`classify_ws_token`.
 
-    Four checks, in order:
+    The three WS endpoints map these to close codes:
 
-      1. HMAC signature matches.
-      2. Payload is v1 (older / forged versions are rejected).
-      3. ``expires_at`` is in the future and ``session_id`` matches.
-      4. The token's ``epoch`` claim is >= ``users.session_epoch`` for
+    * ``VALID``   → proceed with the upgrade.
+    * ``EXPIRED`` → close 4401 (re-mintable); the FE refreshes the token
+      and reconnects. Only an otherwise-valid token reaches this state.
+    * ``INVALID`` → close 1008 (fatal); the FE does not reconnect.
+    """
+
+    VALID = "valid"
+    EXPIRED = "expired"
+    INVALID = "invalid"
+
+
+def classify_ws_token(token: str, session_id: str, secret: str | None = None) -> WsTokenStatus:
+    """Classify ``token`` as VALID / EXPIRED / INVALID for ``session_id``.
+
+    Checks run in order; the FIRST failing check decides the verdict:
+
+      1. HMAC signature matches AND the payload is v1 (older / forged /
+         malformed tokens → ``INVALID``).
+      2. ``session_id`` matches the claim (mismatch → ``INVALID``).
+      3. The bound ``user_id`` parses as a UUID (garbage → ``INVALID``).
+      4. ``expires_at`` is in the future. An otherwise-well-formed token
+         whose only defect is a lapsed ``expires_at`` is ``EXPIRED`` —
+         this is the one recoverable failure, surfaced as a 4401 close so
+         the FE re-mints and reconnects rather than tearing the session
+         down. We classify expiry BEFORE the epoch DB lookup: a re-mint
+         attempt is re-validated against the live epoch at the REST
+         ``/ws-token`` endpoint, so there's no point paying for the
+         lookup on the expired path.
+      5. The token's ``epoch`` claim is >= ``users.session_epoch`` for
          the bound user. A stale claim means the user has signed out of
          every device (or completed an email change, or scheduled their
-         account for deletion) since the token was minted — we refuse it
-         so the WS connection cannot survive an account-state rotation.
+         account for deletion) since the token was minted — that is a
+         fatal ``INVALID`` (1008), not a re-mintable expiry: minting a
+         fresh token would itself fail the epoch check.
 
     The user-row lookup is cached for ``_EPOCH_CACHE_TTL_S`` seconds to
     keep chatty terminals off the DB hot path.
@@ -171,12 +221,10 @@ def verify_ws_token(token: str, session_id: str, secret: str | None = None) -> b
             token, settings_secret
         )
     except WsTokenError:
-        return False
+        return WsTokenStatus.INVALID
 
     if sid_in_token != session_id:
-        return False
-    if expires_at < int(time.time()):
-        return False
+        return WsTokenStatus.INVALID
 
     # Defensive: a malformed user_id (non-UUID) shouldn't ever land here
     # because issue_ws_token only takes a str representation of the
@@ -185,13 +233,31 @@ def verify_ws_token(token: str, session_id: str, secret: str | None = None) -> b
     try:
         uuid.UUID(user_id)
     except (TypeError, ValueError):
-        return False
+        return WsTokenStatus.INVALID
+
+    if expires_at < int(time.time()):
+        # Otherwise-valid claim, only the TTL lapsed — recoverable.
+        return WsTokenStatus.EXPIRED
 
     current_epoch = _load_current_epoch(user_id)
     if current_epoch is None:
         # User row missing — equivalent to a deleted account; refuse.
-        return False
-    return int(claim_epoch) >= int(current_epoch)
+        return WsTokenStatus.INVALID
+    if int(claim_epoch) < int(current_epoch):
+        return WsTokenStatus.INVALID
+    return WsTokenStatus.VALID
+
+
+def verify_ws_token(token: str, session_id: str, secret: str | None = None) -> bool:
+    """Return True iff ``token`` is a valid, non-expired, current-epoch claim.
+
+    Thin boolean wrapper over :func:`classify_ws_token` for callers that
+    only care about accept/reject (the rate-limiter middleware, unit
+    tests). The WS endpoints use ``classify_ws_token`` directly so they
+    can distinguish the re-mintable EXPIRED case (4401) from a fatal
+    INVALID one (1008).
+    """
+    return classify_ws_token(token, session_id, secret) is WsTokenStatus.VALID
 
 
 def refresh_ws_token(

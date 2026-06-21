@@ -279,6 +279,7 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:  # noqa: PLR0
     from app.models.session_note import SessionNote
     from app.models.supervision_event import SupervisionEvent
     from app.models.user_badge import UserBadge
+    from app.models.user_recommendation import UserRecommendation
 
     user_session_ids = list(
         (await db.execute(select(SessionRow.id).where(SessionRow.user_id == user_id))).scalars()
@@ -321,6 +322,17 @@ async def _hard_delete_user(db: AsyncSession, user: User) -> None:  # noqa: PLR0
 
     await db.execute(sa_delete(MagicLinkToken).where(MagicLinkToken.user_id == user_id))
     await db.execute(sa_delete(UserBadge).where(UserBadge.user_id == user_id))
+    # P1-2 — the materialised recommendation cache is keyed on users.id with
+    # ``ON DELETE CASCADE``, but the tombstone keeps the users row alive so
+    # the cascade never fires; without this explicit delete the row survives
+    # erasure forever (GDPR residual). Re-issue the delete here like the
+    # other user-scoped children above.
+    # P1-2 — the materialised recommendation cache is keyed on users.id with
+    # ``ON DELETE CASCADE``, but the tombstone keeps the users row alive so
+    # the cascade never fires; without this explicit delete the row survives
+    # erasure forever (GDPR residual). Re-issue the delete here like the
+    # other user-scoped children above.
+    await db.execute(sa_delete(UserRecommendation).where(UserRecommendation.user_id == user_id))
     await db.execute(sa_delete(DataExport).where(DataExport.user_id == user_id))
 
     # P1-4 — wipe scratchpad-coaching cache rows produced by this user.

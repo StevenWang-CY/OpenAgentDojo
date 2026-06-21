@@ -52,7 +52,7 @@ import {
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DataExport } from "@arena/shared-types";
-import { ApiError, account } from "@/lib/api";
+import { ApiError, account, auth } from "@/lib/api";
 import { Button } from "@/components/ui/Button";
 import { SectionLabel } from "./AccountView";
 
@@ -134,6 +134,22 @@ export interface DataExportPanelProps {
 
 export function DataExportPanel({ locked }: DataExportPanelProps) {
   const queryClient = useQueryClient();
+  // Resolve the viewer's real handle off the shared ``["me"]`` cache the
+  // account surface already populates (AccountView mounts the same query).
+  // ``GET /profiles/me`` 404s for every handle that isn't literally "me",
+  // so the "see your mission history" link has to point at the resolved
+  // handle — mirroring the Header — rather than a hardcoded ``/profile/me``.
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: ({ signal }) => auth.me(signal),
+    retry: (failureCount, err) => {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 0)) {
+        return false;
+      }
+      return failureCount < 1;
+    },
+  });
+  const handle = meQuery.data?.handle ?? null;
   const [exportId, setExportId] = React.useState<string | null>(null);
   const [conflict, setConflict] = React.useState(false);
   // Manual poll cap — React Query has no built-in attempt budget, so we
@@ -571,14 +587,17 @@ export function DataExportPanel({ locked }: DataExportPanelProps) {
               bundles a self-contained <span className="font-mono">verify.html</span>
               {" "}so a recruiter can re-derive the signature offline.
             </p>
-            <p className="pt-1 text-xs">
-              <Link
-                href="/profile/me"
-                className="font-medium text-[var(--color-primary)] underline-offset-2 hover:underline"
-              >
-                See your mission history →
-              </Link>
-            </p>
+            {handle ? (
+              <p className="pt-1 text-xs">
+                <Link
+                  href={`/profile/${handle}`}
+                  className="font-medium text-[var(--color-primary)] underline-offset-2 hover:underline"
+                  data-testid="export-history-link"
+                >
+                  See your mission history →
+                </Link>
+              </p>
+            ) : null}
           </div>
         </div>
       </aside>
