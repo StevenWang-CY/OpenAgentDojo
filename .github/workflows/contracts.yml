@@ -15,7 +15,9 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  NODE_VERSION: "20.18.0"
+  # Keep in lockstep with ci.yml — ESLint 10 needs node ≥20.19 (the web
+  # typecheck job here runs on the same toolchain).
+  NODE_VERSION: "22.21.0"
   PNPM_VERSION: "9.12.0"
 
 jobs:
