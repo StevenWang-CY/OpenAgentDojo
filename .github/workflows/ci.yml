@@ -22,7 +22,9 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  NODE_VERSION: "20.18.0"
+  # ESLint 10 requires node ^20.19 || ^22.13 || >=24; this also matches the
+  # node version the web suite is developed/verified against.
+  NODE_VERSION: "22.21.0"
   PNPM_VERSION: "9.12.0"
 
 jobs:
