@@ -111,8 +111,8 @@ function ScoreRadarChart({ dimensions, className }: ScoreRadarProps) {
               fontSize: 12,
               fontFamily: MONO_STACK,
             }}
-            formatter={(value: number, _name, entry) => {
-              const payload = entry.payload as { raw: number; max: number };
+            formatter={(_value, _name, item) => {
+              const payload = item.payload as { raw: number; max: number };
               return [`${payload.raw} / ${payload.max}`, "score"];
             }}
           />
