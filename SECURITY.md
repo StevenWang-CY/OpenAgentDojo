@@ -6,7 +6,7 @@ investigate before details become public.
 
 ## Reporting
 
-Email **`steveenwang@gmail.com`** with:
+Please report privately through GitHub's **[private vulnerability reporting](https://github.com/StevenWang-CY/OpenAgentDojo/security/advisories/new)** — open the repository's **Security** tab and choose **Report a vulnerability**. Include:
 
 - A description of the vulnerability.
 - Reproduction steps (URL, payload, expected vs actual behaviour).
