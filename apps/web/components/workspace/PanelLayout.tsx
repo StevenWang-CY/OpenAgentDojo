@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import {
+  Group,
+  Panel,
+  Separator,
+  useDefaultLayout,
+  type LayoutStorage,
+} from "react-resizable-panels";
 import { cn } from "@/lib/utils";
 
 interface PanelSection {
@@ -28,10 +34,34 @@ export interface PanelLayoutProps {
   className?: string;
 }
 
+// react-resizable-panels v4 persists layout via the `useDefaultLayout` hook,
+// whose default storage is `localStorage`. That reference is evaluated during
+// the hook body, which would throw under Next.js server rendering (this is a
+// client component but is still SSR'd for the initial HTML). Wrap localStorage
+// so reads/writes no-op on the server and during access failures.
+const safeLayoutStorage: LayoutStorage = {
+  getItem(key) {
+    if (typeof window === "undefined") return null;
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem(key, value) {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {
+      /* storage may be unavailable (private mode, quota) — ignore. */
+    }
+  },
+};
+
 /**
  * Implements the 6-pane layout from IMPLEMENTATION_PLAN.md §13.2 with
  * react-resizable-panels. All panel state is local — persistence happens via
- * the autoSaveId so layout survives reloads.
+ * `useDefaultLayout` so layout survives reloads on a per-mission basis.
  */
 export function PanelLayout({
   sidebar,
@@ -47,37 +77,48 @@ export function PanelLayout({
   const horizontalKey = missionId
     ? `arena-workspace-horizontal:${missionId}`
     : "arena-workspace-horizontal";
+
+  const vertical = useDefaultLayout({ id: verticalKey, storage: safeLayoutStorage });
+  const horizontal = useDefaultLayout({ id: horizontalKey, storage: safeLayoutStorage });
+
   return (
     <div className={cn("flex h-[calc(100dvh-3.5rem)] flex-col bg-[var(--color-background)]", className)}>
-      <PanelGroup
-        direction="vertical"
-        autoSaveId={verticalKey}
+      <Group
+        orientation="vertical"
+        id={verticalKey}
+        defaultLayout={vertical.defaultLayout}
+        onLayoutChanged={vertical.onLayoutChanged}
         className="flex-1"
       >
-        <Panel defaultSize={70} minSize={40}>
-          <PanelGroup direction="horizontal" autoSaveId={horizontalKey}>
-            <Panel defaultSize={20} minSize={14} maxSize={32}>
+        <Panel id="main" defaultSize="70%" minSize="40%">
+          <Group
+            orientation="horizontal"
+            id={horizontalKey}
+            defaultLayout={horizontal.defaultLayout}
+            onLayoutChanged={horizontal.onLayoutChanged}
+          >
+            <Panel id="sidebar" defaultSize="20%" minSize="14%" maxSize="32%">
               <SurfaceFrame>{sidebar}</SurfaceFrame>
             </Panel>
             <VerticalHandle />
-            <Panel defaultSize={55} minSize={30}>
+            <Panel id="editor" defaultSize="55%" minSize="30%">
               <SurfaceFrame>{editor}</SurfaceFrame>
             </Panel>
             <VerticalHandle />
-            <Panel defaultSize={25} minSize={18} maxSize={40}>
+            <Panel id="right" defaultSize="25%" minSize="18%" maxSize="40%">
               <SurfaceFrame>
                 <TabbedColumn sections={rightTabs} groupLabel="Panels" />
               </SurfaceFrame>
             </Panel>
-          </PanelGroup>
+          </Group>
         </Panel>
         <HorizontalHandle />
-        <Panel defaultSize={30} minSize={15}>
+        <Panel id="bottom" defaultSize="30%" minSize="15%">
           <SurfaceFrame>
             <TabbedColumn sections={bottomTabs} groupLabel="Bottom panels" />
           </SurfaceFrame>
         </Panel>
-      </PanelGroup>
+      </Group>
     </div>
   );
 }
@@ -94,11 +135,11 @@ function SurfaceFrame({ children }: { children: React.ReactNode }) {
 // painted by a centered ::after in globals.css (1px idle, 3px hover/active)
 // so we get a generous hit area without a fat divider.
 function VerticalHandle() {
-  return <PanelResizeHandle className="w-1.5 cursor-col-resize" />;
+  return <Separator className="w-1.5 cursor-col-resize" />;
 }
 
 function HorizontalHandle() {
-  return <PanelResizeHandle className="h-1.5 cursor-row-resize" />;
+  return <Separator className="h-1.5 cursor-row-resize" />;
 }
 
 function TabbedColumn({

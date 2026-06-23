@@ -272,14 +272,18 @@
   font-feature-settings: normal;
 }
 
-/* react-resizable-panels' resize handles — 1px line that thickens to 3px on
- * hover/active. Uses a centered pseudo-element so the active hit area stays
- * generous while the visible line stays subtle. */
-[data-panel-resize-handle-enabled] {
+/* react-resizable-panels' resize handles (v4 `Separator`) — 1px line that
+ * thickens to 3px on hover/active. Uses a centered pseudo-element so the active
+ * hit area stays generous while the visible line stays subtle.
+ *
+ * v4 renders `<div data-separator role="separator" aria-orientation>`; the
+ * separator's `aria-orientation` is perpendicular to the group's resize axis
+ * (a vertical separator splits horizontally-laid-out panels). */
+[data-separator] {
   position: relative;
   background-color: transparent;
 }
-[data-panel-resize-handle-enabled]::after {
+[data-separator]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -290,23 +294,23 @@
     width 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
     height 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-/* Vertical handle (between horizontal panels) — render a 1px tall vertical bar. */
-[data-panel-resize-handle-enabled][data-panel-group-direction="horizontal"]::after {
+/* Vertical handle (between horizontally-arranged panels) — a 1px wide bar. */
+[data-separator][aria-orientation="vertical"]::after {
   width: 1px;
   height: 100%;
 }
-[data-panel-resize-handle-enabled][data-panel-group-direction="horizontal"]:hover::after,
-[data-panel-resize-handle-enabled][data-panel-group-direction="horizontal"][data-resize-handle-active]::after {
+[data-separator][aria-orientation="vertical"]:hover::after,
+[data-separator][aria-orientation="vertical"][data-separator="active"]::after {
   width: 3px;
   background-color: var(--color-primary);
 }
-/* Horizontal handle (between vertical panels). */
-[data-panel-resize-handle-enabled][data-panel-group-direction="vertical"]::after {
+/* Horizontal handle (between vertically-stacked panels) — a 1px tall bar. */
+[data-separator][aria-orientation="horizontal"]::after {
   height: 1px;
   width: 100%;
 }
-[data-panel-resize-handle-enabled][data-panel-group-direction="vertical"]:hover::after,
-[data-panel-resize-handle-enabled][data-panel-group-direction="vertical"][data-resize-handle-active]::after {
+[data-separator][aria-orientation="horizontal"]:hover::after,
+[data-separator][aria-orientation="horizontal"][data-separator="active"]::after {
   height: 3px;
   background-color: var(--color-primary);
 }
