@@ -215,8 +215,7 @@ function Row({ label, value }: { label: string; value: string }) {
           size="sm"
           aria-label={`Copy ${label}`}
           onClick={() => {
-            void navigator.clipboard?.writeText(value);
-            toast.success(`Copied ${label}`);
+            void copyToClipboard(value, label);
           }}
           className="size-6 p-0"
         >
@@ -225,6 +224,30 @@ function Row({ label, value }: { label: string; value: string }) {
       </dd>
     </div>
   );
+}
+
+/**
+ * Copy ``value`` to the clipboard and toast the outcome HONESTLY. The
+ * previous implementation fired ``void navigator.clipboard?.writeText`` and
+ * unconditionally toasted success — so when ``navigator.clipboard`` is
+ * undefined (insecure origin / older browser) or the write rejected
+ * (permission denied), the user got a "Copied" toast for a no-op. We now
+ * await the write and only claim success on resolve; absence or rejection
+ * surfaces an error toast so the user knows to copy the hash manually.
+ */
+async function copyToClipboard(value: string, label: string): Promise<void> {
+  const clipboard =
+    typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+  if (!clipboard?.writeText) {
+    toast.error(`Couldn't copy ${label}. Copy it manually.`);
+    return;
+  }
+  try {
+    await clipboard.writeText(value);
+    toast.success(`Copied ${label}`);
+  } catch {
+    toast.error(`Couldn't copy ${label}. Copy it manually.`);
+  }
 }
 
 function abbreviate(hex: string): string {

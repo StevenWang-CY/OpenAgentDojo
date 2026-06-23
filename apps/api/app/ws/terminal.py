@@ -19,7 +19,7 @@ import uuid
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 from loguru import logger
 
-from app.ws.auth import verify_ws_token
+from app.ws.auth import WsTokenStatus, classify_ws_token, is_allowed_origin, verify_ws_token
 
 router = APIRouter(tags=["ws"])
 
@@ -76,13 +76,31 @@ def _apply_resize(pty_fd: int, data: bytes) -> bool:
 
 
 @router.websocket("/ws/sessions/{session_id}/terminal")
-async def terminal_ws(
+async def terminal_ws(  # noqa: PLR0912 — sequential fail-closed WS upgrade gates (origin, token expiry-vs-invalid, session existence) + async sandbox poll; each guard must stay inline before accept()
     websocket: WebSocket,
     session_id: uuid.UUID,
     token: str = Query(""),
 ):
     sid_str = str(session_id)
+
+    # Origin allow-list. Closes BEFORE accept so a malicious cross-site WS
+    # upgrade never sees the handshake completed. Mirrors app.ws.lsp; browsers
+    # always ship Origin, non-browser clients (no Origin) pass through to the
+    # token check below per the shared helper's contract. CORSMiddleware does
+    # NOT cover the WS upgrade, so the gate must live here.
+    if not is_allowed_origin(websocket):
+        await websocket.close(code=4403, reason="origin_forbidden")
+        return
+
+    # Auth. The fast path is the boolean ``verify_ws_token`` (cheap, and the
+    # name tests still patch). On rejection we disambiguate: an otherwise-valid
+    # token whose only defect is a lapsed TTL closes 4401 so the FE re-mints and
+    # reconnects, while a malformed / forged / stale-epoch token closes 1008
+    # (fatal). See app.ws.auth.classify_ws_token for the full contract.
     if not verify_ws_token(token, sid_str):
+        if classify_ws_token(token, sid_str) is WsTokenStatus.EXPIRED:
+            await websocket.close(code=4401, reason="token expired")
+            return
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="bad token")
         return
 

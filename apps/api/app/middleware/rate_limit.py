@@ -61,6 +61,31 @@ _FAIL_OPEN_LOG_THROTTLE_S = 60.0
 # so a wall-clock skew can't suppress legitimate warnings.
 _LAST_FAIL_OPEN_WARN: dict[str, float] = {}
 
+# Self-healing probe backoff.
+#
+# When a probe fails (or a hit-path transport error nulls the cached client)
+# we don't latch the in-memory fallback forever — we just refuse to re-probe
+# Redis again until ``_REDIS_REPROBE_BACKOFF_S`` of monotonic time has passed.
+# That bounds the connect/timeout churn on a sustained outage (each probe pays
+# a ``socket_connect_timeout``) while still letting the very next request after
+# the backoff re-establish the Redis-backed counter once Redis recovers.
+# Mirrors the self-heal in ``app/sessions/events.py::get_redis``, which drops
+# its cached client on any transport error so the next call rebuilds.
+_REDIS_REPROBE_BACKOFF_S = 5.0
+
+
+def _is_redis_transport_error(exc: BaseException) -> bool:
+    """True when ``exc`` is a Redis connection/timeout error worth resetting on.
+
+    Imported lazily so the runtime doesn't pull ``redis`` at module import.
+    Mirrors ``app/sessions/events.py::_is_redis_transport_error``.
+    """
+    try:
+        from redis import exceptions as redis_exc
+    except Exception:  # pragma: no cover — redis missing entirely
+        return False
+    return isinstance(exc, (redis_exc.ConnectionError, redis_exc.TimeoutError))
+
 
 def _log_fail_open(tag: str, exc: BaseException) -> None:
     """Emit a throttled WARNING when we slip into the in-memory fallback.
@@ -250,12 +275,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._memory = _InMemoryCounter()
         self._redis: Any | None = None
-        self._redis_probed = False
+        # Monotonic timestamp before which we won't re-probe Redis. ``0.0``
+        # means "probe now". A failed probe (or a hit-path transport error)
+        # pushes this forward by ``_REDIS_REPROBE_BACKOFF_S`` so we don't
+        # latch the in-memory fallback forever — once the backoff elapses we
+        # re-probe and recover the Redis-backed counter automatically.
+        self._next_probe_at = 0.0
 
     async def _get_redis(self) -> Any | None:
-        if self._redis_probed:
+        # Already holding a live client — fast path, no re-probe.
+        if self._redis is not None:
             return self._redis
-        self._redis_probed = True
+        # Cached client is None: re-probe, but only once the backoff has
+        # elapsed so a sustained outage doesn't pay a connect/timeout on every
+        # request. Until then, stay on the in-memory fallback.
+        if time.monotonic() < self._next_probe_at:
+            return None
         try:
             import redis.asyncio as aioredis
 
@@ -277,6 +312,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # without filling the log shipper on a sustained outage (P2-B11).
             _log_fail_open("probe", exc)
             self._redis = None
+            # Hold off the next probe so we don't reconnect-storm Redis while
+            # it's down; the very next request after the backoff re-probes.
+            self._next_probe_at = time.monotonic() + _REDIS_REPROBE_BACKOFF_S
         return self._redis
 
     def _identity(self, request: Request, rule: _Rule) -> str:
@@ -318,6 +356,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # We deliberately keep the immediate (non-throttled) ``warning``
             # nuance off here so a flapping redis doesn't drown the logs.
             _log_fail_open("hit", exc)
+            # Connection-level failure (or a wait_for timeout) means the cached
+            # client is dead — drop it so ``_get_redis`` re-probes after the
+            # backoff instead of pinning the in-memory fallback forever. A
+            # ``TimeoutError`` from ``asyncio.wait_for`` signals a wedged Redis
+            # too, so we reset on it as well. Mirrors the self-heal in
+            # ``app/sessions/events.py::_publish``.
+            if _is_redis_transport_error(exc) or isinstance(
+                exc, (TimeoutError, asyncio.TimeoutError)
+            ):
+                self._redis = None
+                self._next_probe_at = time.monotonic() + _REDIS_REPROBE_BACKOFF_S
             return self._memory.hit(bucket_key, window_s)
 
     async def dispatch(

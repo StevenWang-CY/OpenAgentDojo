@@ -162,6 +162,120 @@ async def test_apply_patch_success_emits_patch_applied(db_engine: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_patch_is_idempotent_on_double_apply(db_engine: Any) -> None:
+    """A second apply for an already-applied turn returns the prior success
+    WITHOUT re-running the driver and WITHOUT emitting a second event.
+
+    Regression (P1): a double POST used to re-invoke the driver; ``git apply``
+    rejects the already-applied diff and the code emitted a spurious
+    ``patch.failed`` for a turn that actually SUCCEEDED, corrupting the
+    grader's replayed event stream.
+    """
+    await _bind_engine(db_engine)
+    _, session_id, turn_id = await _seed(db_engine)
+
+    from app.db import session as session_module
+
+    # First apply — succeeds, persists the success marker, emits patch.applied.
+    async with session_module.AsyncSessionLocal() as db:
+        session = (
+            await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+        ).scalar_one()
+        emitter = _FakeEmitter()
+        service = AgentService()
+        first = await service.apply_patch(
+            db=db,
+            session=session,
+            turn_id=turn_id,
+            sandbox_driver=_OkDriver(),
+            sandbox_handle=object(),
+            emitter=emitter,
+        )
+        await db.commit()
+
+    assert first.applied is True
+    assert any(e[0] == "patch.applied" for e in emitter.events)
+
+    # Second apply for the same turn. A driver that would *fail* if invoked
+    # proves the short-circuit happens before the driver runs.
+    async with session_module.AsyncSessionLocal() as db:
+        session = (
+            await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+        ).scalar_one()
+        emitter2 = _FakeEmitter()
+        service2 = AgentService()
+        second = await service2.apply_patch(
+            db=db,
+            session=session,
+            turn_id=turn_id,
+            sandbox_driver=_FailingDriver(),
+            sandbox_handle=object(),
+            emitter=emitter2,
+        )
+        await db.commit()
+
+    # Returns the prior success — not a failure.
+    assert second.applied is True
+    assert second.error is None
+    # No second event of any kind — and emphatically no spurious patch.failed.
+    assert emitter2.events == []
+    assert not any(e[0] == "patch.failed" for e in emitter2.events)
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_failed_turn_remains_retryable(db_engine: Any) -> None:
+    """A genuinely-failed prior attempt leaves the turn retryable.
+
+    The failure branches never set ``applied_patch``, so the idempotency guard
+    must not short-circuit and a retry can still succeed.
+    """
+    await _bind_engine(db_engine)
+    _, session_id, turn_id = await _seed(db_engine)
+
+    from app.db import session as session_module
+
+    # First apply fails.
+    async with session_module.AsyncSessionLocal() as db:
+        session = (
+            await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+        ).scalar_one()
+        emitter = _FakeEmitter()
+        service = AgentService()
+        first = await service.apply_patch(
+            db=db,
+            session=session,
+            turn_id=turn_id,
+            sandbox_driver=_FailingDriver(),
+            sandbox_handle=object(),
+            emitter=emitter,
+        )
+        await db.commit()
+
+    assert first.applied is False
+    assert any(e[0] == "patch.failed" for e in emitter.events)
+
+    # Retry succeeds — the guard did not latch on the failed attempt.
+    async with session_module.AsyncSessionLocal() as db:
+        session = (
+            await db.execute(select(SessionRow).where(SessionRow.id == session_id))
+        ).scalar_one()
+        emitter2 = _FakeEmitter()
+        service2 = AgentService()
+        second = await service2.apply_patch(
+            db=db,
+            session=session,
+            turn_id=turn_id,
+            sandbox_driver=_OkDriver(),
+            sandbox_handle=object(),
+            emitter=emitter2,
+        )
+        await db.commit()
+
+    assert second.applied is True
+    assert any(e[0] == "patch.applied" for e in emitter2.events)
+
+
+@pytest.mark.asyncio
 async def test_apply_patch_failure_emits_patch_failed(db_engine: Any) -> None:
     await _bind_engine(db_engine)
     _, session_id, turn_id = await _seed(db_engine)

@@ -12,7 +12,7 @@
 #   mailhog    — captures dev magic-link emails (UI on :8025)
 #   api        — FastAPI backend (uvicorn)
 #   worker     — RQ worker that drives sandbox provisioning
-#   web        — Next.js 15 frontend
+#   web        — Next.js 16 frontend
 #
 # Healthchecks are wired across the dependency graph so dependents start
 # only when prerequisites are actually ready.

@@ -30,10 +30,16 @@ const ITEMS: ChecklistItem[] = [
   {
     id: "ran_test",
     label: "I ran the test suite at least once.",
+    // Require ``exit_code === 0`` — a command that exits 127 (e.g. ``pnpm``
+    // missing in a Go/Python sandbox) or otherwise fails earns no
+    // verification credit, mirroring the backend grader which gates on a
+    // clean exit.
     predicate: (e) =>
       e.some(
         (ev) =>
-          ev.event_type === "command.run" && ev.payload.category === "test"
+          ev.event_type === "command.run" &&
+          ev.payload.category === "test" &&
+          ev.payload.exit_code === 0
       ),
   },
   {
@@ -43,7 +49,9 @@ const ITEMS: ChecklistItem[] = [
       e.some(
         (ev) =>
           ev.event_type === "command.run" &&
-          (ev.payload.category === "typecheck" || ev.payload.category === "lint")
+          (ev.payload.category === "typecheck" ||
+            ev.payload.category === "lint") &&
+          ev.payload.exit_code === 0
       ),
   },
   {

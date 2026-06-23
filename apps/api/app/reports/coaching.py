@@ -70,10 +70,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.llm import (
-    PROMPT_VERSION,
     GeneratedOutput,
     canonical_content_hash,
     get_or_generate,
+    get_prompt_version,
     render_prompt,
 )
 from app.missions.cache import cached_manifests
@@ -294,6 +294,12 @@ async def generate_coaching_reflection(
     }
     content_hash = canonical_content_hash(inputs)
 
+    # Resolve the operator-configured prompt version ONCE so the
+    # generate / stamp / lookup callsites below all key the same cache
+    # row — a mid-function drift would stamp an index row against a
+    # prompt_version that the generated row doesn't carry.
+    prompt_version = get_prompt_version()
+
     async def _generator() -> GeneratedOutput:
         # ``_build_client`` is a module-level factory the tests can
         # monkeypatch to inject a fake SDK without reaching into
@@ -337,7 +343,7 @@ async def generate_coaching_reflection(
             db,
             domain=_COACHING_DOMAIN,
             content_hash=content_hash,
-            prompt_version=PROMPT_VERSION,
+            prompt_version=prompt_version,
             model_id=_COACHING_MODEL,
             generator=_generator,
             fallback=None,
@@ -366,7 +372,7 @@ async def generate_coaching_reflection(
         user_id=ctx.user.id,
         domain=_COACHING_DOMAIN,
         content_hash=content_hash,
-        prompt_version=PROMPT_VERSION,
+        prompt_version=prompt_version,
     )
 
     # Pull the generated_at from the persisted row so two callers see
@@ -375,7 +381,7 @@ async def generate_coaching_reflection(
         db,
         domain=_COACHING_DOMAIN,
         content_hash=content_hash,
-        prompt_version=PROMPT_VERSION,
+        prompt_version=prompt_version,
     )
     generated_at = row.generated_at if row is not None else datetime.now(UTC)
 

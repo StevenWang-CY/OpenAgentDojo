@@ -53,7 +53,10 @@ export async function generateMetadata({
   const score = submission.total_score;
   // P0-2 — strengths are either legacy string[] or EvidenceEntry[]. Coerce
   // to strings for the summary line so the OG metadata stays stable.
-  const strengthMessages = submission.score_report.strengths.map((s) =>
+  // Defensive: a partial / legacy ``score_report`` may omit ``strengths``
+  // (or the whole report). Null-guard so we degrade to the generic summary
+  // instead of throwing during SSR metadata generation.
+  const strengthMessages = (submission.score_report?.strengths ?? []).map((s) =>
     typeof s === "string" ? s : s.message,
   );
   const summary =

@@ -8,12 +8,21 @@ import { ApiError, getWsToken } from "./api";
  * Backend close-code conventions (mirror `apps/api/app/ws/auth.py`):
  *   - 1008 / 4001 / 4003 / 4404 → fatal (policy / unauthorized / forbidden /
  *                                  session reaped); do not reconnect.
+ *   - 1000 + reason "graded"     → normal terminal close on `submission.graded`;
+ *                                  the stream is done, do not reconnect.
  *   - 4401                       → token expired; re-mint via `getWsToken` then reconnect.
  *   - any other                  → backoff + reconnect, up to `maxAttempts`.
  *
  * 4404 is special-cased: when the backend reaps a session mid-stream, we
  * fire `onSessionEnded` so the caller can render a "session ended" view
  * rather than the generic "exhausted" banner.
+ *
+ * The `1000`/"graded" close is the *normal* end-of-stream signal: the events
+ * WS closes cleanly once grading completes. It must be treated as terminal —
+ * left to fall through to the reconnect path, the FE re-handshakes, the
+ * backend re-delivers `graded` from backfill and re-closes `1000`, and the
+ * loop burns `maxAttempts` before firing the spurious "Lost connection…
+ * Refresh" toast on every successful completion. We tear down quietly instead.
  */
 
 export type ReconnectingSocketStatus =
@@ -76,6 +85,14 @@ export interface ReconnectingSocketOptions {
    * "session ended" view rather than a misleading "reconnecting…" banner.
    */
   onSessionEnded?: () => void;
+  /**
+   * Fired exactly once when the backend closes the events stream normally
+   * with code 1000 and reason "graded" — i.e. grading finished and there is
+   * nothing left to stream. The socket transitions to "closed" and no
+   * further reconnects are scheduled, so the genuine completion never
+   * trips the reconnect loop or the "Lost connection… Refresh" toast.
+   */
+  onGraded?: () => void;
 }
 
 export interface ReconnectingSocketHandle {
@@ -150,6 +167,7 @@ export function createReconnectingSocket(
     onAttemptsExhausted,
     onAuthFailure,
     onSessionEnded,
+    onGraded,
   } = opts;
 
   const baseUrlNoToken = urlWithoutToken(rawUrl);
@@ -236,6 +254,17 @@ export function createReconnectingSocket(
       onClose?.(event);
       if (closedByUser) {
         setStatus("closed");
+        return;
+      }
+      // Normal end-of-stream on grading completion: the backend closes 1000
+      // with reason "graded" once `submission.graded` has been delivered.
+      // This is terminal — reconnecting would only re-deliver `graded` from
+      // backfill and re-close, looping until `maxAttempts` is burned and the
+      // spurious "Lost connection… Refresh" toast fires. Tear down cleanly.
+      if (event.code === 1000 && event.reason === "graded") {
+        exhausted = true;
+        setStatus("closed");
+        onGraded?.();
         return;
       }
       if (fatalCloseCodes.includes(event.code)) {

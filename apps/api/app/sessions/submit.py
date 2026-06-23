@@ -120,6 +120,17 @@ async def submit_session(  # noqa: PLR0915
     settings = get_settings()
     session_id: uuid.UUID = session.id
 
+    # P2 — capture the real submit moment at the route boundary, BEFORE any
+    # claim / handle lookup / manifest load / runner entry. The grading runner
+    # stamps ``submission.requested.occurred_at`` from this instead of its own
+    # grading-start ``now()``; under slow sandbox provisioning the gap between
+    # "user pressed submit" and "grading actually began" can be tens of
+    # seconds, which inflates the agent.responded→submit delta and silently
+    # flips a genuine sub-15s rushed submit to "not rushed" on the first
+    # grade. Anchoring to this boundary keeps the rushed-submit signal and the
+    # missed_corrective_window diagnostic honest.
+    submitted_at = datetime.now(UTC)
+
     # Cheap up-front check so we 409 fast and don't even bother looking up the
     # sandbox handle when the session is already terminal.
     if session.status in _TERMINAL_STATUSES:
@@ -218,6 +229,10 @@ async def submit_session(  # noqa: PLR0915
             manifest=manifest,
             manifest_folder=manifest_folder,
             manifest_sha256=loaded.manifest_sha256,
+            # P2 — the real submit boundary captured at route entry, so the
+            # ``submission.requested`` event reflects when the user actually
+            # pressed submit rather than when provisioning let grading begin.
+            submitted_at=submitted_at,
         )
     except TimeoutError as exc:
         # Flip the session to a terminal ``error`` state BEFORE we attempt to

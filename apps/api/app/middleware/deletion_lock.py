@@ -39,7 +39,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from app.auth.session_cookie import _decode_cookie_payload, verify_epoch_claim
+from app.auth.session_cookie import (
+    _decode_cookie_payload,
+    _is_revoked_async,
+    verify_epoch_claim,
+)
 from app.config import get_settings
 from app.observability import deletion_lock_blocked_total
 
@@ -73,6 +77,17 @@ class DeletionLockMiddleware(BaseHTTPMiddleware):
         settings = get_settings()
         payload = _decode_cookie_payload(request, settings)
         if payload is None:
+            return await call_next(request)
+        # Short-circuit on a revoked cookie before doing any deletion-state
+        # work. ``revoke_session_cookie`` (logout) marks the jti revoked but
+        # does NOT bump ``session_epoch``, so a logged-out-but-unexpired
+        # cookie still passes the epoch check below — emitting the 403
+        # ``deletion_scheduled`` body (incl ``scheduled_for``) would leak the
+        # deletion-grace timestamp to a terminated session. Mirror
+        # ``auth.deps.get_current_user``: fall through so the route's auth
+        # dependency rejects the revoked cookie at 401.
+        jti = payload.get("jti")
+        if jti and await _is_revoked_async(jti):
             return await call_next(request)
         sub = payload.get("sub")
         if not sub:

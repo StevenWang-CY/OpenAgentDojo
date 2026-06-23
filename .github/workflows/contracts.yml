@@ -36,9 +36,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        # TODO: pin via sha — currently floating on v7 (ci.yml pins v3.2.4
-        # against a different SHA so we cannot reuse that one here).
-        uses: astral-sh/setup-uv@v7
+        # Pinned to the setup-uv v7 release commit. That commit is the very
+        # same SHA ci.yml pins (the action's `v7` tag and the older `v3.2.4`
+        # tag resolve to one commit), so uv stays consistent across workflows.
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: true
           cache-dependency-glob: "apps/api/uv.lock"

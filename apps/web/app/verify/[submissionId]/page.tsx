@@ -10,29 +10,44 @@ interface VerifyPageProps {
 /**
  * Public verification page (P0-11).
  *
- * Server-rendered, ISR with ``revalidate: false`` because a graded
- * submission's envelope is immutable. Static cache wins both for
- * latency and for the "you can hand this URL to a recruiter" contract:
- * the body never changes after the first render.
+ * Server-rendered with a short ISR window. A graded submission's envelope
+ * is immutable *once it exists*, so a successful response is cheap to
+ * cache — but a verify URL can be requested BEFORE the envelope exists
+ * (a recruiter follows the link the instant grading is still in flight).
+ * If we cached that negative permanently (``revalidate: false`` +
+ * ``force-cache``), ``notFound()`` would pin a stale 404 to the path for
+ * good: the same URL would keep serving 404 even after grading lands.
+ *
+ * So we gate caching on ``response.ok`` — a successful immutable envelope
+ * is cached at the data layer (``force-cache``), but a 404/error is
+ * fetched ``no-store`` so it never sticks, and the page-level
+ * ``revalidate`` is a finite window so a once-404'd render recovers.
  *
  * No (app) or (marketing) layout — the route has its own minimal
  * layout in ``apps/web/app/verify/layout.tsx``.
  */
-export const revalidate = false;
+export const revalidate = 60;
 export const dynamicParams = true;
 
 async function fetchEnvelope(
   submissionId: string,
 ): Promise<VerifyEnvelope | null> {
-  // Server-side fetch — uses the API origin directly. Cache: ``force-cache``
-  // because the envelope is immutable.
+  // Server-side fetch — uses the API origin directly. We can't pick the
+  // cache policy until we've seen the status, so issue the request with
+  // ``no-store`` first: this guarantees a 404 (envelope not yet minted) is
+  // never written to the data cache. Only a confirmed-OK response is worth
+  // caching, which we do with a second immutable ``force-cache`` read.
   try {
-    const resp = await fetch(
-      `${env.apiBaseUrl}/api/v1/verify/${encodeURIComponent(submissionId)}`,
-      { next: { revalidate: false }, cache: "force-cache" },
-    );
-    if (resp.status === 404) return null;
-    if (!resp.ok) return null;
+    const url = `${env.apiBaseUrl}/api/v1/verify/${encodeURIComponent(submissionId)}`;
+    const probe = await fetch(url, { cache: "no-store" });
+    if (!probe.ok) return null;
+    // Envelope exists and is immutable — re-read through the data cache so
+    // subsequent renders within the ISR window are served from cache.
+    const cached = await fetch(url, {
+      next: { revalidate: false },
+      cache: "force-cache",
+    });
+    const resp = cached.ok ? cached : probe;
     return (await resp.json()) as VerifyEnvelope;
   } catch {
     return null;

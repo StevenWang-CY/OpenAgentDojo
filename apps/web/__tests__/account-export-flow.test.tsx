@@ -48,9 +48,18 @@ beforeEach(() => {
   // to "no exports yet" (204) so existing tests don't have to special-case
   // discovery; tests that need to seed an existing row override this in
   // their own `server.use(...)`.
+  //
+  // The panel also resolves the viewer's handle off the shared `["me"]`
+  // query (so the "see your mission history" link points at the real
+  // handle, not the broken `/profile/me`). Default that to a stub user so
+  // these tests don't make an unhandled `/auth/me` request that would race
+  // the export-status assertions.
   server.use(
     http.get(`${API_BASE}/api/v1/auth/me/data-export/latest`, () =>
       new HttpResponse(null, { status: 204 }),
+    ),
+    http.get(`${API_BASE}/api/v1/auth/me`, () =>
+      HttpResponse.json({ id: "u1", handle: "ada" }),
     ),
   );
 });

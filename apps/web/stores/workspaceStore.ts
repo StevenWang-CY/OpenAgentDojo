@@ -90,6 +90,16 @@ export interface WorkspaceState {
   closeTab(path: string): void;
   setActiveFile(path: string | null): void;
   setActiveFileContent(path: string, content: string): void;
+  /**
+   * Drop the cached buffer(s) for the given path(s) so the next render
+   * falls back to fresh server content. Used by the shell on
+   * ``patch.applied`` — the agent just rewrote files under us, so any
+   * persisted buffer for those paths is stale (and would otherwise be
+   * preferred over the refetched server content, even across a reload
+   * since ``fileBuffers`` is persisted). A no-op for paths with no
+   * buffer. Passing an empty list is a no-op.
+   */
+  clearFileBuffers(paths: string[]): void;
   pushAgentTurn(turn: AgentTurn): void;
   pushEvent(event: SupervisionEvent): void;
   setSandboxDriver(driver: "docker" | "local" | "unknown"): void;
@@ -214,6 +224,21 @@ function makeWorkspaceStore(sessionId: string, userId: string | null | undefined
           set((state) => ({
             fileBuffers: { ...state.fileBuffers, [path]: content },
           }));
+        },
+        clearFileBuffers(paths) {
+          if (paths.length === 0) return;
+          set((state) => {
+            const drop = new Set(paths);
+            // Skip the allocation entirely when none of the paths are buffered.
+            if (!Object.keys(state.fileBuffers).some((p) => drop.has(p))) {
+              return {};
+            }
+            const next: Record<string, string> = {};
+            for (const [p, content] of Object.entries(state.fileBuffers)) {
+              if (!drop.has(p)) next[p] = content;
+            }
+            return { fileBuffers: next };
+          });
         },
         pushAgentTurn(turn) {
           set((state) => ({

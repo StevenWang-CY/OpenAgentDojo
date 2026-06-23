@@ -489,6 +489,23 @@ def _eligible_candidates(
     return out
 
 
+def is_all_graded_set(user_history: UserHistory, mission_catalogue: list[MissionCandidate]) -> bool:
+    """Return True when ``recommend`` would take the all-graded branch.
+
+    Reproduces the exact branch condition in :func:`_recommend_inner`
+    (graded *something* and nothing eligible remains) so the cache layer
+    can label a persisted row as all-graded without re-running the whole
+    engine. Keeping the predicate here — beside the branch it mirrors —
+    means the cache rebuild stays byte-identical to the cold compute even
+    if the eligibility rule moves.
+    """
+    if user_history.graded_count == 0:
+        return False
+    catalogue = _filter_standard(mission_catalogue)
+    candidates = _eligible_candidates(catalogue, user_history)
+    return not candidates and len(user_history.best_attempts) > 0
+
+
 def _argmin_weakest_dim(user_history: UserHistory) -> str | None:
     """Return the user's weakest measured dimension or ``None`` if none.
 

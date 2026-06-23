@@ -25,7 +25,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -47,10 +47,12 @@ from app.recommendations.engine import (
     UserHistory,
     _BestAttempt,
     _PlaceholderCandidate,
+    is_all_graded_set,
     recommend,
 )
 from app.recommendations.schemas import (
     RecommendationDifficulty,
+    RecommendationItem,
     RecommendationLanguage,
     RecommendationSet,
     WeakestDim,
@@ -354,6 +356,15 @@ async def get_cached_or_compute(
         catalogue=catalogue,
     )
     ids = [item.mission_id for item in fresh.recommendations]
+    # The all-graded branch surfaces the largest-gap retry target with
+    # ``mode="all_graded"`` copy plus two ``coming_soon`` placeholders
+    # that are NOT in the published catalogue. We label the row so the
+    # warm rebuild reproduces both: it passes ``mode`` into ``_build_item``
+    # for the shipped retry target (otherwise the "why" copy flips to the
+    # normal branch) and reconstructs the placeholder cards from the
+    # persisted ``status``/``title``/``language``/``target_release_date``
+    # (otherwise ``by_id.get`` misses them and they vanish on the hit).
+    all_graded = is_all_graded_set(history, catalogue)
     # Persist the per-item alignment alongside the id list so a cache
     # hit can re-render the "why" copy with the original alignment
     # score — without this, the rebuild path silently re-derives
@@ -362,12 +373,7 @@ async def get_cached_or_compute(
     # prose for the same row.
     extras = {
         "items": [
-            {
-                "mission_id": item.mission_id,
-                "alignment": _alignment_for_mission_id(
-                    item.mission_id, catalogue, fresh.weakest_dim
-                ),
-            }
+            _extras_item(item, catalogue, fresh.weakest_dim, all_graded=all_graded)
             for item in fresh.recommendations
         ]
     }
@@ -380,6 +386,50 @@ async def get_cached_or_compute(
         extras=extras,
     )
     return fresh
+
+
+def _extras_item(
+    item: Any,
+    catalogue: list[MissionCandidate],
+    weakest_dim: str | None,
+    *,
+    all_graded: bool,
+) -> dict[str, Any]:
+    """Build one persisted ``extras["items"]`` entry for a recommendation.
+
+    Always carries ``mission_id`` + ``alignment`` (back-compat with the
+    pre-fidelity rows the rebuild path reads). All-graded rows additionally
+    persist enough to reproduce the cold result on a warm hit:
+
+    * ``mode`` — ``"all_graded"`` for the shipped retry target so the
+      rebuild re-renders the retry-the-widest-gap copy instead of the
+      normal-ranking branch.
+    * ``status`` + the placeholder card fields (``title``, ``language``,
+      ``target_release_date``) for ``coming_soon`` entries, which are NOT
+      in the published catalogue and would otherwise be dropped by the
+      ``by_id`` lookup on rebuild.
+    """
+    entry: dict[str, Any] = {
+        "mission_id": item.mission_id,
+        "alignment": _alignment_for_mission_id(item.mission_id, catalogue, weakest_dim),
+    }
+    if not all_graded:
+        return entry
+    if item.status == "coming_soon":
+        entry["status"] = "coming_soon"
+        entry["title"] = item.title
+        entry["language"] = item.language
+        entry["difficulty"] = item.difficulty
+        entry["target_release_date"] = item.target_release_date
+        # Persist the placeholder "why" verbatim so the rebuild reproduces
+        # it byte-for-byte (it's a deterministic roadmap string the prose
+        # polish layer never touches — coming_soon items are skipped there).
+        entry["why"] = item.why
+    else:
+        # The single shipped item in an all-graded set is the largest-gap
+        # retry target, built with ``mode="all_graded"`` on the miss path.
+        entry["mode"] = "all_graded"
+    return entry
 
 
 def _alignment_for_mission_id(
@@ -446,11 +496,15 @@ async def _rebuild_from_cache(
     cached_weakest = _coerce_weakest_dim(cached.weakest_dim)
     from app.recommendations.engine import FRESH_MISSION_IDS, _build_item
 
-    # Prefer the per-item alignment persisted at engine-call time.
-    # ``cached.extras`` is ``{"items": [{"mission_id":..., "alignment":...}]}``
-    # when migration 0027 has populated it; older rows (or rows written
-    # by code paths predating this field) fall back to recomputing.
-    persisted_alignment: dict[str, float] = {}
+    # Prefer the per-item payload persisted at engine-call time. The shape
+    # is ``{"items": [{"mission_id":..., "alignment":..., ...}]}`` (migration
+    # 0027). Beyond ``alignment`` (used to re-render the "why" copy without
+    # re-deriving against a drifted radar) an all-graded row also persists
+    # ``mode`` for the shipped retry target and ``status`` + the placeholder
+    # card fields for the ``coming_soon`` entries — both required to make the
+    # warm hit byte-identical to the cold miss. Older rows omit these keys
+    # and fall through to the legacy shipped/normal rebuild.
+    persisted: dict[str, dict[str, Any]] = {}
     extras = getattr(cached, "extras", None)
     if isinstance(extras, dict):
         raw_items = extras.get("items")
@@ -459,16 +513,36 @@ async def _rebuild_from_cache(
                 if not isinstance(entry, dict):
                     continue
                 mid = entry.get("mission_id")
-                align = entry.get("alignment")
-                if isinstance(mid, str) and isinstance(align, (int, float)):
-                    persisted_alignment[mid] = float(align)
+                if isinstance(mid, str):
+                    persisted[mid] = entry
 
     for mid in cached.recommended_ids:
+        entry = persisted.get(mid, {})
+        placeholder = _rehydrate_placeholder(mid, entry)
+        if placeholder is not None:
+            # ``coming_soon`` roadmap slot — not in the published catalogue,
+            # so reconstruct the card from the persisted fields rather than
+            # dropping it (the bug this fixes).
+            items.append(placeholder)
+            continue
         cand = by_id.get(mid)
         if cand is None:
             # Mission unpublished since the cache row landed; skip it.
             continue
-        alignment = persisted_alignment.get(mid, _alignment_for(cand, cached_weakest))
+        raw_align = entry.get("alignment")
+        alignment = (
+            float(raw_align)
+            if isinstance(raw_align, (int, float)) and not isinstance(raw_align, bool)
+            else _alignment_for(cand, cached_weakest)
+        )
+        raw_mode = entry.get("mode")
+        mode: Literal["normal", "all_graded"] = (
+            "all_graded" if raw_mode == "all_graded" else "normal"
+        )
+        # The all-graded retry target frames the freshness off
+        # FRESH_MISSION_IDS just like the cold path's ``_build_item`` does
+        # (its candidate carries no ``created_at``); the ``all_graded`` copy
+        # branch ignores freshness entirely, so this stays stable either way.
         items.append(
             _build_item(
                 candidate=cand,
@@ -476,6 +550,7 @@ async def _rebuild_from_cache(
                 weakest_dim=cached_weakest,
                 user_history=history,
                 freshness_fresh=mid in FRESH_MISSION_IDS,
+                mode=mode,
             )
         )
     from app.recommendations.copy import diagnosis_for
@@ -505,6 +580,44 @@ async def _rebuild_from_cache(
         catalogue=catalogue,
     )
     return polished
+
+
+def _rehydrate_placeholder(mid: str, entry: dict[str, Any]) -> RecommendationItem | None:
+    """Reconstruct a ``coming_soon`` placeholder card from persisted extras.
+
+    The all-graded miss path surfaces two roadmap placeholders that are NOT
+    in the published catalogue, so the warm rebuild can't look them up in
+    ``by_id``. When the cache row persisted their card fields (``status``
+    + ``title`` + ``language`` + ``target_release_date`` + ``why``) we
+    rebuild the identical :class:`RecommendationItem`; otherwise we return
+    ``None`` so the caller falls through to the catalogue-backed path
+    (older rows / shipped entries).
+    """
+    if entry.get("status") != "coming_soon":
+        return None
+    title = entry.get("title")
+    language = entry.get("language")
+    why = entry.get("why")
+    if not (isinstance(title, str) and isinstance(language, str) and isinstance(why, str)):
+        return None
+    difficulty = entry.get("difficulty")
+    target_release_date = entry.get("target_release_date")
+    return RecommendationItem(
+        mission_id=mid,
+        title=title,
+        language=cast(RecommendationLanguage, language),
+        difficulty=cast(
+            RecommendationDifficulty,
+            difficulty
+            if difficulty in ("beginner", "intermediate", "advanced")
+            else "intermediate",
+        ),
+        why=why,
+        your_best_score=None,
+        your_attempts=0,
+        status="coming_soon",
+        target_release_date=target_release_date if isinstance(target_release_date, str) else None,
+    )
 
 
 def _alignment_for(candidate: MissionCandidate, weakest_dim: str | None) -> float:

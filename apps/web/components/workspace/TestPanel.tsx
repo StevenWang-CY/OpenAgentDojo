@@ -16,21 +16,69 @@ interface TestAction {
   icon: typeof FlaskConical;
 }
 
+/**
+ * Mission sandbox runtime. Mirrors ``MissionDetail.language_runtime`` from
+ * ``@arena/shared-types`` (``MissionRepoInfo.language_runtime``). Drives the
+ * per-runtime quick-check trio below — ``null``/absent falls back to Node.
+ */
+type LanguageRuntime = "node20" | "python312" | "go122";
+
 interface TestPanelProps {
   sessionId: string;
   /**
-   * Commands to expose. Defaults to a Node-ish trio that matches
-   * `fullstack-auth-demo`; missions can override via the workspace shell.
+   * Mission sandbox runtime. The quick-check trio is derived from this so a
+   * Go or Python sandbox (which has no ``pnpm``) gets real commands instead
+   * of the Node trio that would otherwise exit 127. Ignored when an explicit
+   * ``actions`` list is passed.
+   */
+  languageRuntime?: LanguageRuntime | null;
+  /**
+   * Commands to expose. When omitted they're derived from
+   * ``languageRuntime`` (defaulting to the Node trio that matches
+   * `fullstack-auth-demo`); missions can override entirely via this prop.
    */
   actions?: TestAction[];
   className?: string;
 }
 
-const DEFAULT_ACTIONS: TestAction[] = [
+const NODE_ACTIONS: TestAction[] = [
   { category: "test", command: "pnpm test:unit", label: "Unit", icon: FlaskConical },
   { category: "typecheck", command: "pnpm typecheck", label: "Typecheck", icon: Type },
   { category: "lint", command: "pnpm lint", label: "Lint", icon: Wand2 },
 ];
+
+const PYTHON_ACTIONS: TestAction[] = [
+  { category: "test", command: "pytest", label: "Pytest", icon: FlaskConical },
+  { category: "typecheck", command: "mypy .", label: "Mypy", icon: Type },
+  { category: "lint", command: "ruff check .", label: "Ruff", icon: Wand2 },
+];
+
+const GO_ACTIONS: TestAction[] = [
+  { category: "test", command: "go test ./...", label: "Test", icon: FlaskConical },
+  { category: "typecheck", command: "go vet ./...", label: "Vet", icon: Type },
+  { category: "lint", command: "gofmt -l .", label: "Gofmt", icon: Wand2 },
+];
+
+/**
+ * Resolve the quick-check trio for a mission's sandbox runtime. The session
+ * payload carries ``language_runtime`` (``node20`` | ``python312`` |
+ * ``go122``); we branch on it so Go/Python sandboxes — which have no
+ * ``pnpm`` — get real commands instead of a Node trio that exits 127.
+ * ``null``/absent (legacy rows that predate the column) falls back to Node.
+ */
+export function actionsForRuntime(
+  runtime: LanguageRuntime | null | undefined
+): TestAction[] {
+  switch (runtime) {
+    case "python312":
+      return PYTHON_ACTIONS;
+    case "go122":
+      return GO_ACTIONS;
+    case "node20":
+    default:
+      return NODE_ACTIONS;
+  }
+}
 
 interface ActionState {
   status: "idle" | "running" | "success" | "failure";
@@ -40,10 +88,17 @@ interface ActionState {
 
 export function TestPanel({
   sessionId,
-  actions = DEFAULT_ACTIONS,
+  languageRuntime,
+  actions,
   className,
 }: TestPanelProps) {
   const [state, setState] = React.useState<Record<string, ActionState>>({});
+  // An explicit ``actions`` list wins; otherwise derive the trio from the
+  // mission's sandbox runtime so Go/Python missions don't run ``pnpm``.
+  const resolvedActions = React.useMemo(
+    () => actions ?? actionsForRuntime(languageRuntime),
+    [actions, languageRuntime]
+  );
 
   const mutation = useMutation<
     CommandRun,
@@ -89,12 +144,12 @@ export function TestPanel({
     const tail = entries[entries.length - 1];
     if (!tail) return "";
     const [cmd, last] = tail;
-    const action = actions.find((a) => a.command === cmd);
+    const action = resolvedActions.find((a) => a.command === cmd);
     if (!action) return "";
     return last.status === "success"
       ? `${action.label} passed.`
       : `${action.label} failed${last.exit_code != null ? ` (exit ${last.exit_code})` : ""}.`;
-  }, [state, actions]);
+  }, [state, resolvedActions]);
 
   return (
     <div className={cn("flex flex-col gap-2 p-3", className)}>
@@ -105,7 +160,7 @@ export function TestPanel({
         {liveLine}
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {actions.map((a) => {
+        {resolvedActions.map((a) => {
           const s = state[a.command]?.status ?? "idle";
           const Icon = a.icon;
           return (

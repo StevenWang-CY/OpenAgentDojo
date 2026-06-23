@@ -25,6 +25,7 @@ from app.db.base import Base
 from app.models.mission import Mission
 from app.models.session import SessionRow
 from app.models.user import User
+from app.models.user_recommendation import UserRecommendation
 
 
 async def _bound(db_engine):
@@ -238,6 +239,62 @@ async def test_process_deletion_grace_tombstones_account(db_engine) -> None:
             .all()
         )
     assert sessions == []
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_removes_user_recommendation_row(db_engine) -> None:
+    """The materialised recommendation cache row must not survive erasure.
+
+    ``user_recommendations.user_id`` carries ``ON DELETE CASCADE`` on
+    users.id, but the worker tombstones (never DELETEs) the users row, so
+    the cascade never fires. Without an explicit delete the row lingers
+    forever — a GDPR residual. The worker must wipe it.
+    """
+    session_local = await _bound(db_engine)
+    user_id = uuid.uuid4()
+    async with session_local() as db:
+        db.add(
+            User(
+                id=user_id,
+                email="rec-goner@example.com",
+                handle="rec-goner",
+                session_epoch=1,
+                deletion_scheduled_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+        db.add(
+            UserRecommendation(
+                user_id=user_id,
+                weakest_dim="safety",
+                recommended_ids=["m1", "m2", "m3"],
+            )
+        )
+        await db.commit()
+
+    from app.db import session as session_module
+
+    original = session_module.AsyncSessionLocal
+    session_module.AsyncSessionLocal = session_local  # type: ignore[assignment]
+    try:
+        from app.workers.account_deletion import _async_process_deletion_grace
+
+        processed = await _async_process_deletion_grace()
+    finally:
+        session_module.AsyncSessionLocal = original  # type: ignore[assignment]
+
+    assert processed == 1
+
+    async with session_local() as db:
+        rows = (
+            (
+                await db.execute(
+                    select(UserRecommendation).where(UserRecommendation.user_id == user_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert rows == [], "recommendation cache row survived hard-delete"
 
 
 @pytest.mark.asyncio

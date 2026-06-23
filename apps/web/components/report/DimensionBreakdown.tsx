@@ -54,9 +54,9 @@ export function DimensionBreakdown({ dimensions }: DimensionBreakdownProps) {
                 />
               ) : null}
             </div>
-            {d.signals.length > 0 ? (
+            {(d.signals?.length ?? 0) > 0 ? (
               <p className="mt-1 truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
-                {d.signals.join(" · ")}
+                {d.signals!.join(" · ")}
               </p>
             ) : null}
           </li>
