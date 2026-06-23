@@ -189,7 +189,12 @@ describe("WorkspaceShell — patch.applied reconciles open files", () => {
 
     renderShell();
 
-    await waitFor(() => expect(lastSocketOptions.current).not.toBeNull());
+    // The socket is only created once both the session and the freshly-minted
+    // WS token queries resolve; under full-suite parallel load that chain can
+    // take longer than waitFor's 1s default, so give it a generous window.
+    await waitFor(() => expect(lastSocketOptions.current).not.toBeNull(), {
+      timeout: 5000,
+    });
     const opts = lastSocketOptions.current!;
 
     // The post-patch diff now names the changed file.
@@ -225,7 +230,9 @@ describe("WorkspaceShell — patch.applied reconciles open files", () => {
     store.getState().setActiveFileContent("README.md", "untouched-buffer");
 
     renderShell();
-    await waitFor(() => expect(lastSocketOptions.current).not.toBeNull());
+    await waitFor(() => expect(lastSocketOptions.current).not.toBeNull(), {
+      timeout: 5000,
+    });
     const opts = lastSocketOptions.current!;
     getDiff.mockResolvedValue({ unified_diff: PATCH_DIFF });
 
