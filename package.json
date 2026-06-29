@@ -21,7 +21,7 @@
     "compose:logs": "docker compose -f infra/compose/docker-compose.yml logs -f"
   },
   "devDependencies": {
-    "prettier": "^3.8.4",
+    "prettier": "^3.9.1",
     "typescript": "^6.0.3"
   }
 }
